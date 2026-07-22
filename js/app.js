@@ -10158,3 +10158,311 @@ function ppInitFirebase(){
 }
 
 document.addEventListener("DOMContentLoaded",ppInitFirebase);
+
+
+/* =========================================================
+   USERS / PERMISSIONS / AUDIT TRAIL — PAUSE & PLATE
+   Phase 1: Admin + Employé Stock & Dépenses
+========================================================= */
+
+const PP_ACCESS = {
+    ADMIN: 'admin',
+    EMPLOYEE: 'employee'
+};
+
+let ppCurrentUserProfile = null;
+let ppAuditTrail = JSON.parse(localStorage.getItem('pause_plate_audit_trail') || '[]');
+
+function ppCurrentFirebaseUser(){
+    try{
+        return (typeof auth!=='undefined' && auth && auth.currentUser) ? auth.currentUser : null;
+    }catch(e){ return null; }
+}
+
+function ppUserIdentity(){
+    const u=ppCurrentFirebaseUser();
+    return {
+        uid: u?.uid || 'local',
+        email: u?.email || 'Utilisateur local',
+        name: ppCurrentUserProfile?.name || u?.displayName || u?.email || 'Utilisateur',
+        role: ppCurrentUserProfile?.role || PP_ACCESS.ADMIN
+    };
+}
+
+function ppIsAdmin(){
+    return (ppCurrentUserProfile?.role || PP_ACCESS.ADMIN) === PP_ACCESS.ADMIN;
+}
+
+function ppCan(module,action='view'){
+    if(ppIsAdmin()) return true;
+    const perms=ppCurrentUserProfile?.permissions || {};
+    if(module==='stock') return perms.stock !== false;
+    if(module==='expenses') return perms.expenses !== false;
+    return false;
+}
+
+function ppAuditSnapshot(value){
+    if(value===undefined) return null;
+    try{return JSON.parse(JSON.stringify(value));}catch(e){return String(value);}
+}
+
+function ppAuditDiff(before,after){
+    const b=before||{},a=after||{},changes=[];
+    const keys=new Set([...Object.keys(b),...Object.keys(a)]);
+    keys.forEach(k=>{
+        if(['updatedAt','createdAt','auditCount'].includes(k))return;
+        const bv=JSON.stringify(b[k]??null), av=JSON.stringify(a[k]??null);
+        if(bv!==av) changes.push({field:k,before:b[k]??null,after:a[k]??null});
+    });
+    return changes;
+}
+
+async function ppWriteAudit(module,entityId,action,before,after,label=''){
+    const who=ppUserIdentity();
+    const previous=ppAuditTrail.filter(x=>x.module===module && String(x.entityId)===String(entityId));
+    const entry={
+        id:Date.now()+Math.floor(Math.random()*100000),
+        module,
+        entityId:String(entityId),
+        label:String(label||''),
+        action,
+        version:previous.length+1,
+        user:who,
+        at:new Date().toISOString(),
+        before:ppAuditSnapshot(before),
+        after:ppAuditSnapshot(after),
+        changes:ppAuditDiff(before,after)
+    };
+    ppAuditTrail.push(entry);
+    localStorage.setItem('pause_plate_audit_trail',JSON.stringify(ppAuditTrail));
+
+    // Firestore: separate immutable-ish audit documents; main app sync remains untouched.
+    try{
+        if(typeof db!=='undefined' && db && who.uid!=='local' && typeof firebase!=='undefined' && firebase.firestore){
+            await db.collection('auditLogs').add(entry);
+        }
+    }catch(e){
+        console.warn('Audit cloud différé:',e);
+    }
+    return entry;
+}
+
+function ppAuditCount(module,id){
+    return ppAuditTrail.filter(x=>x.module===module && String(x.entityId)===String(id)).length;
+}
+
+function ppFormatAuditValue(v){
+    if(v===null||v===undefined||v==='')return '—';
+    if(typeof v==='object')return escapeHTML(JSON.stringify(v));
+    return escapeHTML(String(v));
+}
+
+function ppShowAudit(module,id,title='Historique'){
+    const rows=ppAuditTrail
+      .filter(x=>x.module===module && String(x.entityId)===String(id))
+      .sort((a,b)=>new Date(b.at)-new Date(a.at));
+
+    let body='';
+    if(!rows.length){
+        body='<div class="empty">Aucun historique enregistré pour cette opération.</div>';
+    }else{
+        body=rows.map(x=>{
+            const changes=(x.changes||[]).length
+              ? `<table style="width:100%;margin-top:8px"><thead><tr><th>Champ</th><th>Avant</th><th>Après</th></tr></thead><tbody>${x.changes.map(c=>`<tr><td>${escapeHTML(c.field)}</td><td>${ppFormatAuditValue(c.before)}</td><td>${ppFormatAuditValue(c.after)}</td></tr>`).join('')}</tbody></table>`
+              : '<div style="color:#667085;margin-top:6px">Création de l’opération.</div>';
+            const act=x.action==='create'?'Création':x.action==='update'?'Modification':x.action==='delete'?'Suppression':x.action;
+            return `<div style="border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin-bottom:10px">
+                <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+                  <strong>Version ${x.version} — ${act}</strong>
+                  <span>${new Date(x.at).toLocaleString('fr-FR')}</span>
+                </div>
+                <div style="margin-top:5px">👤 ${escapeHTML(x.user?.name||x.user?.email||'Utilisateur')} ${x.user?.email && x.user?.email!==x.user?.name?`(${escapeHTML(x.user.email)})`:''}</div>
+                ${changes}
+              </div>`;
+        }).join('');
+    }
+
+    const modalId='ppAuditModal';
+    let m=document.getElementById(modalId);
+    if(!m){
+        m=document.createElement('div');m.id=modalId;m.className='modal-overlay';
+        m.innerHTML=`<div class="modal" style="max-width:1000px"><div class="modal-header"><h2 id="ppAuditTitle">Historique</h2><button onclick="closeModal('${modalId}')">×</button></div><div id="ppAuditBody"></div><div class="modal-actions"><button class="btn" onclick="closeModal('${modalId}')">Fermer</button></div></div>`;
+        document.body.appendChild(m);
+    }
+    document.getElementById('ppAuditTitle').textContent=title;
+    document.getElementById('ppAuditBody').innerHTML=body;
+    openModal(modalId);
+}
+
+function ppAuditMovement(id){ ppShowAudit('stock',id,'Historique de l’opération stock'); }
+function ppAuditExpense(id){ ppShowAudit('expenses',id,'Historique de la dépense'); }
+
+/* ---------- STOCK: audit create/update/delete ---------- */
+const ppBaseOpenMovementModal = openMovementModal;
+openMovementModal = function(type,id=null){
+    if(!ppCan('stock','edit')){alert('Accès non autorisé.');return;}
+    return ppBaseOpenMovementModal(type,id);
+};
+
+const ppBaseSaveMovement = saveMovement;
+saveMovement = function(){
+    if(!ppCan('stock','edit')){alert('Accès non autorisé.');return;}
+    const id=Number(document.getElementById('movementId')?.value||0);
+    const before=id?ppAuditSnapshot(movements.find(x=>Number(x.id)===id)):null;
+    const beforeIds=new Set(movements.map(x=>String(x.id)));
+    const result=ppBaseSaveMovement();
+    setTimeout(()=>{
+        let after=null, entityId=id;
+        if(id) after=movements.find(x=>Number(x.id)===id);
+        else{
+            after=movements.find(x=>!beforeIds.has(String(x.id))) || movements[movements.length-1];
+            entityId=after?.id;
+        }
+        if(after && entityId!=null){
+            after.auditCount=ppAuditCount('stock',entityId)+1;
+            ppWriteAudit('stock',entityId,before?'update':'create',before,after,`${after.type||''} ${after.productName||''}`);
+            try{saveData();}catch(e){}
+        }
+    },0);
+    return result;
+};
+
+const ppBaseDeleteMovement = deleteMovement;
+deleteMovement = function(id){
+    if(!ppCan('stock','delete')){alert('Accès non autorisé.');return;}
+    const before=ppAuditSnapshot(movements.find(x=>Number(x.id)===Number(id)));
+    const countBefore=movements.length;
+    const result=ppBaseDeleteMovement(id);
+    setTimeout(()=>{
+        if(before && movements.length<countBefore && !movements.some(x=>Number(x.id)===Number(id))){
+            ppWriteAudit('stock',id,'delete',before,null,`${before.type||''} ${before.productName||''}`);
+        }
+    },0);
+    return result;
+};
+
+/* ---------- DEPENSES: audit create/update/delete ---------- */
+const ppBaseOpenExpensePP = openExpensePP;
+openExpensePP = function(id=null){
+    if(!ppCan('expenses','edit')){alert('Accès non autorisé.');return;}
+    return ppBaseOpenExpensePP(id);
+};
+
+const ppBaseSaveExpensePP = saveExpensePP;
+saveExpensePP = function(){
+    if(!ppCan('expenses','edit')){alert('Accès non autorisé.');return;}
+    const id=Number(document.getElementById('ppExpenseId')?.value||0);
+    const before=id?ppAuditSnapshot(expensesPP.find(x=>Number(x.id)===id)):null;
+    const beforeIds=new Set(expensesPP.map(x=>String(x.id)));
+    const result=ppBaseSaveExpensePP();
+    setTimeout(()=>{
+        let after=null, entityId=id;
+        if(id) after=expensesPP.find(x=>Number(x.id)===id);
+        else{
+            after=expensesPP.find(x=>!beforeIds.has(String(x.id))) || expensesPP[0] || expensesPP[expensesPP.length-1];
+            entityId=after?.id;
+        }
+        if(after && entityId!=null){
+            after.auditCount=ppAuditCount('expenses',entityId)+1;
+            ppWriteAudit('expenses',entityId,before?'update':'create',before,after,after.description||after.category||'Dépense');
+            try{saveData();}catch(e){}
+        }
+    },0);
+    return result;
+};
+
+const ppBaseDeleteExpensePP = deleteExpensePP;
+deleteExpensePP = function(id){
+    if(!ppCan('expenses','delete')){alert('Accès non autorisé.');return;}
+    const before=ppAuditSnapshot(expensesPP.find(x=>Number(x.id)===Number(id)));
+    const countBefore=expensesPP.length;
+    const result=ppBaseDeleteExpensePP(id);
+    setTimeout(()=>{
+        if(before && expensesPP.length<countBefore && !expensesPP.some(x=>Number(x.id)===Number(id))){
+            ppWriteAudit('expenses',id,'delete',before,null,before.description||before.category||'Dépense');
+        }
+    },0);
+    return result;
+};
+
+/* ---------- Add Historique buttons after each render ---------- */
+function ppInjectAuditButtons(){
+    // Stock movement table: identify edit/delete buttons that carry movement IDs.
+    document.querySelectorAll('button[onclick*="openMovementModal("]').forEach(btn=>{
+        const oc=btn.getAttribute('onclick')||'';
+        const m=oc.match(/openMovementModal\([^,]+,\s*(\d+)\)/);
+        if(!m)return;
+        const id=m[1],group=btn.closest('.action-buttons')||btn.parentElement;
+        if(!group || group.querySelector(`[data-audit-stock="${id}"]`))return;
+        const b=document.createElement('button');
+        b.type='button';b.className='btn small view';b.dataset.auditStock=id;
+        b.innerHTML=`🕘 ${ppAuditCount('stock',id)}`;
+        b.title='Historique complet';
+        b.onclick=()=>ppAuditMovement(id);
+        group.appendChild(b);
+    });
+
+    // Expense table.
+    document.querySelectorAll('button[onclick^="openExpensePP("]').forEach(btn=>{
+        const oc=btn.getAttribute('onclick')||'';
+        const m=oc.match(/openExpensePP\((\d+)\)/);
+        if(!m)return;
+        const id=m[1],group=btn.closest('.action-buttons')||btn.parentElement;
+        if(!group || group.querySelector(`[data-audit-expense="${id}"]`))return;
+        const b=document.createElement('button');
+        b.type='button';b.className='btn small view';b.dataset.auditExpense=id;
+        b.innerHTML=`🕘 ${ppAuditCount('expenses',id)}`;
+        b.title='Historique complet';
+        b.onclick=()=>ppAuditExpense(id);
+        group.appendChild(b);
+    });
+}
+
+const ppAuditObserver=new MutationObserver(()=>ppInjectAuditButtons());
+if(document.body) ppAuditObserver.observe(document.body,{childList:true,subtree:true});
+setTimeout(ppInjectAuditButtons,500);
+
+/* ---------- Role-aware navigation ---------- */
+function ppApplyPermissionsUI(){
+    if(ppIsAdmin())return;
+    const allowed=['stock','expenses'];
+    document.querySelectorAll('[data-page]').forEach(el=>{
+        const page=String(el.dataset.page||'').toLowerCase();
+        if(page && !allowed.some(x=>page.includes(x))) el.style.display='none';
+    });
+    // Fallback for sidebar links/buttons without data-page.
+    document.querySelectorAll('.sidebar button,.sidebar a,.nav-item').forEach(el=>{
+        const t=(el.textContent||'').toLowerCase();
+        if(!t)return;
+        if(!(t.includes('stock')||t.includes('dépense')||t.includes('depense')||t.includes('déconnexion')||t.includes('logout'))){
+            el.style.display='none';
+        }
+    });
+}
+
+/*
+  Profiles:
+  Admin remains the default for the account that already existed before roles.
+  Employee profiles can later be stored as:
+  userProfiles/{uid} = {
+    role:"employee",
+    name:"...",
+    permissions:{stock:true,expenses:true}
+  }
+*/
+async function ppLoadUserProfile(){
+    const u=ppCurrentFirebaseUser();
+    if(!u){ppCurrentUserProfile=null;return;}
+    try{
+        if(typeof db!=='undefined' && db){
+            const snap=await db.collection('userProfiles').doc(u.uid).get();
+            if(snap.exists) ppCurrentUserProfile=snap.data();
+            else ppCurrentUserProfile={role:PP_ACCESS.ADMIN,name:u.email,permissions:{stock:true,expenses:true}};
+        }
+    }catch(e){
+        console.warn('Profil utilisateur:',e);
+        ppCurrentUserProfile={role:PP_ACCESS.ADMIN,name:u.email,permissions:{stock:true,expenses:true}};
+    }
+    ppApplyPermissionsUI();
+}
+setTimeout(ppLoadUserProfile,700);
