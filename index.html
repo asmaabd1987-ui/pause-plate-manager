@@ -1,0 +1,2002 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Pause & Plate Manager</title>
+
+    <link
+        rel="stylesheet"
+        href="css/style.css"
+    >
+
+</head>
+
+
+<body>
+
+
+<div class="app">
+
+
+    <!-- SIDEBAR -->
+
+    <aside class="sidebar">
+
+
+        <div class="logo">
+
+            <h1>
+                Pause & Plate
+            </h1>
+
+            <span>
+                MANAGER
+            </span>
+
+        </div>
+
+
+        <div class="menu-title">
+            PRINCIPAL
+        </div>
+
+
+        <button
+            class="nav-item active"
+            data-page="dashboard"
+        >
+
+            📊
+
+            <span>
+                Dashboard
+            </span>
+
+        </button>
+
+
+        <button
+            class="nav-item"
+            data-page="stock"
+        >
+
+            📦
+
+            <span>
+                Stock
+            </span>
+
+        </button>
+
+
+        <button
+            class="nav-item"
+            data-page="purchases"
+        >
+
+            🧾
+
+            <span>
+                Achats & Factures
+            </span>
+
+        </button>
+
+
+        <div class="menu-title">
+            GESTION
+        </div>
+
+
+        <button
+            class="nav-item"
+            data-page="suppliers"
+        >
+
+            🏢
+
+            <span>
+                Fournisseurs
+            </span>
+
+        </button>
+
+
+        <button
+            class="nav-item"
+            data-page="clients"
+        >
+
+            👥
+
+            <span>
+                Clients
+            </span>
+
+        </button>
+
+
+        <button
+            class="nav-item"
+            data-page="sales"
+        >
+
+            💰
+
+            <span>
+                Ventes
+            </span>
+
+        </button>
+
+
+        <button
+            class="nav-item"
+            data-page="expenses"
+        >
+
+            💸
+
+            <span>
+                Dépenses
+            </span>
+
+        </button>
+
+
+        <div class="menu-title">
+            FINANCE
+        </div>
+
+
+        <button
+            class="nav-item"
+            data-page="recipes"
+        >
+
+            🍕
+
+            <span>
+                Fiches Techniques
+            </span>
+
+        </button>
+
+
+        <button
+            class="nav-item"
+            data-page="accounting"
+        >
+
+            🧮
+
+            <span>
+                TVA & Comptabilité
+            </span>
+
+        </button>
+
+
+        <button
+            class="nav-item"
+            data-page="reports"
+        >
+
+            📈
+
+            <span>
+                Rapports
+            </span>
+
+        </button>
+
+
+    </aside>
+
+
+    <!-- MAIN -->
+
+    <main class="main">
+
+
+        <!-- HEADER -->
+
+        <header class="header">
+
+
+            <div>
+
+                <h2 id="pageTitle">
+                    Dashboard
+                </h2>
+
+
+                <p id="pageSubtitle">
+                    Bienvenue dans votre espace de gestion
+                </p>
+
+            </div>
+
+
+            <div class="profile">
+
+                <strong>
+                    Pause & Plate
+                </strong>
+
+
+                <div class="avatar">
+                    PP
+                </div>
+
+            </div>
+
+
+        </header>
+
+
+        <!-- CONTENT -->
+
+        <section class="content">
+
+
+            <!-- DASHBOARD -->
+
+            <div
+                id="dashboardPage"
+                class="page active-page"
+            >
+
+
+                <div class="stats">
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Chiffre d'affaires
+                        </span>
+
+                        <strong>
+                            0 DH
+                        </strong>
+
+                        <small>
+                            Aujourd'hui
+                        </small>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Dépenses
+                        </span>
+
+                        <strong>
+                            0 DH
+                        </strong>
+
+                        <small>
+                            Ce mois
+                        </small>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Valeur du stock
+                        </span>
+
+                        <strong id="stockValue">
+                            0 DH
+                        </strong>
+
+                        <small>
+                            Stock actuel
+                        </small>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Produits
+                        </span>
+
+                        <strong id="productCount">
+                            0
+                        </strong>
+
+                        <small>
+                            Produits enregistrés
+                        </small>
+
+                    </div>
+
+
+                </div>
+
+
+                <div class="section">
+
+
+                    <h3>
+                        ⚠️ Alertes Stock
+                    </h3>
+
+
+                    <div id="alertList">
+
+                        <p class="empty">
+                            Aucune alerte stock pour le moment.
+                        </p>
+
+                    </div>
+
+
+                </div>
+
+
+                <div class="section">
+
+
+                    <div class="section-header">
+
+
+                        <h3>
+                            📦 Produits & Stock
+                        </h3>
+
+
+                        <button
+                            class="btn primary"
+                            onclick="openProductModal()"
+                        >
+
+                            + Ajouter un produit
+
+                        </button>
+
+
+                    </div>
+
+
+                    <div class="filters">
+
+
+                        <input
+                            id="searchInput"
+                            placeholder="🔍 Rechercher..."
+                            oninput="renderProducts()"
+                        >
+
+
+                        <select
+                            id="categoryFilter"
+                            onchange="renderProducts()"
+                        >
+
+                            <option value="">
+                                Toutes les catégories
+                            </option>
+
+                            <option>
+                                Épicerie
+                            </option>
+
+                            <option>
+                                Viandes
+                            </option>
+
+                            <option>
+                                Poissons
+                            </option>
+
+                            <option>
+                                Produits laitiers
+                            </option>
+
+                            <option>
+                                Fruits & Légumes
+                            </option>
+
+                            <option>
+                                Boissons
+                            </option>
+
+                            <option>
+                                Autre
+                            </option>
+
+                        </select>
+
+
+                    </div>
+
+
+                    <div class="table-wrapper">
+
+                        <table>
+
+                            <thead>
+
+                                <tr>
+
+                                    <th>Produit</th>
+
+                                    <th>Catégorie</th>
+
+                                    <th>Stock</th>
+
+                                    <th>Prix moyen</th>
+
+                                    <th>Valeur</th>
+
+                                    <th>Statut</th>
+
+                                    <th>Actions</th>
+
+                                </tr>
+
+                            </thead>
+
+
+                            <tbody id="productsTable"></tbody>
+
+                        </table>
+
+                    </div>
+
+
+                </div>
+
+
+            </div>
+
+
+            <!-- STOCK -->
+
+            <div
+                id="stockPage"
+                class="page"
+            >
+
+
+                <div class="page-actions">
+
+
+                    <div>
+
+                        <h2>
+                            📦 Gestion du Stock
+                        </h2>
+
+                        <p>
+                            Gérez les entrées et sorties de vos produits.
+                        </p>
+
+                    </div>
+
+
+                    <div>
+
+                        <button
+                            class="btn primary"
+                            onclick="openMovementModal('entry')"
+                        >
+
+                            ➕ Entrée Stock
+
+                        </button>
+
+
+                        <button
+                            class="btn danger"
+                            onclick="openMovementModal('exit')"
+                        >
+
+                            ➖ Sortie Stock
+
+                        </button>
+
+                    </div>
+
+
+                </div>
+
+
+                <div class="stats">
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Produits
+                        </span>
+
+                        <strong id="stockProductsCount">
+                            0
+                        </strong>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Valeur totale
+                        </span>
+
+                        <strong id="stockTotalValue">
+                            0 DH
+                        </strong>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Stock faible
+                        </span>
+
+                        <strong id="lowStockCount">
+                            0
+                        </strong>
+
+                    </div>
+
+
+                </div>
+
+
+                <div class="section">
+
+
+                    <h3>
+                        📋 Historique des mouvements
+                    </h3>
+
+
+                    <div class="table-wrapper">
+
+                        <table>
+
+                            <thead>
+
+                                <tr>
+
+                                    <th>Date</th>
+
+                                    <th>Produit</th>
+
+                                    <th>Type</th>
+
+                                    <th>Quantité</th>
+
+                                    <th>Motif</th>
+
+                                    <th>Actions</th>
+
+                                </tr>
+
+                            </thead>
+
+
+                            <tbody id="movementsTable"></tbody>
+
+                        </table>
+
+                    </div>
+
+
+                </div>
+
+
+            </div>
+
+
+            <!-- PURCHASES -->
+
+            <div
+                id="purchasesPage"
+                class="page"
+            >
+
+
+                <div class="page-actions">
+
+
+                    <div>
+
+                        <h2>
+                            🧾 Achats & Factures
+                        </h2>
+
+                        <p>
+                            Gérez vos factures fournisseurs et vos achats.
+                        </p>
+
+                    </div>
+
+
+                    <div>
+
+                        <button
+                            class="btn secondary"
+                            onclick="openScanModal()"
+                        >
+
+                            📸 Scanner une facture
+
+                        </button>
+
+
+                        <button
+                            class="btn primary"
+                            onclick="openInvoiceModal()"
+                        >
+
+                            + Nouvelle facture
+
+                        </button>
+
+                    </div>
+
+
+                </div>
+
+
+                <div class="stats">
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Factures
+                        </span>
+
+                        <strong id="invoiceCount">
+                            0
+                        </strong>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Total HT
+                        </span>
+
+                        <strong id="invoiceTotalHT">
+                            0 DH
+                        </strong>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            TVA
+                        </span>
+
+                        <strong id="invoiceTotalTVA">
+                            0 DH
+                        </strong>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Total TTC
+                        </span>
+
+                        <strong id="invoiceTotalTTC">
+                            0 DH
+                        </strong>
+
+                    </div>
+
+
+                </div>
+
+
+                <div class="section">
+
+
+                    <h3>
+                        📋 Liste des factures
+                    </h3>
+
+
+                    <div class="table-wrapper">
+
+                        <table>
+
+                            <thead>
+
+                                <tr>
+
+                                    <th>Date</th>
+
+                                    <th>N° Facture</th>
+
+                                    <th>Fournisseur</th>
+
+                                    <th>Total HT</th>
+
+                                    <th>TVA</th>
+
+                                    <th>Total TTC</th>
+
+                                    <th>Statut</th>
+
+                                    <th>Actions</th>
+
+                                </tr>
+
+                            </thead>
+
+
+                            <tbody id="invoicesTable"></tbody>
+
+                        </table>
+
+                    </div>
+
+
+                </div>
+
+
+            </div>
+
+
+            <!-- SUPPLIERS -->
+
+            <div
+                id="suppliersPage"
+                class="page"
+            >
+
+
+                <div class="page-actions">
+
+
+                    <div>
+
+                        <h2>
+                            🏢 Fournisseurs
+                        </h2>
+
+                        <p>
+                            Suivez vos fournisseurs et leurs situations.
+                        </p>
+
+                    </div>
+
+
+                    <button
+                        class="btn primary"
+                        onclick="openSupplierModal()"
+                    >
+
+                        + Ajouter un fournisseur
+
+                    </button>
+
+
+                </div>
+
+
+                <div class="stats">
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Fournisseurs
+                        </span>
+
+                        <strong id="supplierCount">
+                            0
+                        </strong>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Total achats
+                        </span>
+
+                        <strong id="totalPurchases">
+                            0 DH
+                        </strong>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Total payé
+                        </span>
+
+                        <strong id="totalPaid">
+                            0 DH
+                        </strong>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>
+                            Reste à payer
+                        </span>
+
+                        <strong id="totalDue">
+                            0 DH
+                        </strong>
+
+                    </div>
+
+
+                </div>
+
+
+                <div class="section">
+
+
+                    <div class="filters">
+
+                        <input
+                            id="supplierSearch"
+                            placeholder="🔍 Rechercher un fournisseur..."
+                            oninput="renderSuppliers()"
+                        >
+
+                    </div>
+
+
+                    <div class="table-wrapper">
+
+                        <table>
+
+                            <thead>
+
+                                <tr>
+
+                                    <th>Fournisseur</th>
+
+                                    <th>Téléphone</th>
+
+                                    <th>ICE</th>
+
+                                    <th>Total achats</th>
+
+                                    <th>Payé</th>
+
+                                    <th>Reste</th>
+
+                                    <th>Situation</th>
+
+                                    <th>Actions</th>
+
+                                </tr>
+
+                            </thead>
+
+
+                            <tbody id="suppliersTable"></tbody>
+
+                        </table>
+
+                    </div>
+
+
+                </div>
+
+
+            </div>
+
+
+            <!-- CLIENTS -->
+
+            <div
+                id="clientsPage"
+                class="page"
+            >
+
+                <div class="page-actions">
+
+                    <div>
+
+                        <h2>
+                            👥 Clients
+                        </h2>
+
+                        <p>
+                            Gérez vos clients et leurs situations.
+                        </p>
+
+                    </div>
+
+
+                    <button class="btn primary">
+                        + Ajouter un client
+                    </button>
+
+                </div>
+
+
+                <div class="section">
+
+                    <div class="empty-state">
+
+                        <div>
+                            👥
+                        </div>
+
+                        <h3>
+                            Gestion des clients
+                        </h3>
+
+                        <p>
+                            Cette section sera bientôt disponible.
+                        </p>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- SALES -->
+
+            <div
+                id="salesPage"
+                class="page"
+            >
+
+                <div class="page-actions">
+
+                    <div>
+
+                        <h2>
+                            💰 Ventes
+                        </h2>
+
+                        <p>
+                            Suivez votre chiffre d'affaires.
+                        </p>
+
+                    </div>
+
+
+                    <button class="btn primary">
+                        + Nouvelle vente
+                    </button>
+
+                </div>
+
+
+                <div class="section">
+
+                    <div class="empty-state">
+
+                        <div>
+                            💰
+                        </div>
+
+                        <h3>
+                            Gestion des ventes
+                        </h3>
+
+                        <p>
+                            Cette section sera bientôt disponible.
+                        </p>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- EXPENSES -->
+
+            <div
+                id="expensesPage"
+                class="page"
+            >
+
+                <div class="page-actions">
+
+                    <div>
+
+                        <h2>
+                            💸 Dépenses
+                        </h2>
+
+                        <p>
+                            Suivez toutes vos dépenses.
+                        </p>
+
+                    </div>
+
+
+                    <button class="btn primary">
+                        + Ajouter une dépense
+                    </button>
+
+                </div>
+
+
+                <div class="section">
+
+                    <div class="empty-state">
+
+                        <div>
+                            💸
+                        </div>
+
+                        <h3>
+                            Gestion des dépenses
+                        </h3>
+
+                        <p>
+                            Cette section sera bientôt disponible.
+                        </p>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- RECIPES -->
+
+            <div
+                id="recipesPage"
+                class="page"
+            >
+
+                <div class="page-actions">
+
+                    <div>
+
+                        <h2>
+                            🍕 Fiches Techniques
+                        </h2>
+
+                        <p>
+                            Gérez vos recettes et coûts de production.
+                        </p>
+
+                    </div>
+
+
+                    <button class="btn primary">
+                        + Nouvelle fiche
+                    </button>
+
+                </div>
+
+
+                <div class="section">
+
+                    <div class="empty-state">
+
+                        <div>
+                            🍕
+                        </div>
+
+                        <h3>
+                            Fiches techniques
+                        </h3>
+
+                        <p>
+                            Cette section sera bientôt disponible.
+                        </p>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- ACCOUNTING -->
+
+            <div
+                id="accountingPage"
+                class="page"
+            >
+
+                <div class="page-actions">
+
+                    <div>
+
+                        <h2>
+                            🧮 TVA & Comptabilité
+                        </h2>
+
+                        <p>
+                            Suivez votre TVA et vos données comptables.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div class="section">
+
+                    <div class="empty-state">
+
+                        <div>
+                            🧮
+                        </div>
+
+                        <h3>
+                            Comptabilité
+                        </h3>
+
+                        <p>
+                            Cette section sera bientôt disponible.
+                        </p>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- REPORTS -->
+
+            <div
+                id="reportsPage"
+                class="page"
+            >
+
+                <div class="page-actions">
+
+                    <div>
+
+                        <h2>
+                            📈 Rapports
+                        </h2>
+
+                        <p>
+                            Analysez votre activité.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div class="section">
+
+                    <div class="empty-state">
+
+                        <div>
+                            📈
+                        </div>
+
+                        <h3>
+                            Rapports
+                        </h3>
+
+                        <p>
+                            Cette section sera bientôt disponible.
+                        </p>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+        </section>
+
+
+    </main>
+
+
+</div>
+
+
+<!-- PRODUCT MODAL -->
+
+<div
+    id="productModal"
+    class="modal-overlay"
+>
+
+
+    <div class="modal">
+
+
+        <div class="modal-header">
+
+            <h2>
+                Ajouter un produit
+            </h2>
+
+            <button onclick="closeModal('productModal')">
+                ×
+            </button>
+
+        </div>
+
+
+        <form id="productForm">
+
+
+            <label>
+                Nom du produit *
+            </label>
+
+            <input
+                id="productName"
+                required
+            >
+
+
+            <label>
+                Catégorie
+            </label>
+
+            <select id="productCategory">
+
+                <option>Épicerie</option>
+                <option>Viandes</option>
+                <option>Poissons</option>
+                <option>Produits laitiers</option>
+                <option>Fruits & Légumes</option>
+                <option>Boissons</option>
+                <option>Autre</option>
+
+            </select>
+
+
+            <label>
+                Unité
+            </label>
+
+            <select id="productUnit">
+
+                <option>kg</option>
+                <option>L</option>
+                <option>pièce</option>
+                <option>carton</option>
+                <option>paquet</option>
+
+            </select>
+
+
+            <label>
+                Stock initial
+            </label>
+
+            <input
+                type="number"
+                id="productStock"
+                min="0"
+                step="0.0000001"
+                value="0"
+            >
+
+
+            <label>
+                Stock minimum
+            </label>
+
+            <input
+                type="number"
+                id="productMinStock"
+                min="0"
+                step="0.01"
+                value="0"
+            >
+
+
+            <label>
+                Prix unitaire moyen (DH)
+            </label>
+
+            <input
+                type="number"
+                id="productPrice"
+                min="0"
+                step="0.0000001"
+                value="0"
+            >
+
+
+            <div class="modal-actions">
+
+
+                <button
+                    type="button"
+                    class="btn"
+                    onclick="closeModal('productModal')"
+                >
+
+                    Annuler
+
+                </button>
+
+
+                <button class="btn primary">
+
+                    Enregistrer
+
+                </button>
+
+
+            </div>
+
+
+        </form>
+
+
+    </div>
+
+
+</div>
+
+
+<!-- MOVEMENT MODAL -->
+
+<div
+    id="movementModal"
+    class="modal-overlay"
+>
+
+
+    <div class="modal">
+
+
+        <div class="modal-header">
+
+
+            <h2 id="movementTitle">
+                Entrée Stock
+            </h2>
+
+
+            <button onclick="closeModal('movementModal')">
+                ×
+            </button>
+
+
+        </div>
+
+
+        <form id="movementForm">
+
+
+            <input
+                type="hidden"
+                id="movementType"
+            >
+
+
+            <label>
+                Produit *
+            </label>
+
+
+            <select
+                id="movementProduct"
+                required
+            ></select>
+
+
+            <label>
+                Quantité
+            </label>
+
+
+            <input
+                type="number"
+                id="movementQuantity"
+                min="0.01"
+                step="0.01"
+                required
+            >
+
+
+            <label>
+                Motif
+            </label>
+
+
+            <select
+                id="movementReason"
+                required
+            >
+
+                <option>Achat</option>
+
+                <option>Utilisation</option>
+
+                <option>Perte</option>
+
+                <option>Produit périmé</option>
+
+                <option>Correction inventaire</option>
+
+                <option>Autre</option>
+
+            </select>
+
+
+            <label>
+                Note
+            </label>
+
+
+            <textarea
+                id="movementNote"
+                rows="3"
+            ></textarea>
+
+
+            <div class="modal-actions">
+
+
+                <button
+                    type="button"
+                    class="btn"
+                    onclick="closeModal('movementModal')"
+                >
+
+                    Annuler
+
+                </button>
+
+
+                <button class="btn primary">
+
+                    Enregistrer
+
+                </button>
+
+
+            </div>
+
+
+        </form>
+
+
+    </div>
+
+
+</div>
+
+
+<!-- SUPPLIER MODAL -->
+
+<div
+    id="supplierModal"
+    class="modal-overlay"
+>
+
+
+    <div class="modal">
+
+
+        <div class="modal-header">
+
+            <h2>
+                Ajouter un fournisseur
+            </h2>
+
+            <button onclick="closeModal('supplierModal')">
+                ×
+            </button>
+
+        </div>
+
+
+        <form id="supplierForm">
+
+
+            <label>
+                Nom du fournisseur *
+            </label>
+
+
+            <input
+                id="supplierName"
+                required
+            >
+
+
+            <label>
+                Téléphone
+            </label>
+
+            <input id="supplierPhone">
+
+
+            <label>
+                Email
+            </label>
+
+            <input
+                type="email"
+                id="supplierEmail"
+            >
+
+
+            <label>
+                ICE
+            </label>
+
+            <input id="supplierIce">
+
+
+            <label>
+                IF
+            </label>
+
+            <input id="supplierIf">
+
+
+            <label>
+                Adresse
+            </label>
+
+            <textarea
+                id="supplierAddress"
+                rows="3"
+            ></textarea>
+
+
+            <label>
+                Total achats (DH)
+            </label>
+
+            <input
+                type="number"
+                id="supplierPurchases"
+                min="0"
+                step="0.01"
+                value="0"
+            >
+
+
+            <label>
+                Total payé (DH)
+            </label>
+
+            <input
+                type="number"
+                id="supplierPaid"
+                min="0"
+                step="0.01"
+                value="0"
+            >
+
+
+            <div class="modal-actions">
+
+                <button
+                    type="button"
+                    class="btn"
+                    onclick="closeModal('supplierModal')"
+                >
+
+                    Annuler
+
+                </button>
+
+
+                <button class="btn primary">
+
+                    Enregistrer
+
+                </button>
+
+            </div>
+
+
+        </form>
+
+
+    </div>
+
+
+</div>
+
+
+<!-- INVOICE MODAL -->
+
+<div
+    id="invoiceModal"
+    class="modal-overlay"
+>
+
+
+    <div class="modal invoice-modal">
+
+
+        <div class="modal-header">
+
+            <h2>
+                🧾 Nouvelle facture d'achat
+            </h2>
+
+            <button onclick="closeModal('invoiceModal')">
+                ×
+            </button>
+
+        </div>
+
+
+        <form id="invoiceForm">
+
+
+            <div class="form-grid">
+
+
+                <div>
+
+                    <label>
+                        Fournisseur *
+                    </label>
+
+                    <select
+                        id="invoiceSupplier"
+                        required
+                    ></select>
+
+                </div>
+
+
+                <div>
+
+                    <label>
+                        N° Facture *
+                    </label>
+
+                    <input
+                        id="invoiceNumber"
+                        required
+                    >
+
+                </div>
+
+
+                <div>
+
+                    <label>
+                        Date *
+                    </label>
+
+                    <input
+                        type="date"
+                        id="invoiceDate"
+                        required
+                    >
+
+                </div>
+
+
+                <div>
+
+                    <label>
+                        Taux TVA
+                    </label>
+
+                    <select
+                        id="invoiceTVARate"
+                        onchange="updateInvoiceTotals()"
+                    >
+
+                        <option value="20">
+                            20%
+                        </option>
+
+                        <option value="14">
+                            14%
+                        </option>
+
+                        <option value="10">
+                            10%
+                        </option>
+
+                        <option value="0">
+                            Exonéré
+                        </option>
+
+                    </select>
+
+                </div>
+
+
+            </div>
+
+
+            <div class="invoice-products-header">
+
+
+                <h3>
+                    📦 Produits de la facture
+                </h3>
+
+
+                <button
+                    type="button"
+                    class="btn primary"
+                    onclick="addInvoiceLine()"
+                >
+
+                    + Ajouter produit
+
+                </button>
+
+
+            </div>
+
+
+            <div id="invoiceLines"></div>
+
+
+            <div class="invoice-totals">
+
+
+                <div>
+
+                    <span>
+                        Total HT
+                    </span>
+
+                    <strong id="invoiceHTPreview">
+                        0 DH
+                    </strong>
+
+                </div>
+
+
+                <div>
+
+                    <span>
+                        TVA
+                    </span>
+
+                    <strong id="invoiceTVAPreview">
+                        0 DH
+                    </strong>
+
+                </div>
+
+
+                <div>
+
+                    <span>
+                        Total TTC
+                    </span>
+
+                    <strong id="invoiceTTCPreview">
+                        0 DH
+                    </strong>
+
+                </div>
+
+
+            </div>
+
+
+            <div class="payment-section">
+
+
+                <label>
+                    Montant payé
+                </label>
+
+
+                <input
+                    type="number"
+                    id="invoicePaid"
+                    min="0"
+                    step="0.01"
+                    value="0"
+                    oninput="updateInvoiceTotals()"
+                >
+
+
+                <div class="invoice-due-preview">
+
+                    Reste à payer:
+
+                    <strong id="invoiceDuePreview">
+                        0 DH
+                    </strong>
+
+                </div>
+
+
+            </div>
+
+
+            <div class="modal-actions">
+
+
+                <button
+                    type="button"
+                    class="btn"
+                    onclick="closeModal('invoiceModal')"
+                >
+
+                    Annuler
+
+                </button>
+
+
+                <button class="btn primary">
+
+                    Valider la facture
+
+                </button>
+
+
+            </div>
+
+
+        </form>
+
+
+    </div>
+
+
+</div>
+
+
+<!-- SCAN MODAL -->
+
+<div
+    id="scanModal"
+    class="modal-overlay"
+>
+
+
+    <div class="modal scan-modal">
+
+
+        <div class="modal-header">
+
+
+            <h2>
+                📸 Scanner une facture
+            </h2>
+
+
+            <button onclick="closeModal('scanModal')">
+                ×
+            </button>
+
+
+        </div>
+
+
+        <div class="scan-area">
+
+
+            <div class="scan-icon">
+                📄
+            </div>
+
+
+            <h3>
+                Importer votre facture
+            </h3>
+
+
+            <p>
+                Sélectionnez une image JPG, PNG, WEBP ou un fichier PDF.
+            </p>
+
+
+            <input
+                type="file"
+                id="invoiceFile"
+                accept="image/*,application/pdf,.pdf"
+                onchange="handleInvoiceFile(event)"
+            >
+
+
+            <div
+                id="scanPreview"
+                class="scan-preview"
+            ></div>
+
+
+            <p class="scan-note">
+
+                🔎 Le programme peut maintenant analyser une image ou les pages d'un PDF.
+
+            </p>
+
+
+        </div>
+
+
+    </div>
+
+
+</div>
+
+
+<!-- =====================================================
+     LIBRARIES
+===================================================== -->
+
+
+<!-- PDF.JS : lecture et rendu des fichiers PDF -->
+
+<script
+    src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
+></script>
+
+
+<script>
+
+    if(
+        typeof pdfjsLib !==
+        "undefined"
+    ){
+
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+    }
+
+</script>
+
+
+<!-- TESSERACT.JS : OCR -->
+
+<script
+    src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"
+></script>
+
+
+<!-- PAUSE & PLATE APP -->
+
+<script
+    src="js/app.js"
+></script>
+
+
+</body>
+
+
+</html>
