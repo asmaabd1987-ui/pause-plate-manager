@@ -6905,7 +6905,7 @@ function ensureTVAAchatsUIPP(){
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
             <div>
                 <h2 style="margin:0 0 4px">Situation TVA déductible</h2>
-                <p style="margin:0;color:#667085">Une ligne par facture et par taux de TVA déductible. Les lignes à 0% sont exclues.</p>
+                <p style="margin:0;color:#667085">TVA déductible selon la date de règlement. Les factures non réglées et les lignes à 0% sont exclues.</p>
             </div>
             <button type="button" class="btn print" onclick="printTVAAchatsPP()">🖨️ Imprimer la situation</button>
         </div>
@@ -7021,77 +7021,186 @@ function refreshTVAExtraFiltersPP(){
     }
 }
 
+function ppInvoicePaymentEventsTVA(inv){
+    const invoiceId=Number(inv?.id);
+    const events=[];
+    let allocatedTotal=0;
+
+    if(typeof supplierPaymentsPP!=='undefined' && Array.isArray(supplierPaymentsPP)){
+        supplierPaymentsPP.forEach(p=>{
+            (p.allocations||[]).forEach(a=>{
+                if(Number(a.invoiceId)!==invoiceId)return;
+                const amount=Math.max(Number(a.amount||0),0);
+                if(!(amount>0))return;
+                allocatedTotal+=amount;
+                events.push({
+                    date:String(p.date||'').slice(0,10),
+                    amount,
+                    mode:String(p.mode||'Règlement'),
+                    reference:String(p.reference||'')
+                });
+            });
+        });
+    }
+
+    // Ancien montant "payé à la facture" non représenté par un règlement séparé.
+    const directPaid=Math.max(Number(inv?.paid||0)-allocatedTotal,0);
+    if(directPaid>0){
+        events.push({
+            date:String(
+                inv?.paymentDate ||
+                inv?.dateReglement ||
+                inv?.payment_date ||
+                inv?.date ||
+                ''
+            ).slice(0,10),
+            amount:directPaid,
+            mode:String(
+                inv?.paymentMode ||
+                inv?.modeReglement ||
+                inv?.paymentMethod ||
+                'Saisi avec facture'
+            ),
+            reference:''
+        });
+    }
+
+    return events
+        .filter(e=>e.date && e.amount>0)
+        .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+}
+
 function getTVAAchatRowsPP(){
     const rows=[];
 
     invoices.forEach(inv=>{
         const supplier=suppliers.find(s=>Number(s.id)===Number(inv.supplierId));
-        const payment=ppInvoicePaymentInfoTVA(inv);
-        const grouped=new Map();
         const lines=Array.isArray(inv.lines)?inv.lines:[];
+        const grouped=new Map();
 
         lines.forEach(line=>{
             const rate=Number(line.vatRate ?? 0);
 
-            // TVA 0% is not part of the deductible VAT statement.
-            if(!(rate>0)) return;
+            // TVA 0% n'entre jamais dans la TVA déductible.
+            if(!(rate>0))return;
 
-            const ht=Number((line.totalHT ?? (Number(line.quantity||0)*Number(line.price||0))) || 0);
+            const ht=Number(
+                (line.totalHT ?? (Number(line.quantity||0)*Number(line.price||0))) || 0
+            );
             const vat=Number((line.vatAmount ?? (ht*rate/100)) || 0);
             const ttc=Number((line.totalTTC ?? (ht+vat)) || 0);
 
-            if(!grouped.has(rate)) grouped.set(rate,{ht:0,vat:0,ttc:0});
+            if(!grouped.has(rate))grouped.set(rate,{ht:0,vat:0,ttc:0});
             const g=grouped.get(rate);
             g.ht+=ht;
             g.vat+=vat;
             g.ttc+=ttc;
         });
 
-        // Older invoices without line detail: only include when a positive VAT can be derived.
+        // Compatibilité anciennes factures sans détail de lignes.
         if(!lines.length && Number(inv.tva||0)>0 && Number(inv.totalHT||0)>0){
             const ht=Number(inv.totalHT||0);
             const vat=Number(inv.tva||0);
             const raw=vat/ht*100;
             const allowed=[7,10,14,20];
-            const rate=allowed.reduce((best,x)=>Math.abs(x-raw)<Math.abs(best-raw)?x:best,allowed[0]);
-            grouped.set(rate,{ht,vat,ttc:Number(inv.totalTTC||ht+vat)});
+            const rate=allowed.reduce(
+                (best,x)=>Math.abs(x-raw)<Math.abs(best-raw)?x:best,
+                allowed[0]
+            );
+            grouped.set(rate,{
+                ht,
+                vat,
+                ttc:Number(inv.totalTTC||ht+vat)
+            });
         }
 
-        grouped.forEach((amounts,rate)=>{
-            rows.push({
-                invoiceId:inv.id,
-                date:inv.date,
-                invoiceNumber:inv.number||'',
-                supplierId:inv.supplierId,
-                supplierName:inv.supplierName||supplier?.name||'',
-                supplierICE:String(supplier?.ice||inv.supplierICE||inv.ice||''),
-                supplierNature:ppSupplierNatureTVA(supplier),
-                rate:Number(rate),
-                ht:Number(amounts.ht||0),
-                vat:Number(amounts.vat||0),
-                ttc:Number(amounts.ttc||0),
-                paymentMode:payment.mode,
-                paymentDate:payment.date,
-                paymentStatus:payment.status
+        // Une facture non réglée ne génère aucune TVA déductible.
+        const paymentEvents=ppInvoicePaymentEventsTVA(inv);
+        if(!paymentEvents.length || !grouped.size)return;
+
+        /*
+          La déduction suit le règlement.
+          En cas de paiement partiel, chaque paiement est ventilé
+          proportionnellement sur toutes les composantes de la facture,
+          y compris la partie à TVA 0%. Seule la part taxable est ensuite
+          retenue dans la TVA déductible.
+        */
+        const invoiceTTC=Math.max(
+            Number(inv.totalTTC||0),
+            [...grouped.values()].reduce((a,g)=>a+Number(g.ttc||0),0)
+        );
+        if(!(invoiceTTC>0))return;
+
+        let remainingInvoiceTTC=invoiceTTC;
+
+        paymentEvents.forEach(event=>{
+            if(!(remainingInvoiceTTC>0))return;
+
+            const paidPart=Math.min(Number(event.amount||0),remainingInvoiceTTC);
+            if(!(paidPart>0))return;
+
+            const ratio=paidPart/invoiceTTC;
+
+            grouped.forEach((amounts,rate)=>{
+                const ht=Number(amounts.ht||0)*ratio;
+                const vat=Number(amounts.vat||0)*ratio;
+                const ttc=Number(amounts.ttc||0)*ratio;
+
+                // Evite les lignes insignifiantes dues aux arrondis.
+                if(!(ttc>0.000001 || vat>0.000001))return;
+
+                rows.push({
+                    source:'invoice-payment',
+                    invoiceId:inv.id,
+                    date:inv.date,                 // date facture affichée
+                    deductionDate:event.date,      // date utilisée pour période/trimestre TVA
+                    invoiceNumber:inv.number||'',
+                    supplierId:inv.supplierId,
+                    supplierName:inv.supplierName||supplier?.name||'',
+                    supplierICE:String(
+                        supplier?.ice ||
+                        inv.supplierICE ||
+                        inv.ice ||
+                        ''
+                    ),
+                    supplierNature:ppSupplierNatureTVA(supplier),
+                    rate:Number(rate),
+                    ht,
+                    vat,
+                    ttc,
+                    paymentMode:event.mode||'Règlement',
+                    paymentDate:event.date,
+                    paymentReference:event.reference||'',
+                    paymentStatus:Number(inv?.due||0)>0?'Partiel':'Réglée'
+                });
             });
+
+            remainingInvoiceTTC-=paidPart;
         });
     });
 
-
-    // Dépenses avec TVA : frais bancaires, électricité, téléphone, internet, etc.
-    // 0% is deliberately excluded from TVA déductible.
+    /*
+      Dépenses avec TVA (banque, électricité, internet, téléphone...).
+      Elles sont considérées déductibles à leur date de règlement.
+    */
     if(typeof expensesPP!=='undefined' && Array.isArray(expensesPP)){
         expensesPP.forEach(e=>{
             const rate=Number(e.vatRate||0);
             if(!(rate>0))return;
+
+            const paymentDate=String(e.paymentDate||e.date||'').slice(0,10);
+            if(!paymentDate)return;
+
             const ht=Number(e.totalHT||0);
             const vat=Number(e.vatAmount||0);
             const ttc=Number(e.totalTTC??e.amount??(ht+vat));
+
             rows.push({
                 source:'expense',
                 expenseId:e.id,
                 invoiceId:'expense-'+e.id,
                 date:e.date,
+                deductionDate:paymentDate,
                 invoiceNumber:e.reference||'DÉP-'+e.id,
                 supplierId:null,
                 supplierName:e.beneficiary||e.category||'Dépense',
@@ -7102,7 +7211,7 @@ function getTVAAchatRowsPP(){
                 vat,
                 ttc,
                 paymentMode:e.mode||'-',
-                paymentDate:e.paymentDate||e.date||'',
+                paymentDate,
                 paymentStatus:'Réglée'
             });
         });
@@ -7122,7 +7231,7 @@ function filteredTVAAchatRowsPP(){
     const rate=Number(rateRaw);
 
     return getTVAAchatRowsPP().filter(r=>{
-        const d=String(r.date||'').slice(0,10);
+        const d=String(r.deductionDate||r.paymentDate||r.date||'').slice(0,10);
         if(from && d<from)return false;
         if(to && d>to)return false;
         if(supplier && Number(r.supplierId)!==supplier)return false;
@@ -7173,7 +7282,7 @@ function renderTVAAchatsPP(){
     }
 
     const sorted=rows.slice().sort((a,b)=>{
-        const d=new Date(b.date||0)-new Date(a.date||0);
+        const d=new Date(b.deductionDate||b.paymentDate||b.date||0)-new Date(a.deductionDate||a.paymentDate||a.date||0);
         return d || String(a.invoiceNumber||'').localeCompare(String(b.invoiceNumber||'')) || Number(a.rate)-Number(b.rate);
     });
 
@@ -7225,7 +7334,7 @@ function printTVAAchatsPP(){
         return `<tr><td>${rate}%</td><td>${formatMoney(ht)}</td><td>${formatMoney(vat)}</td><td>${formatMoney(ttc)}</td><td>${count}</td></tr>`;
     }).join('');
 
-    const body=rows.slice().sort((a,b)=>new Date(a.date||0)-new Date(b.date||0) || Number(a.rate)-Number(b.rate)).map(r=>`<tr>
+    const body=rows.slice().sort((a,b)=>new Date(a.deductionDate||a.paymentDate||a.date||0)-new Date(b.deductionDate||b.paymentDate||b.date||0) || Number(a.rate)-Number(b.rate)).map(r=>`<tr>
         <td>${formatDate(r.date)}</td><td>${escapeHTML(r.invoiceNumber||'')}</td><td>${escapeHTML(r.supplierName||'')}</td>
         <td>${escapeHTML(r.supplierICE||'-')}</td><td>${escapeHTML(r.supplierNature||'-')}</td><td>${formatNumber(r.rate)}%</td>
         <td>${formatMoney(r.ht)}</td><td>${formatMoney(r.vat)}</td><td>${formatMoney(r.ttc)}</td>
@@ -7474,7 +7583,7 @@ function getTVAQuarterSituationPP(){
     const salesRows=getTVACollecteeRowsPP();
     const keys=new Set();
 
-    purchaseRows.forEach(r=>{const x=ppQuarterInfo(r.date);if(x)keys.add(x.key);});
+    purchaseRows.forEach(r=>{const x=ppQuarterInfo(r.deductionDate||r.paymentDate||r.date);if(x)keys.add(x.key);});
     salesRows.forEach(r=>{const x=ppQuarterInfo(r.date);if(x)keys.add(x.key);});
 
     // Always include current quarter.
@@ -7490,7 +7599,7 @@ function getTVAQuarterSituationPP(){
     return sorted.map(key=>{
         const [year,q]=key.split('-T').map(Number);
         const collected=salesRows.filter(r=>ppQuarterInfo(r.date)?.key===key).reduce((a,r)=>a+Number(r.vat||0),0);
-        const deductible=purchaseRows.filter(r=>ppQuarterInfo(r.date)?.key===key).reduce((a,r)=>a+Number(r.vat||0),0);
+        const deductible=purchaseRows.filter(r=>ppQuarterInfo(r.deductionDate||r.paymentDate||r.date)?.key===key).reduce((a,r)=>a+Number(r.vat||0),0);
         const creditReported=creditCarry;
         const net=collected-deductible-creditReported;
         const payable=Math.max(net,0);
