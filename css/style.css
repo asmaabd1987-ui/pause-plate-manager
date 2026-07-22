@@ -2146,3 +2146,19 @@ details summary{
         min-width:170px;
     }
 }
+
+
+/* ===== FIREBASE CLOUD LOGIN ===== */
+.pp-cloud-locked{filter:blur(2px);pointer-events:none;user-select:none}
+#ppFirebaseLogin{position:fixed;inset:0;z-index:99999;background:linear-gradient(135deg,#06351F,#094B2D);display:flex;align-items:center;justify-content:center;padding:20px}
+.pp-cloud-login-card{width:min(420px,100%);background:#fff;border-radius:20px;padding:30px;box-shadow:0 24px 80px rgba(0,0,0,.3)}
+.pp-cloud-logo{text-align:center;color:#094B2D;font-weight:800;font-size:28px}
+.pp-cloud-subtitle{text-align:center;color:#D9A51E;font-size:12px;font-weight:700;letter-spacing:2px;margin:5px 0 25px}
+.pp-cloud-login-card form{display:flex;flex-direction:column;gap:9px}
+.pp-cloud-login-card label{font-size:12px;font-weight:700;color:#094B2D;margin-top:6px}
+.pp-cloud-login-card .btn{margin-top:12px}
+.pp-cloud-message{min-height:20px;color:#C62828;font-size:12px;margin-top:4px}
+.pp-cloud-user-box{display:flex;align-items:center;gap:9px;margin-left:auto;margin-right:16px;font-size:11px;color:#667085}
+.pp-cloud-user-box #ppCloudStatus{font-weight:700;color:#094B2D}
+.pp-cloud-user-box button{border:0;background:#F1F5F2;color:#094B2D;border-radius:7px;padding:7px 9px;font-size:10px;font-weight:700}
+@media(max-width:800px){.pp-cloud-user-box small{display:none}.pp-cloud-user-box{margin-right:6px}}

@@ -6340,10 +6340,7 @@ function ensurePPExtraUI(){
     ensureClientModalsPP();
 }
 
-document.addEventListener("DOMContentLoaded", function(){
-    ensurePPExtraUI();
-    renderAll();
-});
+// Firebase bootstrap handles initial rendering after authentication.
 
 /* ======================== TVA HISTORIQUE ======================== */
 function findLastPurchaseVatForProduct(productId, productName){
@@ -9634,3 +9631,333 @@ renderSalesPP=function(){
     if(daily)daily.style.display=ppSalesSubtab==='daily'?'block':'none';
     if(control)control.style.display=ppSalesSubtab==='control'?'block':'none';
 };
+
+
+/* =========================================================
+   FIREBASE CLOUD SYNC — PAUSE & PLATE
+   Authentication + Firestore + LocalStorage migration
+========================================================= */
+
+const PP_FIREBASE_CONFIG = {
+    apiKey: "AIzaSyCFmkzzPddjyfVxseHR2OyeI-Vv9E36ZG0",
+    authDomain: "pause-plate-manager.firebaseapp.com",
+    projectId: "pause-plate-manager",
+    storageBucket: "pause-plate-manager.firebasestorage.app",
+    messagingSenderId: "99579367646",
+    appId: "1:99579367646:web:c755e97bdcfee14a87724f",
+    measurementId: "G-JB3R86P8E0"
+};
+
+const PP_COMPANY_ID = "pause-plate-manager";
+const PP_ADMIN_EMAIL = "asmaabd1987@gmail.com";
+let ppFirebaseApp = null;
+let ppAuth = null;
+let ppDb = null;
+let ppCurrentUser = null;
+let ppCurrentRole = "admin";
+let ppCloudReady = false;
+let ppCloudSaveTimer = null;
+let ppCloudSaving = false;
+let ppCloudListeners = [];
+let ppApplyingCloudState = false;
+
+const PP_CLOUD_DATASETS = {
+    products: () => products,
+    movements: () => movements,
+    suppliers: () => suppliers,
+    invoices: () => invoices,
+    supplierPayments: () => supplierPaymentsPP,
+    clients: () => clientsPP,
+    clientInvoices: () => clientInvoicesPP,
+    clientPayments: () => clientPaymentsPP,
+    sales: () => salesPP,
+    expenses: () => expensesPP,
+    recipes: () => recipesPP,
+    dailySalesScans: () => dailySalesScansPP
+};
+
+function ppFirebaseAvailable(){
+    return typeof firebase !== "undefined" && firebase.apps !== undefined;
+}
+
+function ppDataDoc(key){
+    return ppDb.collection("companies").doc(PP_COMPANY_ID).collection("data").doc(key);
+}
+
+function ppMetaDoc(){
+    return ppDb.collection("companies").doc(PP_COMPANY_ID).collection("meta").doc("app");
+}
+
+function ppUserDoc(uid){
+    return ppDb.collection("users").doc(uid);
+}
+
+function ppShowLogin(message=""){
+    let overlay=document.getElementById("ppFirebaseLogin");
+    if(!overlay){
+        overlay=document.createElement("div");
+        overlay.id="ppFirebaseLogin";
+        overlay.innerHTML=`
+          <div class="pp-cloud-login-card">
+            <div class="pp-cloud-logo">Pause & Plate</div>
+            <div class="pp-cloud-subtitle">MANAGER — Connexion Cloud</div>
+            <form id="ppCloudLoginForm">
+              <label>Email</label>
+              <input id="ppCloudEmail" type="email" autocomplete="username" required>
+              <label>Mot de passe</label>
+              <input id="ppCloudPassword" type="password" autocomplete="current-password" required>
+              <div id="ppCloudLoginMessage" class="pp-cloud-message"></div>
+              <button class="btn primary" type="submit">Se connecter</button>
+            </form>
+          </div>`;
+        document.body.appendChild(overlay);
+        document.getElementById("ppCloudEmail").value=localStorage.getItem("pause_plate_last_email")||PP_ADMIN_EMAIL;
+        document.getElementById("ppCloudLoginForm").addEventListener("submit",async e=>{
+            e.preventDefault();
+            const email=getValue("ppCloudEmail").trim();
+            const password=getValue("ppCloudPassword");
+            const msg=document.getElementById("ppCloudLoginMessage");
+            msg.textContent="Connexion...";
+            try{
+                localStorage.setItem("pause_plate_last_email",email);
+                await ppAuth.signInWithEmailAndPassword(email,password);
+            }catch(err){
+                console.error(err);
+                msg.textContent=ppFriendlyAuthError(err);
+            }
+        });
+    }
+    const msg=document.getElementById("ppCloudLoginMessage");
+    if(msg)msg.textContent=message;
+    overlay.style.display="flex";
+    document.querySelector(".app")?.classList.add("pp-cloud-locked");
+}
+
+function ppHideLogin(){
+    const overlay=document.getElementById("ppFirebaseLogin");
+    if(overlay)overlay.style.display="none";
+    document.querySelector(".app")?.classList.remove("pp-cloud-locked");
+}
+
+function ppFriendlyAuthError(err){
+    const code=String(err?.code||"");
+    if(code.includes("invalid-credential")||code.includes("wrong-password")||code.includes("user-not-found")) return "Email ou mot de passe incorrect.";
+    if(code.includes("too-many-requests")) return "Trop de tentatives. Réessayez plus tard.";
+    if(code.includes("network")) return "Connexion internet indisponible.";
+    return "Connexion impossible: "+(err?.message||"Erreur inconnue");
+}
+
+function ppAddCloudHeader(){
+    const profile=document.querySelector(".profile");
+    if(!profile||document.getElementById("ppCloudUserBox"))return;
+    const box=document.createElement("div");
+    box.id="ppCloudUserBox";
+    box.className="pp-cloud-user-box";
+    box.innerHTML=`<span id="ppCloudStatus">☁️ Cloud</span><small id="ppCloudUser"></small><button type="button" onclick="ppLogout()">Déconnexion</button>`;
+    profile.parentNode?.insertBefore(box,profile);
+}
+
+async function ppLogout(){
+    if(ppAuth)await ppAuth.signOut();
+}
+
+async function ppEnsureUserProfile(user){
+    const ref=ppUserDoc(user.uid);
+    const snap=await ref.get();
+    if(snap.exists){
+        const data=snap.data()||{};
+        ppCurrentRole=String(data.role||"stock");
+        return;
+    }
+    const role=String(user.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase()?"admin":"stock";
+    ppCurrentRole=role;
+    await ref.set({
+        email:user.email||"",
+        role,
+        active:true,
+        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+    },{merge:true});
+}
+
+function ppStateSnapshot(){
+    const out={};
+    Object.entries(PP_CLOUD_DATASETS).forEach(([key,getter])=>out[key]=getter());
+    return out;
+}
+
+function ppSetDataset(key,items){
+    const safe=Array.isArray(items)?items:[];
+    switch(key){
+        case "products": products=safe; break;
+        case "movements": movements=safe; break;
+        case "suppliers": suppliers=safe; break;
+        case "invoices": invoices=safe; break;
+        case "supplierPayments": supplierPaymentsPP=safe; break;
+        case "clients": clientsPP=safe; break;
+        case "clientInvoices": clientInvoicesPP=safe; break;
+        case "clientPayments": clientPaymentsPP=safe; break;
+        case "sales": salesPP=safe; break;
+        case "expenses": expensesPP=safe; break;
+        case "recipes": recipesPP=safe; break;
+        case "dailySalesScans": dailySalesScansPP=safe; break;
+    }
+}
+
+function ppSaveLocalOnly(){
+    localStorage.setItem(STORAGE_KEYS.products,JSON.stringify(products));
+    localStorage.setItem(STORAGE_KEYS.movements,JSON.stringify(movements));
+    localStorage.setItem(STORAGE_KEYS.suppliers,JSON.stringify(suppliers));
+    localStorage.setItem(STORAGE_KEYS.invoices,JSON.stringify(invoices));
+    localStorage.setItem(PP_EXTRA_KEYS.supplierPayments,JSON.stringify(supplierPaymentsPP));
+    localStorage.setItem(PP_EXTRA_KEYS.clients,JSON.stringify(clientsPP));
+    localStorage.setItem(PP_EXTRA_KEYS.clientInvoices,JSON.stringify(clientInvoicesPP));
+    localStorage.setItem(PP_EXTRA_KEYS.clientPayments,JSON.stringify(clientPaymentsPP));
+    localStorage.setItem(PP_EXTRA_KEYS.sales,JSON.stringify(salesPP));
+    localStorage.setItem(PP_EXTRA_KEYS.expenses,JSON.stringify(expensesPP));
+    localStorage.setItem(PP_EXTRA_KEYS.recipes,JSON.stringify(recipesPP));
+    localStorage.setItem(PP_EXTRA_KEYS.dailySalesScans,JSON.stringify(dailySalesScansPP));
+}
+
+function ppLocalHasData(){
+    return products.length||movements.length||suppliers.length||invoices.length||supplierPaymentsPP.length||clientsPP.length||clientInvoicesPP.length||clientPaymentsPP.length||salesPP.length||expensesPP.length||recipesPP.length||dailySalesScansPP.length;
+}
+
+async function ppCloudHasData(){
+    const meta=await ppMetaDoc().get();
+    if(meta.exists&&meta.data()?.initialized)return true;
+    const productDoc=await ppDataDoc("products").get();
+    return productDoc.exists;
+}
+
+async function ppUploadAllLocalToCloud(){
+    const state=ppStateSnapshot();
+    const batch=ppDb.batch();
+    Object.entries(state).forEach(([key,items])=>{
+        batch.set(ppDataDoc(key),{items,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:ppCurrentUser?.uid||null});
+    });
+    batch.set(ppMetaDoc(),{
+        initialized:true,
+        migratedAt:firebase.firestore.FieldValue.serverTimestamp(),
+        migratedBy:ppCurrentUser?.uid||null,
+        schemaVersion:1
+    },{merge:true});
+    await batch.commit();
+}
+
+async function ppLoadAllCloud(){
+    ppApplyingCloudState=true;
+    try{
+        for(const key of Object.keys(PP_CLOUD_DATASETS)){
+            const snap=await ppDataDoc(key).get();
+            if(snap.exists)ppSetDataset(key,snap.data()?.items||[]);
+        }
+        ppSaveLocalOnly();
+    }finally{ppApplyingCloudState=false;}
+}
+
+function ppStopCloudListeners(){
+    ppCloudListeners.forEach(fn=>{try{fn();}catch(_){}});
+    ppCloudListeners=[];
+}
+
+function ppStartCloudListeners(){
+    ppStopCloudListeners();
+    Object.keys(PP_CLOUD_DATASETS).forEach(key=>{
+        const unsub=ppDataDoc(key).onSnapshot(snap=>{
+            if(!ppCloudReady||ppCloudSaving||!snap.exists)return;
+            const remote=snap.data()?.items;
+            if(!Array.isArray(remote))return;
+            ppApplyingCloudState=true;
+            try{
+                ppSetDataset(key,remote);
+                ppSaveLocalOnly();
+                renderAll();
+            }finally{ppApplyingCloudState=false;}
+        },err=>console.error("Firestore listener",key,err));
+        ppCloudListeners.push(unsub);
+    });
+}
+
+async function ppSaveCloudNow(){
+    if(!ppCloudReady||!ppCurrentUser||ppApplyingCloudState||ppCloudSaving)return;
+    ppCloudSaving=true;
+    const status=document.getElementById("ppCloudStatus");
+    if(status)status.textContent="☁️ Synchronisation...";
+    try{
+        const state=ppStateSnapshot();
+        const batch=ppDb.batch();
+        Object.entries(state).forEach(([key,items])=>batch.set(ppDataDoc(key),{
+            items,
+            updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+            updatedBy:ppCurrentUser.uid
+        }));
+        await batch.commit();
+        if(status)status.textContent="✅ Synchronisé";
+    }catch(err){
+        console.error("Cloud save failed",err);
+        if(status)status.textContent="⚠️ Hors ligne — sauvegarde locale";
+    }finally{ppCloudSaving=false;}
+}
+
+function ppScheduleCloudSave(){
+    if(!ppCloudReady||ppApplyingCloudState)return;
+    clearTimeout(ppCloudSaveTimer);
+    ppCloudSaveTimer=setTimeout(ppSaveCloudNow,500);
+}
+
+// Upgrade the existing saveData: local immediately, cloud in background.
+const ppLegacySaveData = saveData;
+saveData = function(){
+    ppLegacySaveData();
+    ppScheduleCloudSave();
+};
+
+async function ppBootstrapCloud(user){
+    ppCurrentUser=user;
+    await ppEnsureUserProfile(user);
+    const cloudHas=await ppCloudHasData();
+    if(!cloudHas){
+        if(ppLocalHasData()){
+            const ok=confirm("Première connexion Cloud. Copier les données de cet ordinateur vers Firebase ?\n\nChoisissez OK sur l’ordinateur qui contient la version la plus complète des données.");
+            if(ok)await ppUploadAllLocalToCloud();
+            else await ppMetaDoc().set({initialized:true,schemaVersion:1,createdAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});
+        }else{
+            await ppUploadAllLocalToCloud();
+        }
+    }else{
+        await ppLoadAllCloud();
+    }
+    ppCloudReady=true;
+    ppAddCloudHeader();
+    const userText=document.getElementById("ppCloudUser");
+    if(userText)userText.textContent=(user.email||"")+" — "+ppCurrentRole;
+    ppHideLogin();
+    ensurePPExtraUI();
+    renderAll();
+    ppStartCloudListeners();
+}
+
+function ppInitFirebase(){
+    if(!ppFirebaseAvailable()){
+        alert("Firebase n'a pas pu être chargé. Vérifiez la connexion Internet.");
+        ensurePPExtraUI();renderAll();return;
+    }
+    ppFirebaseApp=firebase.apps.length?firebase.app():firebase.initializeApp(PP_FIREBASE_CONFIG);
+    ppAuth=firebase.auth();
+    ppDb=firebase.firestore();
+    try{ppDb.enablePersistence({synchronizeTabs:true}).catch(()=>{});}catch(_){ }
+
+    ppShowLogin();
+    ppAuth.onAuthStateChanged(async user=>{
+        if(!user){
+            ppCloudReady=false;ppCurrentUser=null;ppStopCloudListeners();ppShowLogin();return;
+        }
+        const msg=document.getElementById("ppCloudLoginMessage");if(msg)msg.textContent="Chargement des données Cloud...";
+        try{await ppBootstrapCloud(user);}catch(err){
+            console.error(err);
+            ppShowLogin("Erreur Firebase: "+(err?.message||err));
+        }
+    });
+}
+
+document.addEventListener("DOMContentLoaded",ppInitFirebase);
