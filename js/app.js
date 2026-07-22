@@ -10920,3 +10920,108 @@ ppBootstrapCloud = async function(user){
 // Also refresh on delayed UI renders/listeners.
 setTimeout(ppFinalizeRoleUI,1500);
 setTimeout(ppFinalizeRoleUI,3000);
+
+
+/* =========================================================
+   FIRESTORE STRICT-ROLE SYNC
+   Admin: all datasets
+   Employee: products + movements + expenses only
+========================================================= */
+
+function ppCloudKeysForCurrentUser(){
+    if(ppIsAdmin()) return Object.keys(PP_CLOUD_DATASETS);
+    const perms=ppCurrentUserProfile?.permissions||{};
+    const keys=[];
+    if(perms.stock!==false){
+        keys.push("products","movements");
+    }
+    if(perms.expenses!==false){
+        keys.push("expenses");
+    }
+    return [...new Set(keys)];
+}
+
+ppLoadAllCloud = async function(){
+    ppApplyingCloudState=true;
+    try{
+        const keys=ppCloudKeysForCurrentUser();
+        for(const key of keys){
+            const snap=await ppDataDoc(key).get();
+            if(snap.exists)ppSetDataset(key,snap.data()?.items||[]);
+        }
+
+        // Employees must not retain sensitive cached datasets from a prior Admin session
+        // on the same browser/computer.
+        if(!ppIsAdmin()){
+            const allowed=new Set(keys);
+            Object.keys(PP_CLOUD_DATASETS).forEach(key=>{
+                if(!allowed.has(key)) ppSetDataset(key,[]);
+            });
+        }
+
+        ppSaveLocalOnly();
+    }finally{
+        ppApplyingCloudState=false;
+    }
+};
+
+ppStartCloudListeners = function(){
+    ppStopCloudListeners();
+    ppCloudKeysForCurrentUser().forEach(key=>{
+        const unsub=ppDataDoc(key).onSnapshot(snap=>{
+            if(!ppCloudReady||ppCloudSaving||!snap.exists)return;
+            const remote=snap.data()?.items;
+            if(!Array.isArray(remote))return;
+            ppApplyingCloudState=true;
+            try{
+                ppSetDataset(key,remote);
+                ppSaveLocalOnly();
+                renderAll();
+                ppFinalizeRoleUI?.();
+            }finally{
+                ppApplyingCloudState=false;
+            }
+        },err=>console.error("Firestore listener",key,err));
+        ppCloudListeners.push(unsub);
+    });
+};
+
+ppSaveCloudNow = async function(){
+    if(!ppCloudReady||!ppCurrentUser||ppApplyingCloudState||ppCloudSaving)return;
+    ppCloudSaving=true;
+    const status=document.getElementById("ppCloudStatus");
+    if(status)status.textContent="☁️ Synchronisation...";
+    try{
+        const state=ppStateSnapshot();
+        const allowedKeys=ppCloudKeysForCurrentUser();
+        const batch=ppDb.batch();
+
+        allowedKeys.forEach(key=>{
+            batch.set(ppDataDoc(key),{
+                items:Array.isArray(state[key])?state[key]:[],
+                updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+                updatedBy:ppCurrentUser.uid
+            });
+        });
+
+        await batch.commit();
+        if(status)status.textContent="✅ Synchronisé";
+    }catch(err){
+        console.error("Cloud save failed",err);
+        if(status)status.textContent="⚠️ Synchronisation refusée";
+        alert("La synchronisation Cloud a été refusée. Vérifiez les permissions de l'utilisateur.");
+    }finally{
+        ppCloudSaving=false;
+    }
+};
+
+// Employee should not initialize/migrate the entire company database.
+ppCloudHasData = async function(){
+    if(ppIsAdmin()){
+        const meta=await ppMetaDoc().get();
+        if(meta.exists&&meta.data()?.initialized)return true;
+    }
+    const productDoc=await ppDataDoc("products").get();
+    return productDoc.exists;
+};
+
