@@ -10676,3 +10676,139 @@ async function ppToggleEmployee(uid,activate){
 }
 
 setTimeout(ppEnsureUserManagerButton,1200);
+
+
+/* =========================================================
+   ADMINISTRATION SIDEBAR + JOURNAL D'ACTIVITÉ
+========================================================= */
+
+function ppRefreshAdminSidebar(){
+    const box=document.getElementById("ppAdminSidebar");
+    if(!box)return;
+    box.style.display=ppIsAdmin() ? "block" : "none";
+}
+
+function ppOpenGlobalAudit(){
+    if(!ppIsAdmin()){
+        alert("Réservé à l'administrateur.");
+        return;
+    }
+
+    let m=document.getElementById("ppGlobalAuditModal");
+    if(!m){
+        m=document.createElement("div");
+        m.id="ppGlobalAuditModal";
+        m.className="modal-overlay";
+        m.innerHTML=`
+          <div class="modal" style="max-width:1150px">
+            <div class="modal-header">
+              <h2>🕘 Journal d'activité</h2>
+              <button onclick="closeModal('ppGlobalAuditModal')">×</button>
+            </div>
+
+            <div class="filters" style="margin-bottom:14px">
+              <input id="ppAuditSearch" placeholder="🔍 Utilisateur, opération, produit..." oninput="ppRenderGlobalAudit()">
+              <select id="ppAuditModule" onchange="ppRenderGlobalAudit()">
+                <option value="">Tous les modules</option>
+                <option value="stock">Stock</option>
+                <option value="expenses">Dépenses</option>
+                <option value="users">Utilisateurs</option>
+              </select>
+              <select id="ppAuditAction" onchange="ppRenderGlobalAudit()">
+                <option value="">Toutes les opérations</option>
+                <option value="create">Création</option>
+                <option value="update">Modification</option>
+                <option value="delete">Suppression</option>
+                <option value="activate">Activation</option>
+                <option value="deactivate">Désactivation</option>
+              </select>
+              <input id="ppAuditDate" type="date" onchange="ppRenderGlobalAudit()">
+            </div>
+
+            <div id="ppGlobalAuditBody"></div>
+
+            <div class="modal-actions">
+              <button class="btn" onclick="closeModal('ppGlobalAuditModal')">Fermer</button>
+            </div>
+          </div>`;
+        document.body.appendChild(m);
+    }
+    ppRenderGlobalAudit();
+    openModal("ppGlobalAuditModal");
+}
+
+function ppRenderGlobalAudit(){
+    const body=document.getElementById("ppGlobalAuditBody");
+    if(!body)return;
+
+    const search=String(document.getElementById("ppAuditSearch")?.value||"").trim().toLowerCase();
+    const module=String(document.getElementById("ppAuditModule")?.value||"");
+    const action=String(document.getElementById("ppAuditAction")?.value||"");
+    const date=String(document.getElementById("ppAuditDate")?.value||"");
+
+    let rows=(Array.isArray(ppAuditTrail)?ppAuditTrail:[]).slice().sort((a,b)=>new Date(b.at)-new Date(a.at));
+    rows=rows.filter(x=>{
+        if(module && x.module!==module)return false;
+        if(action && x.action!==action)return false;
+        if(date && String(x.at||"").slice(0,10)!==date)return false;
+        if(search){
+            const hay=[
+                x.label,x.module,x.action,x.entityId,
+                x.user?.name,x.user?.email,x.user?.role
+            ].join(" ").toLowerCase();
+            if(!hay.includes(search))return false;
+        }
+        return true;
+    });
+
+    if(!rows.length){
+        body.innerHTML='<div class="empty-state"><div>🕘</div><h3>Aucune opération</h3><p>Aucune activité ne correspond aux filtres.</p></div>';
+        return;
+    }
+
+    const actionLabel={create:"Création",update:"Modification",delete:"Suppression",activate:"Activation",deactivate:"Désactivation"};
+    const moduleLabel={stock:"Stock",expenses:"Dépenses",users:"Utilisateurs"};
+
+    body.innerHTML=`
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Date & heure</th>
+              <th>Utilisateur</th>
+              <th>Module</th>
+              <th>Opération</th>
+              <th>Élément</th>
+              <th>Version</th>
+              <th>Détails</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(x=>`
+              <tr>
+                <td>${escapeHTML(new Date(x.at).toLocaleString("fr-FR"))}</td>
+                <td><strong>${escapeHTML(x.user?.name||x.user?.email||"Utilisateur")}</strong></td>
+                <td>${escapeHTML(moduleLabel[x.module]||x.module||"-")}</td>
+                <td>${escapeHTML(actionLabel[x.action]||x.action||"-")}</td>
+                <td>${escapeHTML(x.label||x.entityId||"-")}</td>
+                <td>${Number(x.version||1)}</td>
+                <td>
+                  ${(x.module==="stock"||x.module==="expenses")
+                    ? `<button class="btn small view" type="button" onclick="ppShowAudit('${String(x.module).replace(/'/g,"")}','${String(x.entityId).replace(/'/g,"")}','Historique complet')">👁 Voir</button>`
+                    : "—"}
+                </td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`;
+}
+
+// Refresh after login/profile loading and on startup.
+const ppOldApplyPermissionsUI=ppApplyPermissionsUI;
+ppApplyPermissionsUI=function(){
+    const result=ppOldApplyPermissionsUI.apply(this,arguments);
+    ppRefreshAdminSidebar();
+    return result;
+};
+
+setTimeout(ppRefreshAdminSidebar,1000);
