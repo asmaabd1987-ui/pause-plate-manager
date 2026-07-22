@@ -9889,6 +9889,18 @@ function ppUserDoc(uid){
     return ppDb.collection("users").doc(uid);
 }
 
+function ppUsernameToAuthEmail(username){
+    const u=String(username||"").trim().toLowerCase();
+    if(!u)return "";
+    // Keep admin simple: username "admin" uses the existing real Firebase admin account.
+    if(u==="admin" || u==="asma" || u==="asmaabd1987-ui")return PP_ADMIN_EMAIL;
+    // Backward-compatible: an email can still be used by the administrator if needed.
+    if(u.includes("@"))return u;
+    // Employees never see this internal technical email.
+    const safe=u.replace(/[^a-z0-9._-]/g,"").replace(/^[._-]+|[._-]+$/g,"");
+    return safe ? `${safe}@pauseplate-employee.com` : "";
+}
+
 function ppShowLogin(message=""){
     let overlay=document.getElementById("ppFirebaseLogin");
     if(!overlay){
@@ -9897,10 +9909,10 @@ function ppShowLogin(message=""){
         overlay.innerHTML=`
           <div class="pp-cloud-login-card">
             <div class="pp-cloud-logo">Pause & Plate</div>
-            <div class="pp-cloud-subtitle">MANAGER — Connexion Cloud</div>
+            <div class="pp-cloud-subtitle">MANAGER — Connexion</div>
             <form id="ppCloudLoginForm">
-              <label>Email</label>
-              <input id="ppCloudEmail" type="email" autocomplete="username" required>
+              <label>Utilisateur</label>
+              <input id="ppCloudUsername" type="text" autocomplete="username" placeholder="Ex: admin, ahmed, stock1" required>
               <label>Mot de passe</label>
               <input id="ppCloudPassword" type="password" autocomplete="current-password" required>
               <div id="ppCloudLoginMessage" class="pp-cloud-message"></div>
@@ -9908,15 +9920,17 @@ function ppShowLogin(message=""){
             </form>
           </div>`;
         document.body.appendChild(overlay);
-        document.getElementById("ppCloudEmail").value=localStorage.getItem("pause_plate_last_email")||PP_ADMIN_EMAIL;
+        document.getElementById("ppCloudUsername").value=localStorage.getItem("pause_plate_last_username")||"admin";
         document.getElementById("ppCloudLoginForm").addEventListener("submit",async e=>{
             e.preventDefault();
-            const email=getValue("ppCloudEmail").trim();
+            const username=getValue("ppCloudUsername").trim();
+            const email=ppUsernameToAuthEmail(username);
             const password=getValue("ppCloudPassword");
             const msg=document.getElementById("ppCloudLoginMessage");
+            if(!email){msg.textContent="Nom d'utilisateur invalide.";return;}
             msg.textContent="Connexion...";
             try{
-                localStorage.setItem("pause_plate_last_email",email);
+                localStorage.setItem("pause_plate_last_username",username);
                 await ppAuth.signInWithEmailAndPassword(email,password);
             }catch(err){
                 console.error(err);
@@ -9938,7 +9952,7 @@ function ppHideLogin(){
 
 function ppFriendlyAuthError(err){
     const code=String(err?.code||"");
-    if(code.includes("invalid-credential")||code.includes("wrong-password")||code.includes("user-not-found")) return "Email ou mot de passe incorrect.";
+    if(code.includes("invalid-credential")||code.includes("wrong-password")||code.includes("user-not-found")) return "Utilisateur ou mot de passe incorrect.";
     if(code.includes("too-many-requests")) return "Trop de tentatives. Réessayez plus tard.";
     if(code.includes("network")) return "Connexion internet indisponible.";
     return "Connexion impossible: "+(err?.message||"Erreur inconnue");
@@ -9959,21 +9973,60 @@ async function ppLogout(){
 }
 
 async function ppEnsureUserProfile(user){
-    const ref=ppUserDoc(user.uid);
-    const snap=await ref.get();
-    if(snap.exists){
-        const data=snap.data()||{};
-        ppCurrentRole=String(data.role||"stock");
-        return;
+    const profileRef=ppDb.collection("userProfiles").doc(user.uid);
+    const legacyRef=ppUserDoc(user.uid);
+    let profile=null;
+
+    try{
+        const snap=await profileRef.get();
+        if(snap.exists)profile=snap.data()||{};
+    }catch(_){}
+
+    if(!profile){
+        const legacySnap=await legacyRef.get();
+        if(legacySnap.exists)profile=legacySnap.data()||{};
     }
-    const role=String(user.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase()?"admin":"stock";
-    ppCurrentRole=role;
-    await ref.set({
-        email:user.email||"",
-        role,
-        active:true,
-        createdAt:firebase.firestore.FieldValue.serverTimestamp()
-    },{merge:true});
+
+    if(!profile){
+        const isAdmin=String(user.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase();
+        profile={
+            name:isAdmin?"Admin":"Utilisateur",
+            username:isAdmin?"admin":"",
+            email:user.email||"",
+            role:isAdmin?"admin":"employee",
+            active:true,
+            permissions:{stock:true,expenses:true}
+        };
+        await profileRef.set({
+            ...profile,
+            createdAt:firebase.firestore.FieldValue.serverTimestamp()
+        },{merge:true});
+        await legacyRef.set({
+            email:user.email||"",
+            role:profile.role,
+            active:true,
+            createdAt:firebase.firestore.FieldValue.serverTimestamp()
+        },{merge:true});
+    }
+
+    if(profile.active===false){
+        await ppAuth.signOut();
+        throw new Error("Ce compte est désactivé. Contactez l’administrateur.");
+    }
+
+    ppCurrentRole=String(profile.role||"employee");
+    ppCurrentUserProfile={
+        ...profile,
+        role:ppCurrentRole,
+        permissions:profile.permissions||{stock:true,expenses:true}
+    };
+
+    // Keep last login trace.
+    try{
+        await profileRef.set({
+            lastLoginAt:firebase.firestore.FieldValue.serverTimestamp()
+        },{merge:true});
+    }catch(_){}
 }
 
 function ppStateSnapshot(){
@@ -10127,8 +10180,9 @@ async function ppBootstrapCloud(user){
     ppCloudReady=true;
     ppAddCloudHeader();
     const userText=document.getElementById("ppCloudUser");
-    if(userText)userText.textContent=(user.email||"")+" — "+ppCurrentRole;
+    if(userText)userText.textContent=(ppCurrentUserProfile?.name||ppCurrentUserProfile?.username||"Utilisateur")+" — "+ppCurrentRole;
     ppHideLogin();
+    setTimeout(ppEnsureUserManagerButton,100);
     ensurePPExtraUI();
     renderAll();
     ppStartCloudListeners();
@@ -10175,7 +10229,7 @@ let ppAuditTrail = JSON.parse(localStorage.getItem('pause_plate_audit_trail') ||
 
 function ppCurrentFirebaseUser(){
     try{
-        return (typeof auth!=='undefined' && auth && auth.currentUser) ? auth.currentUser : null;
+        return (typeof ppAuth!=='undefined' && ppAuth && ppAuth.currentUser) ? ppAuth.currentUser : null;
     }catch(e){ return null; }
 }
 
@@ -10238,8 +10292,8 @@ async function ppWriteAudit(module,entityId,action,before,after,label=''){
 
     // Firestore: separate immutable-ish audit documents; main app sync remains untouched.
     try{
-        if(typeof db!=='undefined' && db && who.uid!=='local' && typeof firebase!=='undefined' && firebase.firestore){
-            await db.collection('auditLogs').add(entry);
+        if(typeof ppDb!=='undefined' && ppDb && who.uid!=='local' && typeof firebase!=='undefined' && firebase.firestore){
+            await ppDb.collection('auditLogs').add(entry);
         }
     }catch(e){
         console.warn('Audit cloud différé:',e);
@@ -10454,15 +10508,171 @@ async function ppLoadUserProfile(){
     const u=ppCurrentFirebaseUser();
     if(!u){ppCurrentUserProfile=null;return;}
     try{
-        if(typeof db!=='undefined' && db){
-            const snap=await db.collection('userProfiles').doc(u.uid).get();
-            if(snap.exists) ppCurrentUserProfile=snap.data();
-            else ppCurrentUserProfile={role:PP_ACCESS.ADMIN,name:u.email,permissions:{stock:true,expenses:true}};
-        }
+        const snap=await ppDb.collection('userProfiles').doc(u.uid).get();
+        if(snap.exists)ppCurrentUserProfile=snap.data();
+        else ppCurrentUserProfile={
+            role:String(u.email||'').toLowerCase()===PP_ADMIN_EMAIL.toLowerCase()?PP_ACCESS.ADMIN:PP_ACCESS.EMPLOYEE,
+            name:u.email,
+            active:true,
+            permissions:{stock:true,expenses:true}
+        };
     }catch(e){
         console.warn('Profil utilisateur:',e);
-        ppCurrentUserProfile={role:PP_ACCESS.ADMIN,name:u.email,permissions:{stock:true,expenses:true}};
     }
     ppApplyPermissionsUI();
 }
 setTimeout(ppLoadUserProfile,700);
+
+
+/* =========================================================
+   GESTION DES UTILISATEURS — ADMIN
+   Login visible = username + password; Firebase email is internal.
+========================================================= */
+
+function ppEnsureUserManagerButton(){
+    if(!ppIsAdmin())return;
+    const profile=document.querySelector(".profile");
+    if(!profile||document.getElementById("ppManageUsersBtn"))return;
+    const btn=document.createElement("button");
+    btn.id="ppManageUsersBtn";
+    btn.type="button";
+    btn.className="btn small";
+    btn.textContent="👥 Utilisateurs";
+    btn.onclick=ppOpenUsersManager;
+    profile.parentNode?.insertBefore(btn,profile);
+}
+
+function ppEnsureUsersManagerModal(){
+    if(document.getElementById("ppUsersManagerModal"))return;
+    const m=document.createElement("div");
+    m.id="ppUsersManagerModal";m.className="modal-overlay";
+    m.innerHTML=`<div class="modal" style="max-width:1050px">
+      <div class="modal-header"><h2>👥 Gestion des utilisateurs</h2><button onclick="closeModal('ppUsersManagerModal')">×</button></div>
+
+      <div style="background:#f8fafc;border-radius:12px;padding:14px;margin-bottom:16px">
+        <h3 style="margin:0 0 10px">Créer un employé</h3>
+        <div class="form-grid">
+          <div><label>Nom affiché</label><input id="ppNewUserName" placeholder="Ex: Ahmed"></div>
+          <div><label>Nom d'utilisateur</label><input id="ppNewUsername" placeholder="Ex: ahmed"></div>
+          <div><label>Mot de passe initial</label><input id="ppNewUserPassword" type="password" minlength="6" placeholder="Minimum 6 caractères"></div>
+          <div><label>Rôle</label><select id="ppNewUserRole"><option value="employee">Employé</option></select></div>
+        </div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px">
+          <label><input id="ppPermStock" type="checkbox" checked style="width:auto"> Stock / Entrées / Sorties</label>
+          <label><input id="ppPermExpenses" type="checkbox" checked style="width:auto"> Dépenses</label>
+        </div>
+        <button class="btn primary" type="button" onclick="ppCreateEmployee()" style="margin-top:12px">+ Créer l'utilisateur</button>
+        <div id="ppUserManagerMessage" class="pp-cloud-message" style="margin-top:8px"></div>
+      </div>
+
+      <h3>Utilisateurs enregistrés</h3>
+      <div style="overflow:auto">
+        <table style="width:100%;min-width:820px">
+          <thead><tr><th>Nom</th><th>Utilisateur</th><th>Rôle</th><th>Stock</th><th>Dépenses</th><th>Statut</th><th>Actions</th></tr></thead>
+          <tbody id="ppUsersManagerTable"></tbody>
+        </table>
+      </div>
+      <div class="modal-actions"><button class="btn" onclick="closeModal('ppUsersManagerModal')">Fermer</button></div>
+    </div>`;
+    document.body.appendChild(m);
+}
+
+function ppNormalizeUsername(value){
+    return String(value||"").trim().toLowerCase().replace(/[^a-z0-9._-]/g,"").replace(/^[._-]+|[._-]+$/g,"");
+}
+
+async function ppOpenUsersManager(){
+    if(!ppIsAdmin()){alert("Réservé à l'administrateur.");return;}
+    ppEnsureUsersManagerModal();
+    openModal("ppUsersManagerModal");
+    await ppRenderUsersManager();
+}
+
+async function ppCreateEmployee(){
+    if(!ppIsAdmin())return;
+    const name=getValue("ppNewUserName").trim();
+    const username=ppNormalizeUsername(getValue("ppNewUsername"));
+    const password=getValue("ppNewUserPassword");
+    const msg=document.getElementById("ppUserManagerMessage");
+    if(!name||!username){msg.textContent="Nom et nom d'utilisateur obligatoires.";return;}
+    if(username==="admin"||username==="asma"||username==="asmaabd1987-ui"){msg.textContent="Ce nom d'utilisateur est réservé.";return;}
+    if(password.length<6){msg.textContent="Le mot de passe doit contenir au moins 6 caractères.";return;}
+
+    const internalEmail=ppUsernameToAuthEmail(username);
+    msg.textContent="Création...";
+    let secondaryApp=null;
+    try{
+        // Prevent duplicate usernames at profile level.
+        const existing=await ppDb.collection("userProfiles").where("username","==",username).limit(1).get();
+        if(!existing.empty){msg.textContent="Ce nom d'utilisateur existe déjà.";return;}
+
+        const appName="ppUserCreator";
+        try{secondaryApp=firebase.app(appName);}catch(_){secondaryApp=firebase.initializeApp(PP_FIREBASE_CONFIG,appName);}
+        const secondaryAuth=secondaryApp.auth();
+        const cred=await secondaryAuth.createUserWithEmailAndPassword(internalEmail,password);
+        const uid=cred.user.uid;
+
+        const profile={
+            name,
+            username,
+            email:internalEmail,
+            role:"employee",
+            active:true,
+            permissions:{
+                stock:document.getElementById("ppPermStock").checked,
+                expenses:document.getElementById("ppPermExpenses").checked
+            },
+            createdBy:ppCurrentUser?.uid||null,
+            createdAt:firebase.firestore.FieldValue.serverTimestamp()
+        };
+        await ppDb.collection("userProfiles").doc(uid).set(profile);
+        await ppDb.collection("users").doc(uid).set({
+            email:internalEmail,role:"employee",active:true,username,
+            createdAt:firebase.firestore.FieldValue.serverTimestamp()
+        },{merge:true});
+
+        await secondaryAuth.signOut();
+        setValue("ppNewUserName","");setValue("ppNewUsername","");setValue("ppNewUserPassword","");
+        msg.textContent=`✅ Utilisateur "${username}" créé.`;
+        await ppRenderUsersManager();
+    }catch(err){
+        console.error(err);
+        if(String(err?.code||"").includes("email-already-in-use"))msg.textContent="Ce nom d'utilisateur existe déjà.";
+        else if(String(err?.code||"").includes("weak-password"))msg.textContent="Mot de passe trop faible.";
+        else msg.textContent="Erreur: "+(err?.message||err);
+    }
+}
+
+async function ppRenderUsersManager(){
+    const tb=document.getElementById("ppUsersManagerTable");if(!tb||!ppDb)return;
+    tb.innerHTML='<tr><td colspan="7">Chargement...</td></tr>';
+    try{
+        const snap=await ppDb.collection("userProfiles").get();
+        const rows=[];
+        snap.forEach(d=>rows.push({uid:d.id,...d.data()}));
+        rows.sort((a,b)=>String(a.name||a.username||"").localeCompare(String(b.name||b.username||""),"fr"));
+        if(!rows.length){tb.innerHTML='<tr><td colspan="7">Aucun utilisateur.</td></tr>';return;}
+        tb.innerHTML=rows.map(u=>`
+          <tr>
+            <td><strong>${escapeHTML(u.name||"-")}</strong></td>
+            <td>${escapeHTML(u.username||((u.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase()?"admin":"-"))}</td>
+            <td>${u.role==="admin"?"Admin":"Employé"}</td>
+            <td>${u.role==="admin"||u.permissions?.stock!==false?"✅":"—"}</td>
+            <td>${u.role==="admin"||u.permissions?.expenses!==false?"✅":"—"}</td>
+            <td><span class="status ${u.active===false?"danger":"success"}">${u.active===false?"Désactivé":"Actif"}</span></td>
+            <td>${u.role==="admin"?"—":`<button class="btn small ${u.active===false?"primary":"danger"}" onclick="ppToggleEmployee('${u.uid}',${u.active===false})">${u.active===false?"Activer":"Désactiver"}</button>`}</td>
+          </tr>`).join("");
+    }catch(err){
+        console.error(err);tb.innerHTML='<tr><td colspan="7">Erreur de chargement.</td></tr>';
+    }
+}
+
+async function ppToggleEmployee(uid,activate){
+    if(!ppIsAdmin())return;
+    await ppDb.collection("userProfiles").doc(uid).set({active:!!activate,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});
+    await ppDb.collection("users").doc(uid).set({active:!!activate},{merge:true});
+    await ppWriteAudit("users",uid,activate?"activate":"deactivate",null,{active:!!activate},"Utilisateur");
+    await ppRenderUsersManager();
+}
+
+setTimeout(ppEnsureUserManagerButton,1200);
