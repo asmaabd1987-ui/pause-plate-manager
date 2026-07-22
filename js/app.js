@@ -10812,3 +10812,111 @@ ppApplyPermissionsUI=function(){
 };
 
 setTimeout(ppRefreshAdminSidebar,1000);
+
+
+/* =========================================================
+   FIX STRICT EMPLOYEE PERMISSIONS
+   Employé = Stock + Dépenses uniquement
+========================================================= */
+
+// Never assume Admin while the profile is not loaded.
+ppIsAdmin = function(){
+    if(ppCurrentUserProfile?.role) return ppCurrentUserProfile.role === PP_ACCESS.ADMIN;
+    const u=ppCurrentFirebaseUser();
+    return !!u && String(u.email||"").toLowerCase() === PP_ADMIN_EMAIL.toLowerCase();
+};
+
+function ppPageNameFromElement(el){
+    return String(el?.dataset?.page||"").toLowerCase();
+}
+
+function ppEmployeeAllowedPages(){
+    const perms=ppCurrentUserProfile?.permissions||{};
+    const allowed=[];
+    if(perms.stock!==false)allowed.push("stock");
+    if(perms.expenses!==false)allowed.push("expenses");
+    return allowed;
+}
+
+ppApplyPermissionsUI = function(){
+    const admin=ppIsAdmin();
+    const adminBox=document.getElementById("ppAdminSidebar");
+    if(adminBox)adminBox.style.display=admin?"block":"none";
+
+    const manageBtn=document.getElementById("ppManageUsersBtn");
+    if(manageBtn)manageBtn.style.display=admin?"":"none";
+
+    const allNav=[...document.querySelectorAll(".sidebar [data-page]")];
+
+    if(admin){
+        allNav.forEach(el=>el.style.display="");
+        document.querySelectorAll(".sidebar .menu-title").forEach(el=>el.style.display="");
+        return;
+    }
+
+    const allowed=ppEmployeeAllowedPages();
+
+    allNav.forEach(el=>{
+        const page=ppPageNameFromElement(el);
+        el.style.display=allowed.includes(page)?"":"none";
+    });
+
+    // Administration is always hidden for employees.
+    if(adminBox)adminBox.style.display="none";
+
+    // Hide section titles that no longer contain a visible menu entry.
+    document.querySelectorAll(".sidebar .menu-title").forEach(title=>{
+        let next=title.nextElementSibling;
+        let hasVisible=false;
+        while(next && !next.classList.contains("menu-title")){
+            if(next.matches?.("[data-page]") && next.style.display!=="none"){hasVisible=true;break;}
+            if(next.id==="ppAdminSidebar" && next.style.display!=="none"){hasVisible=true;break;}
+            next=next.nextElementSibling;
+        }
+        title.style.display=hasVisible?"":"none";
+    });
+
+    // Employee must never stay on Dashboard/Purchases/etc after login.
+    const active=document.querySelector(".nav-item.active[data-page]");
+    const activePage=ppPageNameFromElement(active);
+    if(!allowed.includes(activePage)){
+        const target=allowed.includes("stock")?"stock":allowed[0];
+        if(target){
+            const btn=document.querySelector(`.sidebar [data-page="${target}"]`);
+            if(btn)btn.click();
+        }
+    }
+};
+
+// Guard sidebar navigation even if a hidden/restricted page is triggered manually.
+document.addEventListener("click",function(e){
+    const nav=e.target.closest?.("[data-page]");
+    if(!nav || ppIsAdmin())return;
+    const page=ppPageNameFromElement(nav);
+    if(!ppEmployeeAllowedPages().includes(page)){
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        alert("Accès non autorisé.");
+    }
+},true);
+
+function ppFinalizeRoleUI(){
+    ppApplyPermissionsUI();
+    if(!ppIsAdmin()){
+        const b=document.getElementById("ppManageUsersBtn");
+        if(b)b.remove();
+    }else{
+        try{ppEnsureUserManagerButton();}catch(_){}
+    }
+}
+
+// Re-run permissions after Firebase actually finishes loading the profile.
+const ppOldBootstrapCloudPermissions = ppBootstrapCloud;
+ppBootstrapCloud = async function(user){
+    await ppOldBootstrapCloudPermissions(user);
+    ppFinalizeRoleUI();
+};
+
+// Also refresh on delayed UI renders/listeners.
+setTimeout(ppFinalizeRoleUI,1500);
+setTimeout(ppFinalizeRoleUI,3000);
