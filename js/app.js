@@ -5482,7 +5482,95 @@ function cleanSupplierName(value){
 
 function detailRowsHTML(rows, allowHtml=false){return `<div class="details-grid">${rows.map(([k,v])=>`<div class="details-label">${escapeHTML(k)}</div><div class="details-value">${allowHtml?String(v):escapeHTML(String(v??''))}</div>`).join('')}</div>`;}
 function showDetailsModal(title,rows,onPrint=null,allowHtml=false){let modal=document.getElementById('detailsModal');if(!modal){modal=document.createElement('div');modal.id='detailsModal';modal.className='modal-overlay';modal.innerHTML='<div class="modal details-modal"><div class="modal-header"><h2 id="detailsModalTitle"></h2><button type="button" onclick="closeModal(\'detailsModal\')">×</button></div><div id="detailsModalBody"></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal(\'detailsModal\')">Fermer</button><button type="button" class="btn print" id="detailsPrintBtn">🖨️ Imprimer</button></div></div>';document.body.appendChild(modal);}document.getElementById('detailsModalTitle').textContent=title;document.getElementById('detailsModalBody').innerHTML=detailRowsHTML(rows,allowHtml);const btn=document.getElementById('detailsPrintBtn');btn.style.display=onPrint?'inline-block':'none';btn.onclick=onPrint||null;openModal('detailsModal');}
-function printDocument(title,bodyHtml){const w=window.open('','_blank','width=1000,height=800');if(!w){alert("Autorisez les fenêtres pop-up pour imprimer.");return;}w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(title)}</title><style>body{font-family:Arial,sans-serif;color:#18251b;padding:35px}h1,h2{color:#094B2D}.doc-head{border-bottom:3px solid #D9A51E;margin-bottom:25px}.doc-head h1{margin:0}.doc-head p{margin:4px 0 15px;color:#666}table{width:100%;border-collapse:collapse;margin:20px 0}th,td{border:1px solid #ddd;padding:9px;text-align:left}th{background:#EAF3EE;color:#094B2D}.details-grid{display:grid;grid-template-columns:180px 1fr;border:1px solid #ddd}.details-label,.details-value{padding:10px;border-bottom:1px solid #eee}.details-label{font-weight:bold;background:#f6f6f6}.totals{margin-left:auto;max-width:320px;text-align:right}.totals p{margin:6px 0}@media print{body{padding:0}}</style></head><body>${bodyHtml}<script>window.onload=()=>{window.print();}</script></body></html>`);w.document.close();}
+function printDocument(title,bodyHtml){
+    /*
+      Impression sans popup:
+      - fonctionne sur Safari / Chrome / Edge
+      - évite le blocage de window.open() sur GitHub Pages
+      - imprime dans un iframe invisible puis le supprime
+    */
+    try{
+        const oldFrame=document.getElementById('ppPrintFrame');
+        if(oldFrame)oldFrame.remove();
+
+        const frame=document.createElement('iframe');
+        frame.id='ppPrintFrame';
+        frame.setAttribute('aria-hidden','true');
+        frame.style.position='fixed';
+        frame.style.right='0';
+        frame.style.bottom='0';
+        frame.style.width='0';
+        frame.style.height='0';
+        frame.style.border='0';
+        frame.style.opacity='0';
+        frame.style.pointerEvents='none';
+        document.body.appendChild(frame);
+
+        const doc=frame.contentWindow.document;
+        doc.open();
+        doc.write(`<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHTML(title)}</title>
+<style>
+@page{size:auto;margin:12mm}
+*{box-sizing:border-box}
+html,body{background:#fff!important}
+body{font-family:Arial,"Helvetica Neue",sans-serif;color:#18251b;margin:0;padding:8px;font-size:12px;line-height:1.4}
+h1,h2,h3{color:#094B2D;page-break-after:avoid}
+h1{font-size:24px}h2{font-size:19px}h3{font-size:15px}
+.doc-head{border-bottom:3px solid #D9A51E;margin-bottom:20px;padding-bottom:8px}
+.doc-head h1{margin:0}.doc-head p{margin:4px 0 0;color:#666}
+table{width:100%;border-collapse:collapse;margin:14px 0;page-break-inside:auto}
+thead{display:table-header-group}
+tfoot{display:table-footer-group}
+tr{page-break-inside:avoid;page-break-after:auto}
+th,td{border:1px solid #cfd6d2;padding:7px;text-align:left;vertical-align:top}
+th{background:#EAF3EE!important;color:#094B2D;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.details-grid{display:grid;grid-template-columns:180px 1fr;border:1px solid #ddd}
+.details-label,.details-value{padding:9px;border-bottom:1px solid #eee}
+.details-label{font-weight:bold;background:#f6f6f6!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.totals{margin-left:auto;max-width:340px;text-align:right}
+.totals p{margin:6px 0}
+.status{border:1px solid #ddd;padding:2px 6px;border-radius:8px}
+button,.btn,.action-buttons{display:none!important}
+@media print{
+  html,body{width:100%;padding:0!important;margin:0!important}
+  a{text-decoration:none;color:inherit}
+}
+</style>
+</head>
+<body>${bodyHtml}</body>
+</html>`);
+        doc.close();
+
+        const doPrint=()=>{
+            try{
+                frame.contentWindow.focus();
+                frame.contentWindow.print();
+            }catch(err){
+                console.error('Erreur impression:',err);
+                alert("Impossible d'ouvrir l'impression sur ce navigateur.");
+            }
+            setTimeout(()=>{ if(frame && frame.parentNode) frame.remove(); },1500);
+        };
+
+        // Give Safari/Chrome enough time to lay out tables and images.
+        if(doc.readyState==='complete'){
+            setTimeout(doPrint,250);
+        }else{
+            frame.onload=()=>setTimeout(doPrint,250);
+            setTimeout(()=>{
+                if(document.getElementById('ppPrintFrame')) doPrint();
+            },900);
+        }
+    }catch(err){
+        console.error('Erreur printDocument:',err);
+        alert("Erreur lors de la préparation de l'impression.");
+    }
+}
 
 /* =========================================================
    DASHBOARD STATS
