@@ -1711,6 +1711,78 @@ function openScanModal(){
    HANDLE FILE
 ========================================================= */
 
+
+
+/* =========================================================
+   SCANNER PC LOCAL BRIDGE
+   The website stays on GitHub Pages; Windows bridge exposes
+   a local HTTP endpoint on 127.0.0.1 only.
+========================================================= */
+const PP_SCANNER_BRIDGE_URL = "http://127.0.0.1:17891";
+
+async function ppScannerBridgeHealth(){
+    const r=await fetch(PP_SCANNER_BRIDGE_URL+"/health",{cache:"no-store"});
+    if(!r.ok)throw new Error("Bridge scanner indisponible.");
+    return await r.json();
+}
+
+function ppBase64ToFile(base64,mime,name){
+    const bin=atob(base64);
+    const bytes=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+    return new File([bytes],name||"scan.jpg",{type:mime||"image/jpeg"});
+}
+
+async function ppScanFromPCScanner(purpose){
+    const statusId=purpose==="invoice"?"ppInvoiceScannerStatus":"ppDailyScannerStatus";
+    const status=document.getElementById(statusId);
+    if(status)status.textContent="Connexion au scanner...";
+
+    try{
+        await ppScannerBridgeHealth();
+
+        if(status)status.textContent="Scanner prêt — numérisation en cours...";
+
+        const r=await fetch(PP_SCANNER_BRIDGE_URL+"/scan",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({purpose})
+        });
+
+        const data=await r.json().catch(()=>({}));
+        if(!r.ok)throw new Error(data.error||"Échec de la numérisation.");
+
+        const file=ppBase64ToFile(
+            data.base64,
+            data.mime||"image/jpeg",
+            data.filename||("scan-"+Date.now()+".jpg")
+        );
+
+        if(status)status.textContent="Scan reçu — analyse OCR...";
+
+        if(purpose==="invoice"){
+            await scanImageImproved(file);
+            if(status)status.textContent="✅ Facture scannée et analysée.";
+        }else{
+            ppDailyScanText=await extractDailySalesTextPP(file);
+            ppDailyScanMatches=parseDailySalesTextPP(ppDailyScanText);
+            renderDailyScanReviewPP();
+            const main=document.getElementById("ppDailyScanStatus");
+            if(main)main.innerHTML=`✅ Analyse terminée — <strong>${ppDailyScanMatches.length}</strong> élément(s) rapproché(s).`;
+            if(status)status.textContent="✅ Rapport scanné et analysé.";
+        }
+
+    }catch(err){
+        console.error(err);
+        if(status)status.innerHTML=
+            "❌ "+escapeHTML(err?.message||String(err))+
+            "<br><small>Vérifiez que Pause & Plate Scanner Bridge est lancé sur cet ordinateur (Windows ou Mac).</small>";
+    }
+}
+
+function ppScanInvoiceFromPC(){ return ppScanFromPCScanner("invoice"); }
+function ppScanDailySalesFromPC(){ return ppScanFromPCScanner("daily-sales"); }
+
 async function handleInvoiceFile(event){
 
     const file =
@@ -5736,15 +5808,11 @@ function updateDashboard(){
 
 
 function updateStockStats(){
-    const value=products.reduce(function(total,product){
-        return total + Number(product.stock||0)*Number(product.price||0);
-    },0);
-
-    const lowProducts=products.filter(function(product){
-        const min=Number(product.minStock||0);
-        return min>0 && Number(product.stock||0)<=min;
+    const value=products.reduce((total,p)=>total+Number(p.stock||0)*Number(p.price||0),0);
+    const lowProducts=products.filter(p=>{
+        const min=Number(p.minStock||0);
+        return min>0 && Number(p.stock||0)<=min;
     });
-
     setText("stockProductsCount",products.length);
     setText("stockTotalValue",formatMoney(value));
     setText("lowStockCount",lowProducts.length);
@@ -6481,20 +6549,14 @@ function saveData(){
 }
 
 
+
 function renderStockAlertsPP(){
     const box=document.getElementById("alertList");
     if(!box)return;
-
-    const alerts=products
-        .filter(p=>{
-            const min=Number(p.minStock||0);
-            return min>0 && Number(p.stock||0)<=min;
-        })
-        .sort((a,b)=>{
-            const ra=Number(a.stock||0)/Math.max(Number(a.minStock||1),0.000001);
-            const rb=Number(b.stock||0)/Math.max(Number(b.minStock||1),0.000001);
-            return ra-rb;
-        });
+    const alerts=products.filter(p=>{
+        const min=Number(p.minStock||0);
+        return min>0 && Number(p.stock||0)<=min;
+    }).sort((a,b)=>Number(a.stock||0)-Number(b.stock||0));
 
     if(!alerts.length){
         box.innerHTML='<p class="empty">Aucune alerte stock pour le moment.</p>';
@@ -6502,23 +6564,14 @@ function renderStockAlertsPP(){
     }
 
     box.innerHTML=alerts.map(p=>{
-        const stock=Number(p.stock||0);
-        const min=Number(p.minStock||0);
-        const rupture=stock<=0;
-        return `
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;border:1px solid ${rupture?'#fecaca':'#fde68a'};background:${rupture?'#fef2f2':'#fffbeb'};border-radius:12px">
-            <div>
-              <strong>${rupture?'🔴':'⚠️'} ${escapeHTML(p.name)}</strong>
-              <div style="font-size:13px;color:#667085;margin-top:3px">
-                Stock actuel: <strong>${formatNumber(stock)} ${escapeHTML(p.unit||'')}</strong>
-                — Minimum: ${formatNumber(min)} ${escapeHTML(p.unit||'')}
-              </div>
-            </div>
-            <span class="status ${rupture?'danger':'warning'}">${rupture?'Rupture':'Stock faible'}</span>
-          </div>`;
+        const rupture=Number(p.stock||0)<=0;
+        return `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;border:1px solid #e5e7eb;border-radius:12px">
+          <div><strong>${rupture?'🔴':'⚠️'} ${escapeHTML(p.name)}</strong>
+          <div style="font-size:13px;color:#667085">Stock: ${formatNumber(p.stock)} ${escapeHTML(p.unit||'')} — Minimum: ${formatNumber(p.minStock)} ${escapeHTML(p.unit||'')}</div></div>
+          <span class="status ${rupture?'danger':'warning'}">${rupture?'Rupture':'Stock faible'}</span>
+        </div>`;
     }).join("");
 }
-
 function renderAll(){
     ensurePPExtraUI();
     renderProducts();
@@ -8669,225 +8722,40 @@ function showSalesSubtabPP(tab){
 
 function ensureDailySalesScanModalPP(){
     if(document.getElementById('ppDailyScanModal'))return;
-
-    const m=document.createElement('div');
-    m.id='ppDailyScanModal';
-    m.className='modal-overlay';
+    const m=document.createElement('div');m.id='ppDailyScanModal';m.className='modal-overlay';
     m.innerHTML=`<div class="modal" style="max-width:1100px">
-      <div class="modal-header">
-        <h2>📷 Scan ventes journalières</h2>
-        <button onclick="stopDailyLiveScanPP();closeModal('ppDailyScanModal')">×</button>
-      </div>
-
+      <div class="modal-header"><h2>📷 Scan ventes journalières</h2><button onclick="closeModal('ppDailyScanModal')">×</button></div>
       <div class="form-grid">
-        <div>
-          <label>Date des ventes</label>
-          <input id="ppDailyScanDate" type="date">
-        </div>
-        <div>
-          <label>Mode d'encaissement</label>
-          <select id="ppDailyScanMode">
-            <option>Espèces</option>
-            <option>Carte</option>
-            <option>Virement</option>
-            <option>Autre</option>
-          </select>
-        </div>
-        <div>
-          <label>PDF / image</label>
-          <input id="ppDailyScanFile" type="file" accept="application/pdf,image/*" onchange="handleDailySalesFilePP(event)">
-        </div>
+        <div><label>Date des ventes</label><input id="ppDailyScanDate" type="date"></div>
+        <div><label>Mode d'encaissement</label><select id="ppDailyScanMode"><option>Espèces</option><option>Carte</option><option>Virement</option><option>Autre</option></select></div>
+        <div><label>Fichier PDF / image</label><input id="ppDailyScanFile" type="file" accept="application/pdf,image/*" onchange="handleDailySalesFilePP(event)"></div>
       </div>
 
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
-        <button id="ppDailyLiveStartBtn" class="btn primary" type="button" onclick="startDailyLiveScanPP()">📹 Scan en temps réel</button>
-        <button id="ppDailyLiveStopBtn" class="btn danger" type="button" onclick="stopDailyLiveScanPP()" style="display:none">⏹ Arrêter la caméra</button>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">
+        <button type="button" class="btn primary" onclick="ppScanDailySalesFromPC()">🖨️ Scan en temps réel</button>
       </div>
 
-      <div id="ppDailyLiveCameraBox" style="display:none;margin:12px 0;padding:12px;border:1px solid #e5e7eb;border-radius:14px;background:#111">
-        <video id="ppDailyLiveVideo" autoplay playsinline muted style="display:block;width:100%;max-height:430px;object-fit:contain;border-radius:10px;background:#000"></video>
-        <canvas id="ppDailyLiveCanvas" style="display:none"></canvas>
-        <div style="color:#fff;text-align:center;font-size:13px;margin-top:8px">
-          Gardez le ticket/rapport bien droit et suffisamment éclairé. Analyse automatique toutes les 4 secondes.
-        </div>
+      <div id="ppDailyScannerStatus" style="margin:8px 0;color:#667085;font-size:13px">
+        Scanner: prêt si Pause & Plate Scanner Bridge est lancé sur cet ordinateur.
       </div>
 
-      <div id="ppDailyScanStatus" style="margin:12px 0;padding:12px;border-radius:10px;background:#f8fafc">
-        Sélectionnez un fichier ou lancez le scan en temps réel.
-      </div>
-
+      <div id="ppDailyScanStatus" style="margin:12px 0;padding:12px;border-radius:10px;background:#f8fafc">Choisissez un fichier ou utilisez le scanner PC.</div>
       <div id="ppDailyScanReview"></div>
-
-      <div class="modal-actions">
-        <button type="button" class="btn" onclick="stopDailyLiveScanPP();closeModal('ppDailyScanModal')">Annuler</button>
-        <button id="ppDailyScanSaveBtn" type="button" class="btn primary" onclick="stopDailyLiveScanPP();saveDailySalesScanPP()" disabled>
-          Enregistrer les ventes détectées
-        </button>
-      </div>
+      <div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppDailyScanModal')">Annuler</button><button id="ppDailyScanSaveBtn" type="button" class="btn primary" onclick="saveDailySalesScanPP()" disabled>Enregistrer les ventes détectées</button></div>
     </div>`;
     document.body.appendChild(m);
 }
 
 function openDailySalesScanPP(){
     ensureDailySalesScanModalPP();
-    stopDailyLiveScanPP();
-
-    ppDailyScanText='';
-    ppDailyScanMatches=[];
-
+    ppDailyScanText='';ppDailyScanMatches=[];
     setValue('ppDailyScanDate',new Date().toISOString().slice(0,10));
     setValue('ppDailyScanMode','Espèces');
-
-    const f=document.getElementById('ppDailyScanFile');
-    if(f)f.value='';
-
-    document.getElementById('ppDailyScanStatus').textContent=
-        'Sélectionnez un fichier ou lancez le scan en temps réel.';
+    const f=document.getElementById('ppDailyScanFile');if(f)f.value='';
+    document.getElementById('ppDailyScanStatus').textContent='Choisissez un fichier ou utilisez le scanner PC.';
     document.getElementById('ppDailyScanReview').innerHTML='';
     document.getElementById('ppDailyScanSaveBtn').disabled=true;
-
     openModal('ppDailyScanModal');
-}
-
-
-let ppDailyLiveStream=null;
-let ppDailyLiveTimer=null;
-let ppDailyLiveBusy=false;
-let ppDailyLiveSeenText='';
-
-async function startDailyLiveScanPP(){
-    ensureDailySalesScanModalPP();
-
-    if(!navigator.mediaDevices?.getUserMedia){
-        alert("La caméra en temps réel n'est pas disponible sur ce navigateur.");
-        return;
-    }
-
-    if(typeof Tesseract==='undefined'){
-        alert("Le moteur OCR n'est pas chargé.");
-        return;
-    }
-
-    stopDailyLiveScanPP();
-
-    const status=document.getElementById('ppDailyScanStatus');
-    status.textContent='📹 Ouverture de la caméra...';
-
-    try{
-        ppDailyLiveStream=await navigator.mediaDevices.getUserMedia({
-            video:{
-                facingMode:{ideal:'environment'},
-                width:{ideal:1920},
-                height:{ideal:1080}
-            },
-            audio:false
-        });
-
-        const video=document.getElementById('ppDailyLiveVideo');
-        video.srcObject=ppDailyLiveStream;
-
-        document.getElementById('ppDailyLiveCameraBox').style.display='block';
-        document.getElementById('ppDailyLiveStartBtn').style.display='none';
-        document.getElementById('ppDailyLiveStopBtn').style.display='';
-        ppDailyLiveSeenText='';
-
-        await video.play();
-        status.textContent='📹 Caméra active — analyse automatique en cours...';
-
-        // Analyze now and then every 4 seconds.
-        setTimeout(()=>scanDailyLiveFramePP(),700);
-        ppDailyLiveTimer=setInterval(scanDailyLiveFramePP,4000);
-
-    }catch(err){
-        console.error(err);
-        status.textContent='❌ Impossible d’ouvrir la caméra: '+(err?.message||err);
-        stopDailyLiveScanPP();
-    }
-}
-
-function stopDailyLiveScanPP(){
-    if(ppDailyLiveTimer){
-        clearInterval(ppDailyLiveTimer);
-        ppDailyLiveTimer=null;
-    }
-
-    if(ppDailyLiveStream){
-        ppDailyLiveStream.getTracks().forEach(t=>t.stop());
-        ppDailyLiveStream=null;
-    }
-
-    ppDailyLiveBusy=false;
-
-    const video=document.getElementById('ppDailyLiveVideo');
-    if(video)video.srcObject=null;
-
-    const box=document.getElementById('ppDailyLiveCameraBox');
-    if(box)box.style.display='none';
-
-    const start=document.getElementById('ppDailyLiveStartBtn');
-    const stop=document.getElementById('ppDailyLiveStopBtn');
-    if(start)start.style.display='';
-    if(stop)stop.style.display='none';
-}
-
-async function scanDailyLiveFramePP(){
-    if(ppDailyLiveBusy || !ppDailyLiveStream)return;
-
-    const video=document.getElementById('ppDailyLiveVideo');
-    const canvas=document.getElementById('ppDailyLiveCanvas');
-    const status=document.getElementById('ppDailyScanStatus');
-
-    if(!video || !canvas || video.readyState<2)return;
-
-    ppDailyLiveBusy=true;
-
-    try{
-        status.textContent='🔎 Lecture en temps réel...';
-
-        const vw=video.videoWidth||1280;
-        const vh=video.videoHeight||720;
-
-        // Limit OCR size to avoid freezing phones/PCs.
-        const maxW=1100;
-        const scale=Math.min(1,maxW/vw);
-        canvas.width=Math.max(1,Math.round(vw*scale));
-        canvas.height=Math.max(1,Math.round(vh*scale));
-
-        const ctx=canvas.getContext('2d',{willReadFrequently:true});
-        ctx.drawImage(video,0,0,canvas.width,canvas.height);
-
-        const textNow=String(
-            await runDualOCR(
-                canvas,
-                preprocessCanvas(canvas),
-                'Ventes en temps réel'
-            )
-            ||''
-        ).trim();
-
-        if(textNow.length>12){
-            // Keep unique OCR blocks to accumulate a long receipt/report.
-            if(!ppDailyLiveSeenText.includes(textNow)){
-                ppDailyLiveSeenText += (ppDailyLiveSeenText?'\n':'') + textNow;
-            }
-
-            ppDailyScanText=ppDailyLiveSeenText;
-            ppDailyScanMatches=parseDailySalesTextPP(ppDailyScanText);
-            renderDailyScanReviewPP();
-
-            status.innerHTML=
-                `✅ Scan temps réel — <strong>${ppDailyScanMatches.length}</strong> article(s)/fiche(s) reconnu(s). `+
-                `Continuez à cadrer le document ou enregistrez.`;
-        }else{
-            status.textContent='📹 Caméra active — rapprochez le document et stabilisez-le.';
-        }
-
-    }catch(err){
-        console.error(err);
-        status.textContent='⚠️ Lecture caméra: '+(err?.message||err);
-    }finally{
-        ppDailyLiveBusy=false;
-    }
 }
 
 async function extractDailySalesTextPP(file){

@@ -1942,12 +1942,21 @@
 
 
             <h3>
-                Importer votre facture
+                Scanner ou importer votre facture
             </h3>
 
+            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:14px 0">
+                <button type="button" class="btn primary" onclick="ppScanInvoiceFromPC()">
+                    🖨️ Scan en temps réel
+                </button>
+            </div>
+
+            <div id="ppInvoiceScannerStatus" class="scan-note" style="margin-bottom:12px">
+                Scanner: prêt si Pause & Plate Scanner Bridge est lancé sur cet ordinateur.
+            </div>
 
             <p>
-                Sélectionnez une image JPG, PNG, WEBP ou un fichier PDF.
+                Ou choisissez une image JPG, PNG, WEBP ou un fichier PDF.
             </p>
 
 
