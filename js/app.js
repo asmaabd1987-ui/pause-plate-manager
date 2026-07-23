@@ -11524,3 +11524,185 @@ ppRenderUsersManager=async function(){
     }
 };
 
+
+
+/* =========================================================
+   FIX AUDIT STOCK — CHAQUE OPÉRATION RESTE INDÉPENDANTE
+   Une nouvelle entrée/sortie = un nouvel historique.
+   Une modification = nouvelle version de CETTE opération.
+========================================================= */
+
+saveMovement = function(){
+    if(!ppCan('stock','edit')){
+        alert('Accès non autorisé.');
+        return;
+    }
+
+    /*
+      Le vrai identifiant d'édition utilisé par l'application est
+      editingMovementId (pas un champ #movementId).
+      On le mémorise AVANT l'enregistrement car la fonction d'origine
+      le remet à null après sauvegarde.
+    */
+    const editingIdBefore = editingMovementId ? Number(editingMovementId) : null;
+
+    const before = editingIdBefore
+        ? ppAuditSnapshot(
+            movements.find(x=>Number(x.id)===editingIdBefore)
+          )
+        : null;
+
+    const idsBefore = new Set(
+        movements.map(x=>String(x.id))
+    );
+
+    const result = ppBaseSaveMovement();
+
+    /*
+      Si la validation de la fonction métier a échoué
+      (stock insuffisant, quantité invalide...), aucun mouvement nouveau
+      ne doit être journalisé.
+    */
+    let after = null;
+    let operationId = editingIdBefore;
+
+    if(editingIdBefore){
+        after = movements.find(
+            x=>Number(x.id)===editingIdBefore
+        ) || null;
+    }else{
+        /*
+          Une nouvelle opération est insérée avec un ID createId() unique.
+          On la retrouve uniquement par comparaison des IDs avant/après.
+          Pas de fallback vers "dernier mouvement", afin de ne jamais
+          rattacher une opération au mauvais historique.
+        */
+        after = movements.find(
+            x=>!idsBefore.has(String(x.id))
+        ) || null;
+
+        operationId = after?.id ?? null;
+    }
+
+    if(!after || operationId==null){
+        return result;
+    }
+
+    /*
+      Identifiant permanent d'audit.
+      Deux opérations sur le MÊME produit ont toujours deux operationId
+      différents car elles ont deux movement.id différents.
+      Une modification conserve le même movement.id.
+    */
+    after.auditOperationId = String(operationId);
+
+    const action = before ? 'update' : 'create';
+
+    const labelType =
+        after.type === 'entry'
+            ? 'Entrée Stock'
+            : 'Sortie Stock';
+
+    const signedQuantity =
+        after.type === 'entry'
+            ? `+${formatNumber(Number(after.quantity||0))}`
+            : `-${formatNumber(Number(after.quantity||0))}`;
+
+    const label =
+        `${labelType} — ${after.productName||''} — ` +
+        `${signedQuantity} ${after.unit||''}`;
+
+    after.auditCount =
+        ppAuditCount(
+            'stock',
+            after.auditOperationId
+        ) + 1;
+
+    ppWriteAudit(
+        'stock',
+        after.auditOperationId,
+        action,
+        before,
+        after,
+        label
+    );
+
+    /*
+      On resauvegarde auditOperationId/auditCount afin qu'ils suivent
+      l'opération sur tous les ordinateurs.
+    */
+    try{
+        saveData();
+    }catch(err){
+        console.warn('Sauvegarde audit stock:',err);
+    }
+
+    return result;
+};
+
+
+/*
+  Historique d'une ligne stock:
+  priorité à auditOperationId; anciennes opérations restent compatibles
+  avec leur movement.id.
+*/
+ppAuditMovement = function(id){
+    const movement=movements.find(
+        x=>String(x.id)===String(id)
+    );
+
+    const auditId =
+        movement?.auditOperationId
+        || String(id);
+
+    ppShowAudit(
+        'stock',
+        auditId,
+        'Historique de l’opération stock'
+    );
+};
+
+
+/*
+  Le compteur 🕘 de chaque mouvement doit compter uniquement
+  les versions DE CETTE opération, jamais toutes les opérations du produit.
+*/
+function ppStockAuditCountForMovement(id){
+    const movement=movements.find(
+        x=>String(x.id)===String(id)
+    );
+
+    const auditId =
+        movement?.auditOperationId
+        || String(id);
+
+    return ppAuditCount(
+        'stock',
+        auditId
+    );
+}
+
+
+/*
+  Réinjecte les boutons Historique avec le bon compteur.
+*/
+const ppOldInjectAuditButtonsPerOperation = ppInjectAuditButtons;
+
+ppInjectAuditButtons = function(){
+    ppOldInjectAuditButtonsPerOperation();
+
+    document
+      .querySelectorAll('[data-audit-stock]')
+      .forEach(btn=>{
+          const id=btn.dataset.auditStock;
+          btn.innerHTML=
+              `🕘 ${ppStockAuditCountForMovement(id)}`;
+
+          btn.onclick=()=>{
+              ppAuditMovement(id);
+          };
+      });
+};
+
+setTimeout(ppInjectAuditButtons,500);
+
