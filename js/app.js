@@ -11104,3 +11104,194 @@ ppBootstrapCloud=async function(user){
 
 setTimeout(ppRefreshEmployeeIdentity,1200);
 setTimeout(ppRefreshEmployeeIdentity,3000);
+
+
+/* =========================================================
+   FIX MULTI-ADMIN
+   Any userProfiles/{uid}.role == "admin" has full Admin access.
+========================================================= */
+
+ppIsAdmin = function(){
+    if(ppCurrentUserProfile && String(ppCurrentUserProfile.role||"").toLowerCase()==="admin"){
+        return true;
+    }
+    const u=ppCurrentFirebaseUser();
+    return !!u && String(u.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase();
+};
+
+// Re-read the authoritative role from Firestore before applying restrictions.
+async function ppReloadAuthoritativeProfile(){
+    const u=ppCurrentFirebaseUser();
+    if(!u || !ppDb)return;
+    try{
+        const snap=await ppDb.collection("userProfiles").doc(u.uid).get();
+        if(snap.exists){
+            const p=snap.data()||{};
+            ppCurrentUserProfile={
+                ...p,
+                role:String(p.role||"employee").toLowerCase(),
+                permissions:p.permissions||{stock:true,expenses:true}
+            };
+            ppCurrentRole=ppCurrentUserProfile.role;
+
+            const userText=document.getElementById("ppCloudUser");
+            if(userText){
+                userText.textContent=(p.name||p.username||"Utilisateur")+" — "+ppCurrentRole;
+            }
+        }else if(String(u.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase()){
+            ppCurrentUserProfile={
+                name:"Admin",
+                username:"admin",
+                email:u.email||"",
+                role:"admin",
+                active:true,
+                permissions:{stock:true,expenses:true}
+            };
+            ppCurrentRole="admin";
+        }
+    }catch(err){
+        console.warn("Profile role reload:",err);
+    }
+}
+
+const ppMultiAdminBootstrap=ppBootstrapCloud;
+ppBootstrapCloud=async function(user){
+    await ppMultiAdminBootstrap(user);
+    await ppReloadAuthoritativeProfile();
+    if(typeof ppFinalizeRoleUI==="function")ppFinalizeRoleUI();
+    if(typeof ppRefreshAdminSidebar==="function")ppRefreshAdminSidebar();
+};
+
+// User manager: allow Admin role too.
+const ppOldEnsureUsersManagerModalMulti=ppEnsureUsersManagerModal;
+ppEnsureUsersManagerModal=function(){
+    ppOldEnsureUsersManagerModalMulti();
+    const role=document.getElementById("ppNewUserRole");
+    if(role && ![...role.options].some(o=>o.value==="admin")){
+        const opt=document.createElement("option");
+        opt.value="admin";
+        opt.textContent="Administrateur";
+        role.appendChild(opt);
+    }
+};
+
+// Override employee creation so selected role is respected.
+ppCreateEmployee=async function(){
+    if(!ppIsAdmin())return;
+    const name=getValue("ppNewUserName").trim();
+    const username=ppNormalizeUsername(getValue("ppNewUsername"));
+    const password=getValue("ppNewUserPassword");
+    const role=getValue("ppNewUserRole")||"employee";
+    const msg=document.getElementById("ppUserManagerMessage");
+
+    if(!name||!username){msg.textContent="Nom et nom d'utilisateur obligatoires.";return;}
+    if(username==="admin"||username==="asma"||username==="asmaabd1987-ui"){msg.textContent="Ce nom d'utilisateur est réservé.";return;}
+    if(password.length<6){msg.textContent="Le mot de passe doit contenir au moins 6 caractères.";return;}
+
+    const internalEmail=ppUsernameToAuthEmail(username);
+    msg.textContent="Création...";
+    let secondaryApp=null;
+
+    try{
+        const existing=await ppDb.collection("userProfiles").where("username","==",username).limit(1).get();
+        if(!existing.empty){msg.textContent="Ce nom d'utilisateur existe déjà.";return;}
+
+        const appName="ppUserCreator";
+        try{secondaryApp=firebase.app(appName);}catch(_){secondaryApp=firebase.initializeApp(PP_FIREBASE_CONFIG,appName);}
+        const secondaryAuth=secondaryApp.auth();
+        const cred=await secondaryAuth.createUserWithEmailAndPassword(internalEmail,password);
+        const uid=cred.user.uid;
+
+        const profile={
+            name,
+            username,
+            email:internalEmail,
+            role,
+            active:true,
+            permissions: role==="admin"
+                ? {stock:true,expenses:true}
+                : {
+                    stock:document.getElementById("ppPermStock").checked,
+                    expenses:document.getElementById("ppPermExpenses").checked
+                  },
+            createdBy:ppCurrentUser?.uid||null,
+            createdAt:firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        await ppDb.collection("userProfiles").doc(uid).set(profile);
+        await ppDb.collection("users").doc(uid).set({
+            email:internalEmail,
+            role,
+            active:true,
+            username,
+            createdAt:firebase.firestore.FieldValue.serverTimestamp()
+        },{merge:true});
+
+        await secondaryAuth.signOut();
+        setValue("ppNewUserName","");
+        setValue("ppNewUsername","");
+        setValue("ppNewUserPassword","");
+        msg.textContent=`✅ Utilisateur "${username}" créé comme ${role==="admin"?"Administrateur":"Employé"}.`;
+        await ppRenderUsersManager();
+    }catch(err){
+        console.error(err);
+        if(String(err?.code||"").includes("email-already-in-use"))msg.textContent="Ce nom d'utilisateur existe déjà.";
+        else if(String(err?.code||"").includes("weak-password"))msg.textContent="Mot de passe trop faible.";
+        else msg.textContent="Erreur: "+(err?.message||err);
+    }
+};
+
+// Allow existing users to switch Admin <-> Employee from the manager.
+async function ppSetUserRole(uid,role){
+    if(!ppIsAdmin())return;
+    if(!["admin","employee"].includes(role))return;
+    await ppDb.collection("userProfiles").doc(uid).set({
+        role,
+        permissions: role==="admin"
+            ? {stock:true,expenses:true}
+            : {stock:true,expenses:true},
+        updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    },{merge:true});
+    await ppDb.collection("users").doc(uid).set({role},{merge:true});
+    await ppWriteAudit("users",uid,"update",null,{role},"Changement rôle");
+    await ppRenderUsersManager();
+}
+
+const ppOldRenderUsersManagerMulti=ppRenderUsersManager;
+ppRenderUsersManager=async function(){
+    const tb=document.getElementById("ppUsersManagerTable");
+    if(!tb||!ppDb)return;
+    tb.innerHTML='<tr><td colspan="7">Chargement...</td></tr>';
+    try{
+        const snap=await ppDb.collection("userProfiles").get();
+        const rows=[];
+        snap.forEach(d=>rows.push({uid:d.id,...d.data()}));
+        rows.sort((a,b)=>String(a.name||a.username||"").localeCompare(String(b.name||b.username||""),"fr"));
+        if(!rows.length){tb.innerHTML='<tr><td colspan="7">Aucun utilisateur.</td></tr>';return;}
+
+        tb.innerHTML=rows.map(u=>`
+          <tr>
+            <td><strong>${escapeHTML(u.name||"-")}</strong></td>
+            <td>${escapeHTML(u.username||((u.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase()?"admin":"-"))}</td>
+            <td>
+              <select onchange="ppSetUserRole('${u.uid}',this.value)" ${String(u.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase()?"disabled":""}>
+                <option value="employee" ${u.role!=="admin"?"selected":""}>Employé</option>
+                <option value="admin" ${u.role==="admin"?"selected":""}>Admin</option>
+              </select>
+            </td>
+            <td>${u.role==="admin"||u.permissions?.stock!==false?"✅":"—"}</td>
+            <td>${u.role==="admin"||u.permissions?.expenses!==false?"✅":"—"}</td>
+            <td><span class="status ${u.active===false?"danger":"success"}">${u.active===false?"Désactivé":"Actif"}</span></td>
+            <td>${String(u.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase()
+              ?"Compte principal"
+              :`<button class="btn small ${u.active===false?"primary":"danger"}" onclick="ppToggleEmployee('${u.uid}',${u.active===false})">${u.active===false?"Activer":"Désactiver"}</button>`}
+            </td>
+          </tr>`).join("");
+    }catch(err){
+        console.error(err);
+        tb.innerHTML='<tr><td colspan="7">Erreur de chargement.</td></tr>';
+    }
+};
+
+setTimeout(ppReloadAuthoritativeProfile,1200);
+setTimeout(async()=>{await ppReloadAuthoritativeProfile(); if(typeof ppFinalizeRoleUI==="function")ppFinalizeRoleUI();},3000);
