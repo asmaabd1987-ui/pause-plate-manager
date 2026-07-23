@@ -11295,3 +11295,232 @@ ppRenderUsersManager=async function(){
 
 setTimeout(ppReloadAuthoritativeProfile,1200);
 setTimeout(async()=>{await ppReloadAuthoritativeProfile(); if(typeof ppFinalizeRoleUI==="function")ppFinalizeRoleUI();},3000);
+
+
+/* =========================================================
+   UTILISATEURS — MODIFIER / SUPPRIMER
+========================================================= */
+
+function ppEnsureEditUserModal(){
+    if(document.getElementById("ppEditUserModal"))return;
+    const m=document.createElement("div");
+    m.id="ppEditUserModal";
+    m.className="modal-overlay";
+    m.innerHTML=`
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header">
+          <h2>✏️ Modifier l'utilisateur</h2>
+          <button onclick="closeModal('ppEditUserModal')">×</button>
+        </div>
+        <input type="hidden" id="ppEditUserUid">
+        <div class="form-grid">
+          <div>
+            <label>Nom affiché</label>
+            <input id="ppEditUserName">
+          </div>
+          <div>
+            <label>Nom d'utilisateur</label>
+            <input id="ppEditUsername" disabled>
+            <small style="display:block;color:#667085;margin-top:4px">Lié au compte de connexion Firebase.</small>
+          </div>
+          <div>
+            <label>Rôle</label>
+            <select id="ppEditUserRole" onchange="ppRefreshEditUserPermissions()">
+              <option value="employee">Employé</option>
+              <option value="admin">Administrateur</option>
+            </select>
+          </div>
+          <div>
+            <label>Statut</label>
+            <select id="ppEditUserActive">
+              <option value="true">Actif</option>
+              <option value="false">Désactivé</option>
+            </select>
+          </div>
+        </div>
+        <div id="ppEditPermissionsBox" style="margin-top:14px;padding:12px;background:#f8fafc;border-radius:10px">
+          <strong>Permissions</strong>
+          <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px">
+            <label><input id="ppEditPermStock" type="checkbox" style="width:auto"> Stock / Entrées / Sorties</label>
+            <label><input id="ppEditPermExpenses" type="checkbox" style="width:auto"> Dépenses</label>
+          </div>
+        </div>
+        <div id="ppEditUserMessage" class="pp-cloud-message" style="margin-top:10px"></div>
+        <div class="modal-actions">
+          <button class="btn" type="button" onclick="closeModal('ppEditUserModal')">Annuler</button>
+          <button class="btn primary" type="button" onclick="ppSaveEditedUser()">Enregistrer</button>
+        </div>
+      </div>`;
+    document.body.appendChild(m);
+}
+
+function ppRefreshEditUserPermissions(){
+    const role=getValue("ppEditUserRole");
+    const box=document.getElementById("ppEditPermissionsBox");
+    if(box)box.style.display=role==="admin"?"none":"block";
+}
+
+async function ppOpenEditUser(uid){
+    if(!ppIsAdmin())return;
+    ppEnsureEditUserModal();
+
+    const snap=await ppDb.collection("userProfiles").doc(uid).get();
+    if(!snap.exists){alert("Utilisateur introuvable.");return;}
+
+    const u=snap.data()||{};
+    setValue("ppEditUserUid",uid);
+    setValue("ppEditUserName",u.name||"");
+    setValue("ppEditUsername",u.username||"");
+    setValue("ppEditUserRole",u.role==="admin"?"admin":"employee");
+    setValue("ppEditUserActive",u.active===false?"false":"true");
+    document.getElementById("ppEditPermStock").checked=u.permissions?.stock!==false;
+    document.getElementById("ppEditPermExpenses").checked=u.permissions?.expenses!==false;
+    document.getElementById("ppEditUserMessage").textContent="";
+
+    const current=ppCurrentFirebaseUser();
+    const isSelf=current && current.uid===uid;
+    const isPrincipal=String(u.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase();
+
+    document.getElementById("ppEditUserActive").disabled=isPrincipal||isSelf;
+    document.getElementById("ppEditUserRole").disabled=isPrincipal;
+
+    ppRefreshEditUserPermissions();
+    openModal("ppEditUserModal");
+}
+
+async function ppSaveEditedUser(){
+    if(!ppIsAdmin())return;
+    const uid=getValue("ppEditUserUid");
+    if(!uid)return;
+
+    const ref=ppDb.collection("userProfiles").doc(uid);
+    const snap=await ref.get();
+    if(!snap.exists)return;
+
+    const before=snap.data()||{};
+    const current=ppCurrentFirebaseUser();
+    const isSelf=current && current.uid===uid;
+    const isPrincipal=String(before.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase();
+
+    let role=getValue("ppEditUserRole")||before.role||"employee";
+    let active=getValue("ppEditUserActive")!=="false";
+
+    if(isPrincipal)role="admin";
+    if(isPrincipal||isSelf)active=true;
+
+    const after={
+        name:getValue("ppEditUserName").trim()||before.name||before.username||"Utilisateur",
+        role,
+        active,
+        permissions: role==="admin"
+          ? {stock:true,expenses:true}
+          : {
+              stock:document.getElementById("ppEditPermStock").checked,
+              expenses:document.getElementById("ppEditPermExpenses").checked
+            },
+        updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    try{
+        await ref.set(after,{merge:true});
+        await ppDb.collection("users").doc(uid).set({role:after.role,active:after.active},{merge:true});
+        await ppWriteAudit("users",uid,"update",before,{...before,...after},before.username||before.name||"Utilisateur");
+        closeModal("ppEditUserModal");
+        await ppRenderUsersManager();
+
+        if(isSelf){
+            await ppReloadAuthoritativeProfile();
+            if(typeof ppFinalizeRoleUI==="function")ppFinalizeRoleUI();
+        }
+    }catch(err){
+        console.error(err);
+        document.getElementById("ppEditUserMessage").textContent="Erreur: "+(err?.message||err);
+    }
+}
+
+async function ppDeleteUser(uid){
+    if(!ppIsAdmin())return;
+
+    const current=ppCurrentFirebaseUser();
+    if(current && current.uid===uid){
+        alert("Vous ne pouvez pas supprimer votre propre compte.");
+        return;
+    }
+
+    const ref=ppDb.collection("userProfiles").doc(uid);
+    const snap=await ref.get();
+    if(!snap.exists)return;
+
+    const user=snap.data()||{};
+    if(String(user.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase()){
+        alert("Le compte administrateur principal ne peut pas être supprimé.");
+        return;
+    }
+
+    if(!confirm(`Supprimer l'utilisateur "${user.name||user.username||"Utilisateur"}" ?\n\nSon accès sera bloqué et son historique sera conservé.`))return;
+
+    try{
+        await ref.set({
+            active:false,
+            deleted:true,
+            deletedAt:firebase.firestore.FieldValue.serverTimestamp(),
+            deletedBy:ppCurrentUser?.uid||null
+        },{merge:true});
+
+        await ppDb.collection("users").doc(uid).set({active:false,deleted:true},{merge:true});
+        await ppWriteAudit("users",uid,"delete",user,{...user,active:false,deleted:true},user.username||user.name||"Utilisateur");
+        await ppRenderUsersManager();
+    }catch(err){
+        console.error(err);
+        alert("Suppression impossible: "+(err?.message||err));
+    }
+}
+
+ppRenderUsersManager=async function(){
+    const tb=document.getElementById("ppUsersManagerTable");
+    if(!tb||!ppDb)return;
+    tb.innerHTML='<tr><td colspan="7">Chargement...</td></tr>';
+
+    try{
+        const snap=await ppDb.collection("userProfiles").get();
+        const rows=[];
+        snap.forEach(d=>{
+            const data=d.data()||{};
+            if(data.deleted===true)return;
+            rows.push({uid:d.id,...data});
+        });
+
+        rows.sort((a,b)=>String(a.name||a.username||"").localeCompare(String(b.name||b.username||""),"fr"));
+
+        if(!rows.length){
+            tb.innerHTML='<tr><td colspan="7">Aucun utilisateur.</td></tr>';
+            return;
+        }
+
+        const current=ppCurrentFirebaseUser();
+
+        tb.innerHTML=rows.map(u=>{
+            const principal=String(u.email||"").toLowerCase()===PP_ADMIN_EMAIL.toLowerCase();
+            const self=current && current.uid===u.uid;
+            return `
+            <tr>
+              <td><strong>${escapeHTML(u.name||"-")}</strong></td>
+              <td>${escapeHTML(u.username||(principal?"admin":"-"))}</td>
+              <td>${u.role==="admin"?"Admin":"Employé"}</td>
+              <td>${u.role==="admin"||u.permissions?.stock!==false?"✅":"—"}</td>
+              <td>${u.role==="admin"||u.permissions?.expenses!==false?"✅":"—"}</td>
+              <td><span class="status ${u.active===false?"danger":"success"}">${u.active===false?"Désactivé":"Actif"}</span></td>
+              <td>
+                <div class="action-buttons">
+                  <button class="btn small edit" type="button" onclick="ppOpenEditUser('${u.uid}')" title="Modifier">✏️</button>
+                  ${principal||self ? "" : `<button class="btn small danger" type="button" onclick="ppDeleteUser('${u.uid}')" title="Supprimer">🗑️</button>`}
+                </div>
+              </td>
+            </tr>`;
+        }).join("");
+    }catch(err){
+        console.error(err);
+        tb.innerHTML='<tr><td colspan="7">Erreur de chargement.</td></tr>';
+    }
+};
+
