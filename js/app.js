@@ -11025,3 +11025,82 @@ ppCloudHasData = async function(){
     return productDoc.exists;
 };
 
+
+
+/* FIX EMPLOYEE IDENTITY + CLOUD AUDIT */
+async function ppRefreshEmployeeIdentity(){
+    const u=ppCurrentFirebaseUser();
+    if(!u || !ppDb)return;
+    try{
+        const snap=await ppDb.collection("userProfiles").doc(u.uid).get();
+        if(snap.exists){
+            const p=snap.data()||{};
+            ppCurrentUserProfile={...ppCurrentUserProfile,...p,
+                role:p.role||ppCurrentRole||"employee",
+                permissions:p.permissions||ppCurrentUserProfile?.permissions||{stock:true,expenses:true}};
+            ppCurrentRole=ppCurrentUserProfile.role;
+            const userText=document.getElementById("ppCloudUser");
+            if(userText)userText.textContent=(p.name||p.username||"Utilisateur")+" — "+ppCurrentRole;
+        }
+    }catch(err){console.warn("Employee profile display:",err);}
+}
+
+ppUserIdentity=function(){
+    const u=ppCurrentFirebaseUser(), p=ppCurrentUserProfile||{};
+    return {
+        uid:u?.uid||"local",
+        email:u?.email||"",
+        name:p.name||p.username||"Utilisateur",
+        username:p.username||"",
+        role:p.role||ppCurrentRole||"employee"
+    };
+};
+
+ppWriteAudit=async function(module,entityId,action,before,after,label=""){
+    const who=ppUserIdentity();
+    const previous=ppAuditTrail.filter(x=>x.module===module && String(x.entityId)===String(entityId));
+    const entry={
+        id:Date.now()+Math.floor(Math.random()*100000),
+        module, entityId:String(entityId), label:String(label||""), action,
+        version:previous.length+1, user:who, at:new Date().toISOString(),
+        before:ppAuditSnapshot(before), after:ppAuditSnapshot(after),
+        changes:ppAuditDiff(before,after)
+    };
+    ppAuditTrail.push(entry);
+    localStorage.setItem("pause_plate_audit_trail",JSON.stringify(ppAuditTrail));
+    try{
+        if(ppDb && who.uid!=="local") await ppDb.collection("auditLogs").add(entry);
+    }catch(err){console.warn("Audit Cloud non synchronisé:",err);}
+    return entry;
+};
+
+async function ppLoadCloudAuditForAdmin(){
+    if(!ppIsAdmin() || !ppDb)return;
+    try{
+        const snap=await ppDb.collection("auditLogs").orderBy("at","desc").limit(1000).get();
+        const cloud=[]; snap.forEach(d=>cloud.push(d.data()));
+        const map=new Map();
+        [...ppAuditTrail,...cloud].forEach(x=>{
+            const key=String(x.id||"")+"|"+String(x.user?.uid||"")+"|"+String(x.at||"");
+            map.set(key,x);
+        });
+        ppAuditTrail=[...map.values()];
+        localStorage.setItem("pause_plate_audit_trail",JSON.stringify(ppAuditTrail));
+    }catch(err){console.warn("Chargement Audit Cloud:",err);}
+}
+
+const ppOldOpenGlobalAuditIdentity=ppOpenGlobalAudit;
+ppOpenGlobalAudit=async function(){
+    await ppLoadCloudAuditForAdmin();
+    return ppOldOpenGlobalAuditIdentity.apply(this,arguments);
+};
+
+const ppIdentityOldBootstrap=ppBootstrapCloud;
+ppBootstrapCloud=async function(user){
+    await ppIdentityOldBootstrap(user);
+    await ppRefreshEmployeeIdentity();
+    if(typeof ppFinalizeRoleUI==="function")ppFinalizeRoleUI();
+};
+
+setTimeout(ppRefreshEmployeeIdentity,1200);
+setTimeout(ppRefreshEmployeeIdentity,3000);
