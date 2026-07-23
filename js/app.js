@@ -747,18 +747,103 @@ function openMovementModal(type, id = null){
 
 
 function saveMovement(){
-    const type=getValue("movementType"); const productId=Number(getValue("movementProduct")); const quantity=parseNumber(getValue("movementQuantity"));
-    const product=products.find(p=>Number(p.id)===productId); if(!product){alert("Veuillez sélectionner un produit.");return;} if(quantity<=0){alert("Quantité invalide.");return;}
-    if(editingMovementId){
-        const old=movements.find(m=>Number(m.id)===Number(editingMovementId)); if(!old) return;
-        const oldProduct=products.find(p=>Number(p.id)===Number(old.productId));
-        if(oldProduct) oldProduct.stock += old.type==="entry" ? -Number(old.quantity) : Number(old.quantity);
+    if(!ppCan('stock','edit')){
+        alert("Accès non autorisé.");
+        return;
     }
-    if(type==="exit" && Number(product.stock)<quantity){ alert("Stock insuffisant."); return; }
+
+    const type = getValue("movementType");
+    const productId = Number(getValue("movementProduct"));
+    const quantity = parseNumber(getValue("movementQuantity"));
+    const product = products.find(p=>Number(p.id)===productId);
+
+    if(!product){
+        alert("Veuillez sélectionner un produit.");
+        return;
+    }
+
+    if(quantity<=0){
+        alert("Quantité invalide.");
+        return;
+    }
+
+    const editId = editingMovementId ? Number(editingMovementId) : null;
+    const oldMovement = editId
+        ? movements.find(m=>Number(m.id)===editId)
+        : null;
+    const before = oldMovement ? ppAuditSnapshot(oldMovement) : null;
+
+    // Annuler l'impact de l'ancienne version avant modification.
+    if(oldMovement){
+        const oldProduct = products.find(
+            p=>Number(p.id)===Number(oldMovement.productId)
+        );
+        if(oldProduct){
+            oldProduct.stock +=
+                oldMovement.type==="entry"
+                    ? -Number(oldMovement.quantity||0)
+                    : Number(oldMovement.quantity||0);
+        }
+    }
+
+    // Si la nouvelle sortie est impossible, restaurer l'ancienne opération.
+    if(type==="exit" && Number(product.stock)<quantity){
+        if(oldMovement){
+            const oldProduct = products.find(
+                p=>Number(p.id)===Number(oldMovement.productId)
+            );
+            if(oldProduct){
+                oldProduct.stock +=
+                    oldMovement.type==="entry"
+                        ? Number(oldMovement.quantity||0)
+                        : -Number(oldMovement.quantity||0);
+            }
+        }
+        alert("Stock insuffisant.");
+        return;
+    }
+
     product.stock += type==="entry" ? quantity : -quantity;
-    const record={id:editingMovementId||createId(),date:editingMovementId?(movements.find(m=>Number(m.id)===Number(editingMovementId))?.date||new Date().toISOString()):new Date().toISOString(),productId:product.id,productName:product.name,type,quantity,unit:product.unit,reason:getValue("movementReason"),note:getValue("movementNote").trim()};
-    if(editingMovementId){ const i=movements.findIndex(m=>Number(m.id)===Number(editingMovementId)); movements[i]=record; } else movements.unshift(record);
-    editingMovementId=null; saveData(); closeModal("movementModal"); renderAll();
+
+    const operationId = editId || createId();
+    const record = {
+        id: operationId,
+        date: oldMovement?.date || new Date().toISOString(),
+        productId: product.id,
+        productName: product.name,
+        type,
+        quantity,
+        unit: product.unit,
+        reason: getValue("movementReason"),
+        note: getValue("movementNote").trim()
+    };
+
+    if(editId){
+        const i = movements.findIndex(m=>Number(m.id)===editId);
+        movements[i] = record;
+    }else{
+        movements.unshift(record);
+    }
+
+    const labelType = type==="entry" ? "Entrée Stock" : "Sortie Stock";
+    const sign = type==="entry" ? "+" : "-";
+    const label = `${labelType} — ${product.name} — ${sign}${formatNumber(quantity)} ${product.unit||""}`;
+
+    // Chaque mouvement a son propre entityId = movement.id.
+    // Les modifications du même mouvement deviennent Version 2, 3...
+    ppWriteAudit(
+        "stock",
+        String(operationId),
+        before ? "update" : "create",
+        before,
+        ppAuditSnapshot(record),
+        label
+    );
+
+    editingMovementId = null;
+    saveData();
+    closeModal("movementModal");
+    renderAll();
 }
 
 
@@ -772,7 +857,43 @@ function renderMovements(){
 
 function viewMovement(id){ const m=movements.find(x=>Number(x.id)===Number(id)); if(!m)return; showDetailsModal("Mouvement de stock",[["Date",formatDate(m.date)],["Produit",m.productName],["Type",m.type==='entry'?'Entrée':'Sortie'],["Quantité",formatNumber(m.quantity)+' '+(m.unit||'')],["Motif",m.reason],["Note",m.note||'-']],()=>printMovement(id)); }
 function printMovement(id){ const m=movements.find(x=>Number(x.id)===Number(id)); if(!m)return; printDocument("Mouvement de stock",`<h2>Mouvement de stock</h2>${detailRowsHTML([["Date",formatDate(m.date)],["Produit",m.productName],["Type",m.type==='entry'?'Entrée':'Sortie'],["Quantité",formatNumber(m.quantity)+' '+(m.unit||'')],["Motif",m.reason],["Note",m.note||'-']])}`); }
-function deleteMovement(id){ const m=movements.find(x=>Number(x.id)===Number(id)); if(!m)return; if(!confirm("Supprimer ce mouvement ? Le stock sera corrigé automatiquement."))return; const p=products.find(x=>Number(x.id)===Number(m.productId)); if(p) p.stock += m.type==='entry'?-Number(m.quantity):Number(m.quantity); movements=movements.filter(x=>Number(x.id)!==Number(id)); saveData();renderAll(); }
+function deleteMovement(id){
+    if(!ppCan('stock','delete')){
+        alert("Accès non autorisé.");
+        return;
+    }
+
+    const m = movements.find(x=>Number(x.id)===Number(id));
+    if(!m)return;
+
+    if(!confirm("Supprimer ce mouvement ? Le stock sera corrigé automatiquement."))return;
+
+    const before = ppAuditSnapshot(m);
+    const p = products.find(x=>Number(x.id)===Number(m.productId));
+
+    if(p){
+        p.stock += m.type==="entry"
+            ? -Number(m.quantity||0)
+            : Number(m.quantity||0);
+    }
+
+    movements = movements.filter(x=>Number(x.id)!==Number(id));
+
+    const labelType = m.type==="entry" ? "Entrée Stock" : "Sortie Stock";
+    const label = `${labelType} — ${m.productName||""} — ${formatNumber(Number(m.quantity||0))} ${m.unit||""}`;
+
+    ppWriteAudit(
+        "stock",
+        String(m.id),
+        "delete",
+        before,
+        null,
+        label
+    );
+
+    saveData();
+    renderAll();
+}
 
 /* =========================================================
    SUPPLIERS
@@ -10305,6 +10426,19 @@ function ppAuditCount(module,id){
     return ppAuditTrail.filter(x=>x.module===module && String(x.entityId)===String(id)).length;
 }
 
+
+function ppAuditFieldLabel(field){
+    const labels={
+        productName:"Produit",
+        type:"Type",
+        quantity:"Quantité",
+        unit:"Unité",
+        reason:"Motif",
+        note:"Note"
+    };
+    return labels[field]||field;
+}
+
 function ppFormatAuditValue(v){
     if(v===null||v===undefined||v==='')return '—';
     if(typeof v==='object')return escapeHTML(JSON.stringify(v));
@@ -10322,7 +10456,7 @@ function ppShowAudit(module,id,title='Historique'){
     }else{
         body=rows.map(x=>{
             const changes=(x.changes||[]).length
-              ? `<table style="width:100%;margin-top:8px"><thead><tr><th>Champ</th><th>Avant</th><th>Après</th></tr></thead><tbody>${x.changes.map(c=>`<tr><td>${escapeHTML(c.field)}</td><td>${ppFormatAuditValue(c.before)}</td><td>${ppFormatAuditValue(c.after)}</td></tr>`).join('')}</tbody></table>`
+              ? `<table style="width:100%;margin-top:8px"><thead><tr><th>Champ</th><th>Avant</th><th>Après</th></tr></thead><tbody>${x.changes.map(c=>`<tr><td>${escapeHTML(ppAuditFieldLabel(c.field))}</td><td>${ppFormatAuditValue(c.before)}</td><td>${ppFormatAuditValue(c.after)}</td></tr>`).join('')}</tbody></table>`
               : '<div style="color:#667085;margin-top:6px">Création de l’opération.</div>';
             const act=x.action==='create'?'Création':x.action==='update'?'Modification':x.action==='delete'?'Suppression':x.action;
             return `<div style="border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin-bottom:10px">
@@ -10351,48 +10485,14 @@ function ppShowAudit(module,id,title='Historique'){
 function ppAuditMovement(id){ ppShowAudit('stock',id,'Historique de l’opération stock'); }
 function ppAuditExpense(id){ ppShowAudit('expenses',id,'Historique de la dépense'); }
 
-/* ---------- STOCK: audit create/update/delete ---------- */
+/* ---------- STOCK: permissions ---------- */
 const ppBaseOpenMovementModal = openMovementModal;
 openMovementModal = function(type,id=null){
-    if(!ppCan('stock','edit')){alert('Accès non autorisé.');return;}
+    if(!ppCan('stock','edit')){
+        alert('Accès non autorisé.');
+        return;
+    }
     return ppBaseOpenMovementModal(type,id);
-};
-
-const ppBaseSaveMovement = saveMovement;
-saveMovement = function(){
-    if(!ppCan('stock','edit')){alert('Accès non autorisé.');return;}
-    const id=Number(document.getElementById('movementId')?.value||0);
-    const before=id?ppAuditSnapshot(movements.find(x=>Number(x.id)===id)):null;
-    const beforeIds=new Set(movements.map(x=>String(x.id)));
-    const result=ppBaseSaveMovement();
-    setTimeout(()=>{
-        let after=null, entityId=id;
-        if(id) after=movements.find(x=>Number(x.id)===id);
-        else{
-            after=movements.find(x=>!beforeIds.has(String(x.id))) || movements[movements.length-1];
-            entityId=after?.id;
-        }
-        if(after && entityId!=null){
-            after.auditCount=ppAuditCount('stock',entityId)+1;
-            ppWriteAudit('stock',entityId,before?'update':'create',before,after,`${after.type||''} ${after.productName||''}`);
-            try{saveData();}catch(e){}
-        }
-    },0);
-    return result;
-};
-
-const ppBaseDeleteMovement = deleteMovement;
-deleteMovement = function(id){
-    if(!ppCan('stock','delete')){alert('Accès non autorisé.');return;}
-    const before=ppAuditSnapshot(movements.find(x=>Number(x.id)===Number(id)));
-    const countBefore=movements.length;
-    const result=ppBaseDeleteMovement(id);
-    setTimeout(()=>{
-        if(before && movements.length<countBefore && !movements.some(x=>Number(x.id)===Number(id))){
-            ppWriteAudit('stock',id,'delete',before,null,`${before.type||''} ${before.productName||''}`);
-        }
-    },0);
-    return result;
 };
 
 /* ---------- DEPENSES: audit create/update/delete ---------- */
@@ -10688,11 +10788,46 @@ function ppRefreshAdminSidebar(){
     box.style.display=ppIsAdmin() ? "block" : "none";
 }
 
-function ppOpenGlobalAudit(){
+
+async function ppLoadCloudAuditTrail(){
+    if(!ppIsAdmin() || !ppDb)return;
+
+    try{
+        const snap = await ppDb.collection("auditLogs")
+            .orderBy("at","desc")
+            .limit(2000)
+            .get();
+
+        const merged = new Map();
+
+        (Array.isArray(ppAuditTrail)?ppAuditTrail:[]).forEach(x=>{
+            const key = `${x.id||""}|${x.user?.uid||""}|${x.at||""}`;
+            merged.set(key,x);
+        });
+
+        snap.forEach(doc=>{
+            const x = doc.data()||{};
+            const key = `${x.id||doc.id}|${x.user?.uid||""}|${x.at||""}`;
+            merged.set(key,x);
+        });
+
+        ppAuditTrail = [...merged.values()];
+        localStorage.setItem(
+            "pause_plate_audit_trail",
+            JSON.stringify(ppAuditTrail)
+        );
+    }catch(err){
+        console.warn("Chargement du journal Cloud:",err);
+    }
+}
+
+async function ppOpenGlobalAudit(){
     if(!ppIsAdmin()){
         alert("Réservé à l'administrateur.");
         return;
     }
+
+    await ppLoadCloudAuditTrail();
 
     let m=document.getElementById("ppGlobalAuditModal");
     if(!m){
