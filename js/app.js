@@ -1741,22 +1741,44 @@ async function ppScanFromPCScanner(purpose){
     try{
         await ppScannerBridgeHealth();
 
-        if(status)status.textContent="Scanner prêt — numérisation en cours...";
+        const scanners=await ppGetAvailableScanners();
+        const scanner=ppChooseScanner(scanners);
 
-        const r=await fetch(PP_SCANNER_BRIDGE_URL+"/scan",{
+        if(status){
+            status.textContent=`Scanner sélectionné : ${scanner.name||scanner.id} — numérisation en cours...`;
+        }
+
+        const response=await fetch(PP_SCANNER_BRIDGE_URL+"/scan-file",{
             method:"POST",
             headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({purpose})
+            body:JSON.stringify({
+                purpose,
+                device_id:scanner.id,
+                scanner_id:scanner.id
+            })
         });
 
-        const data=await r.json().catch(()=>({}));
-        if(!r.ok)throw new Error(data.error||"Échec de la numérisation.");
+        if(!response.ok){
+            const ct=response.headers.get("content-type")||"";
+            let message="Échec de la numérisation.";
+            if(ct.includes("application/json")){
+                const errData=await response.json().catch(()=>({}));
+                message=errData.error||message;
+            }else{
+                const txt=await response.text().catch(()=>"");
+                if(txt)message=txt;
+            }
+            throw new Error(message);
+        }
 
-        const file=ppBase64ToFile(
-            data.base64,
-            data.mime||"image/jpeg",
-            data.filename||("scan-"+Date.now()+".jpg")
-        );
+        const blob=await response.blob();
+        if(!blob || !blob.size){
+            throw new Error("Le scanner n'a retourné aucune image.");
+        }
+
+        const mime=blob.type||response.headers.get("content-type")||"image/jpeg";
+        const filename=response.headers.get("X-PausePlate-Filename")||("scan-"+Date.now()+".jpg");
+        const file=new File([blob],filename,{type:mime});
 
         if(status)status.textContent="Scan reçu — analyse OCR...";
 
@@ -1774,9 +1796,10 @@ async function ppScanFromPCScanner(purpose){
 
     }catch(err){
         console.error(err);
-        if(status)status.innerHTML=
-            "❌ "+escapeHTML(err?.message||String(err))+
-            "<br><small>Vérifiez que Pause & Plate Scanner Bridge est lancé sur cet ordinateur (Windows ou Mac).</small>";
+        if(status){
+            status.innerHTML="❌ "+escapeHTML(err?.message||String(err))+
+                "<br><small>Vérifiez que Pause & Plate Scanner Bridge est lancé sur cet ordinateur (Windows).</small>";
+        }
     }
 }
 
