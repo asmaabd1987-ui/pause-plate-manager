@@ -1,6 +1,6 @@
 /* =========================================================
    PAUSE & PLATE MANAGER — RAPPORTS
-   ÉTAPES 1 + 2 + 3 + 4 : SYNTHÈSE + RENTABILITÉ + ANALYSE DES VENTES + STOCK & FOOD COST
+   ÉTAPES 1 + 2 + 3 + 4 + 5 : SYNTHÈSE + RENTABILITÉ + VENTES + STOCK & FOOD COST + ACHATS & FOURNISSEURS
    Module séparé pour ne pas toucher au cœur de app.js.
 ========================================================= */
 
@@ -370,6 +370,37 @@ function ppEnsureReportsStylesPP(){
       #reportsPage .pp-stock-food-line strong{color:#18251b;text-align:right}
       #reportsPage .pp-stock-note{margin-top:12px;padding:11px 13px;border-radius:12px;background:#f8faf8;border:1px solid #e3e9e5;color:#5d6a62;font-size:12px;line-height:1.5}
       #reportsPage .pp-stock-empty{text-align:center;color:#7d8781;padding:18px 8px}
+      #reportsPage .pp-buy-grid{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:12px}
+      #reportsPage .pp-buy-box{background:#fff;border:1px solid #e2e8e3;border-radius:15px;padding:15px}
+      #reportsPage .pp-buy-box small{display:block;color:#778179;font-weight:700;font-size:11px;text-transform:uppercase}
+      #reportsPage .pp-buy-box strong{display:block;margin-top:6px;font-size:21px;color:#18251b}
+      #reportsPage .pp-buy-box .sub{margin-top:5px;color:#79837d;font-size:11px}
+      #reportsPage .pp-buy-layout{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(320px,.8fr);gap:14px}
+      #reportsPage .pp-buy-section{background:#fff;border:1px solid #e2e8e3;border-radius:16px;padding:16px}
+      #reportsPage .pp-buy-section h3{margin:0 0 5px;color:#18251b}
+      #reportsPage .pp-buy-section p{margin:0 0 14px;color:#6f7b73;font-size:13px}
+      #reportsPage .pp-buy-table-wrap{overflow:auto}
+      #reportsPage .pp-buy-table{width:100%;min-width:940px;border-collapse:collapse}
+      #reportsPage .pp-buy-table th,#reportsPage .pp-buy-table td{padding:10px 9px;border-bottom:1px solid #edf1ee;text-align:left;font-size:12px;white-space:nowrap}
+      #reportsPage .pp-buy-table th{background:#fafbfa;color:#68736c;text-transform:uppercase;font-size:10px}
+      #reportsPage .pp-buy-table .num{text-align:right}
+      #reportsPage .pp-buy-status{display:inline-block;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800}
+      #reportsPage .pp-buy-status.good{background:#eaf7ef;color:#177348}
+      #reportsPage .pp-buy-status.warn{background:#fff4d7;color:#896400}
+      #reportsPage .pp-buy-status.bad{background:#fdebec;color:#a83339}
+      #reportsPage .pp-buy-ranking{display:flex;flex-direction:column;gap:8px}
+      #reportsPage .pp-buy-rank{display:grid;grid-template-columns:30px 1fr auto;gap:9px;align-items:center;border:1px solid #e6ebe7;border-radius:12px;padding:10px;background:#fbfcfb}
+      #reportsPage .pp-buy-rank .n{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#edf5ef;color:#094B2D;font-weight:900}
+      #reportsPage .pp-buy-rank strong{font-size:13px;color:#18251b}
+      #reportsPage .pp-buy-rank small{display:block;color:#79837d;margin-top:2px}
+      #reportsPage .pp-buy-rank .v{font-weight:900;color:#094B2D;text-align:right}
+      #reportsPage .pp-buy-alert{border:1px solid #ecd9d9;background:#fffafa;border-radius:13px;padding:12px;margin-bottom:9px}
+      #reportsPage .pp-buy-alert strong{color:#8c2f35}
+      #reportsPage .pp-buy-alert small{display:block;color:#7a8580;margin-top:4px}
+      #reportsPage .pp-buy-note{margin-top:12px;padding:11px 13px;border-radius:12px;background:#f8faf8;border:1px solid #e3e9e5;color:#5d6a62;font-size:12px;line-height:1.5}
+      #reportsPage .pp-buy-empty{text-align:center;color:#7d8781;padding:18px 8px}
+      @media(max-width:950px){#reportsPage .pp-buy-grid{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-buy-layout{grid-template-columns:1fr}}
+      @media(max-width:600px){#reportsPage .pp-buy-grid{grid-template-columns:1fr}}
       @media(max-width:950px){#reportsPage .pp-stock-grid{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-stock-layout{grid-template-columns:1fr}}
       @media(max-width:600px){#reportsPage .pp-stock-grid{grid-template-columns:1fr}}
       @media(max-width:950px){#reportsPage .pp-sales-grid{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-sales-layout{grid-template-columns:1fr}}
@@ -404,6 +435,7 @@ function ppEnsureReportsSummaryUIPP(){
               <button type="button" class="pp-report-tab" data-pp-report-tab="profitability" onclick="ppSetReportsTabPP('profitability')">💹 Rentabilité</button>
               <button type="button" class="pp-report-tab" data-pp-report-tab="sales" onclick="ppSetReportsTabPP('sales')">💰 Analyse des ventes</button>
               <button type="button" class="pp-report-tab" data-pp-report-tab="stock" onclick="ppSetReportsTabPP('stock')">📦 Stock & Food Cost</button>
+              <button type="button" class="pp-report-tab" data-pp-report-tab="purchases" onclick="ppSetReportsTabPP('purchases')">🧾 Achats & Fournisseurs</button>
             </div>
 
             <div class="pp-report-filter-box">
@@ -518,6 +550,45 @@ function ppEnsureReportsSummaryUIPP(){
               </div>
             </section>
 
+            <section id="ppReportPurchasesPanel" class="pp-report-panel">
+              <div id="ppPurchaseKPIs" class="pp-buy-grid"></div>
+
+              <div class="pp-buy-layout">
+                <div class="pp-buy-section">
+                  <h3>🚨 Alertes de prix fournisseurs</h3>
+                  <p>Hausse du dernier prix d’achat et comparaison avec le meilleur prix récent disponible.</p>
+                  <div id="ppPurchasePriceAlerts"></div>
+                </div>
+
+                <div class="pp-buy-section">
+                  <h3>🏆 Fournisseurs de la période</h3>
+                  <p>Classement par montant TTC acheté.</p>
+                  <div id="ppPurchaseSupplierRanking" class="pp-buy-ranking"></div>
+                </div>
+              </div>
+
+              <div class="pp-buy-section">
+                <h3>🔎 Comparateur de prix par article</h3>
+                <p>Dernier prix connu par fournisseur, évolution et économie potentielle.</p>
+                <div id="ppPurchaseComparator"></div>
+                <div class="pp-buy-note">La comparaison ne mélange jamais des unités différentes. Pour éviter les références trop anciennes, le “meilleur prix récent” utilise les offres enregistrées dans les 180 jours précédant le dernier achat connu de l’article.</div>
+              </div>
+
+              <div class="pp-buy-layout">
+                <div class="pp-buy-section">
+                  <h3>📈 Articles dont le prix augmente le plus</h3>
+                  <p>Variation entre les deux derniers achats chez le même fournisseur.</p>
+                  <div id="ppPurchaseTopIncreases" class="pp-buy-ranking"></div>
+                </div>
+
+                <div class="pp-buy-section">
+                  <h3>🕘 Historique récent des prix</h3>
+                  <p>Derniers prix unitaires enregistrés dans les factures fournisseurs.</p>
+                  <div id="ppPurchaseHistory"></div>
+                </div>
+              </div>
+            </section>
+
           </div>`;
     }
     return page;
@@ -525,7 +596,7 @@ function ppEnsureReportsSummaryUIPP(){
 
 
 function ppSetReportsTabPP(tab){
-    const selected = ["summary","profitability","sales","stock"].includes(tab) ? tab : "summary";
+    const selected = ["summary","profitability","sales","stock","purchases"].includes(tab) ? tab : "summary";
     document.querySelectorAll("#reportsPage [data-pp-report-tab]").forEach(btn=>{
         btn.classList.toggle("active",btn.dataset.ppReportTab===selected);
     });
@@ -533,6 +604,7 @@ function ppSetReportsTabPP(tab){
     document.getElementById("ppReportProfitabilityPanel")?.classList.toggle("active",selected==="profitability");
     document.getElementById("ppReportSalesPanel")?.classList.toggle("active",selected==="sales");
     document.getElementById("ppReportStockPanel")?.classList.toggle("active",selected==="stock");
+    document.getElementById("ppReportPurchasesPanel")?.classList.toggle("active",selected==="purchases");
 
     if(selected==="profitability"){
         try{ ppRenderProfitabilityPP(); }catch(err){ console.error("Rapports Rentabilité",err); }
@@ -542,6 +614,9 @@ function ppSetReportsTabPP(tab){
     }
     if(selected==="stock"){
         try{ ppRenderStockFoodCostPP(); }catch(err){ console.error("Rapports Stock & Food Cost",err); }
+    }
+    if(selected==="purchases"){
+        try{ ppRenderPurchasesSuppliersPP(); }catch(err){ console.error("Rapports Achats & Fournisseurs",err); }
     }
 }
 
@@ -1139,6 +1214,301 @@ function ppRenderStockFoodCostPP(){
     }
 }
 
+
+function ppBuyNormPP(value){
+    return String(value??"")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+      .toLowerCase().trim().replace(/\s+/g," ");
+}
+
+function ppBuyEscPP(value){
+    const s=String(value??"");
+    if(typeof escapeHTML==="function")return escapeHTML(s);
+    return s.replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[ch]));
+}
+
+function ppBuyInvoicesPP(){
+    return Array.isArray(invoices)?invoices:[];
+}
+
+function ppBuySuppliersPP(){
+    return Array.isArray(suppliers)?suppliers:[];
+}
+
+function ppBuyInvoiceDatePP(inv){
+    return String(inv?.date||inv?.createdAt||"").slice(0,10);
+}
+
+function ppBuyRowsPP(){
+    const rows=[];
+    ppBuyInvoicesPP().forEach(inv=>{
+        const date=ppBuyInvoiceDatePP(inv);
+        const supplierId=inv.supplierId;
+        const supplierName=String(inv.supplierName||ppBuySuppliersPP().find(s=>Number(s.id)===Number(supplierId))?.name||"Fournisseur");
+        (Array.isArray(inv.lines)?inv.lines:[]).forEach((line,index)=>{
+            const name=String(line.name||"Article").trim();
+            const unit=String(line.unit||"").trim();
+            const productId=line.productId??null;
+            const key=(productId!==null && productId!==undefined && productId!=="")
+                ? `id:${productId}|u:${ppBuyNormPP(unit)}`
+                : `n:${ppBuyNormPP(name)}|u:${ppBuyNormPP(unit)}`;
+            const price=Number(line.price||0);
+            const qty=Number(line.quantity||0);
+            if(!(price>=0) || !name)return;
+            rows.push({
+                id:`${inv.id||date}-${index}`,
+                invoiceId:inv.id,
+                invoiceNumber:String(inv.number||""),
+                date,
+                supplierId,
+                supplierName,
+                productId,
+                name,
+                unit,
+                key,
+                price,
+                qty,
+                totalHT:Number(line.totalHT ?? line.total ?? qty*price ?? 0)
+            });
+        });
+    });
+    return rows.filter(r=>r.date).sort((a,b)=>new Date(b.date)-new Date(a.date));
+}
+
+function ppBuyDaysPP(a,b){
+    const da=ppReportDateObjPP(a), db=ppReportDateObjPP(b);
+    if(!da||!db)return Infinity;
+    return Math.abs((da-db)/86400000);
+}
+
+function ppBuyIntelligencePP(){
+    const rows=ppBuyRowsPP();
+    const groups=new Map();
+    rows.forEach(r=>{
+        if(!groups.has(r.key))groups.set(r.key,[]);
+        groups.get(r.key).push(r);
+    });
+
+    const items=[];
+    groups.forEach(list=>{
+        list.sort((a,b)=>new Date(b.date)-new Date(a.date));
+        const latestOverall=list[0];
+        const supplierMap=new Map();
+
+        list.forEach(r=>{
+            const sk=String(r.supplierId??ppBuyNormPP(r.supplierName));
+            if(!supplierMap.has(sk))supplierMap.set(sk,[]);
+            supplierMap.get(sk).push(r);
+        });
+
+        const latestBySupplier=[];
+        supplierMap.forEach(history=>{
+            history.sort((a,b)=>new Date(b.date)-new Date(a.date));
+            const latest=history[0];
+            const previous=history[1]||null;
+            const change=previous && Number(previous.price)>0
+                ? (Number(latest.price)-Number(previous.price))/Number(previous.price)*100
+                : null;
+            latestBySupplier.push({...latest,previousPrice:previous?.price??null,previousDate:previous?.date??null,change});
+        });
+
+        const recent=latestBySupplier.filter(x=>ppBuyDaysPP(latestOverall.date,x.date)<=180);
+        const candidates=(recent.length?recent:latestBySupplier).filter(x=>Number(x.price)>=0);
+        const best=candidates.slice().sort((a,b)=>a.price-b.price)[0]||latestOverall;
+
+        latestBySupplier.forEach(current=>{
+            const gap=Number(current.price)-Number(best.price);
+            const gapPct=Number(best.price)>0?gap/Number(best.price)*100:0;
+            items.push({
+                key:current.key,
+                name:current.name,
+                unit:current.unit,
+                supplierId:current.supplierId,
+                supplierName:current.supplierName,
+                date:current.date,
+                price:Number(current.price||0),
+                previousPrice:current.previousPrice,
+                previousDate:current.previousDate,
+                change:current.change,
+                bestSupplier:best.supplierName,
+                bestPrice:Number(best.price||0),
+                bestDate:best.date,
+                gap,
+                gapPct,
+                latestOverallDate:latestOverall.date
+            });
+        });
+    });
+
+    return items.sort((a,b)=>{
+        const aa=(a.change??-Infinity), bb=(b.change??-Infinity);
+        return bb-aa || b.gap-a.gap;
+    });
+}
+
+function ppBuyPeriodInvoicesPP(range){
+    return ppBuyInvoicesPP().filter(inv=>ppReportInRangePP(ppBuyInvoiceDatePP(inv),range));
+}
+
+function ppBuyBoxPP(label,value,sub=""){
+    return `<div class="pp-buy-box">
+      <small>${ppBuyEscPP(label)}</small>
+      <strong>${value}</strong>
+      ${sub?`<div class="sub">${sub}</div>`:""}
+    </div>`;
+}
+
+function ppRenderPurchasesSuppliersPP(){
+    const panel=document.getElementById("ppReportPurchasesPanel");
+    if(!panel)return;
+
+    const range=ppReportCurrentRangePP();
+    const periodInvoices=ppBuyPeriodInvoicesPP(range);
+    const intelligence=ppBuyIntelligencePP();
+    const totalTTC=periodInvoices.reduce((s,i)=>s+Number(i.totalTTC||0),0);
+    const supplierIds=new Set(periodInvoices.map(i=>String(i.supplierId??i.supplierName??"")).filter(Boolean));
+    const rises=intelligence.filter(x=>x.change!==null && x.change>0.01);
+    const expensive=intelligence.filter(x=>x.gap>0.001 && ppBuyDaysPP(x.latestOverallDate,x.date)<=180);
+
+    // Potential saving estimate on latest purchased quantities in selected period where a cheaper recent supplier exists
+    const periodRows=ppBuyRowsPP().filter(r=>ppReportInRangePP(r.date,range));
+    const intelMap=new Map();
+    intelligence.forEach(x=>intelMap.set(`${x.key}|${String(x.supplierId??ppBuyNormPP(x.supplierName))}`,x));
+    let potentialSaving=0;
+    periodRows.forEach(r=>{
+        const x=intelMap.get(`${r.key}|${String(r.supplierId??ppBuyNormPP(r.supplierName))}`);
+        if(x && x.gap>0)potentialSaving+=x.gap*Math.max(Number(r.qty||0),0);
+    });
+
+    const kpis=document.getElementById("ppPurchaseKPIs");
+    if(kpis){
+        kpis.innerHTML=[
+            ppBuyBoxPP("Achats TTC",ppReportMoneyPP(totalTTC),`${periodInvoices.length} facture(s)`),
+            ppBuyBoxPP("Fournisseurs actifs",String(supplierIds.size),"Sur la période sélectionnée"),
+            ppBuyBoxPP("Alertes hausse",String(rises.length),"Dernier prix > achat précédent"),
+            ppBuyBoxPP("Économie potentielle",ppReportMoneyPP(potentialSaving),"Vs meilleur prix récent connu")
+        ].join("");
+    }
+
+    const alerts=document.getElementById("ppPurchasePriceAlerts");
+    if(alerts){
+        const alertRows=intelligence
+          .filter(x=>(x.change!==null && x.change>=3) || x.gapPct>=3)
+          .sort((a,b)=>Math.max(b.change||0,b.gapPct||0)-Math.max(a.change||0,a.gapPct||0))
+          .slice(0,15);
+
+        alerts.innerHTML=alertRows.length
+          ? alertRows.map(x=>{
+              const ownRise=x.change!==null && x.change>=3;
+              const cheaper=x.gap>0.001 && ppBuyNormPP(x.bestSupplier)!==ppBuyNormPP(x.supplierName);
+              const pieces=[];
+              if(ownRise)pieces.push(`hausse de <strong>+${ppReportNumberPP(x.change,1)}%</strong> vs votre achat précédent`);
+              if(cheaper)pieces.push(`<strong>${ppBuyEscPP(x.bestSupplier)}</strong> est à ${ppReportMoneyPP(x.bestPrice)} (${ppReportMoneyPP(x.gap)} moins cher)`);
+              return `<div class="pp-buy-alert">
+                <div><strong>⚠️ ${ppBuyEscPP(x.name)}</strong> — ${ppBuyEscPP(x.supplierName)}</div>
+                <small>Dernier prix: ${ppReportMoneyPP(x.price)} / ${ppBuyEscPP(x.unit||"unité")} · ${ppReportDateLabelPP(x.date)}</small>
+                <div style="margin-top:7px;font-size:12px;color:#4f5b54">${pieces.join(" · ")}</div>
+              </div>`;
+          }).join("")
+          : '<div class="pp-buy-empty">✅ Aucune hausse importante ni meilleur prix concurrent détecté.</div>';
+    }
+
+    const ranking=document.getElementById("ppPurchaseSupplierRanking");
+    if(ranking){
+        const map=new Map();
+        periodInvoices.forEach(inv=>{
+            const name=String(inv.supplierName||"Fournisseur");
+            const row=map.get(name)||{name,total:0,count:0};
+            row.total+=Number(inv.totalTTC||0); row.count++;
+            map.set(name,row);
+        });
+        const rows=[...map.values()].sort((a,b)=>b.total-a.total);
+        ranking.innerHTML=rows.length
+          ? rows.slice(0,10).map((r,i)=>`
+              <div class="pp-buy-rank">
+                <div class="n">${i+1}</div>
+                <div><strong>${ppBuyEscPP(r.name)}</strong><small>${r.count} facture(s)</small></div>
+                <div class="v">${ppReportMoneyPP(r.total)}</div>
+              </div>`).join("")
+          : '<div class="pp-buy-empty">Aucun achat sur la période.</div>';
+    }
+
+    const comparator=document.getElementById("ppPurchaseComparator");
+    if(comparator){
+        const rows=intelligence
+          .slice()
+          .sort((a,b)=>b.gap-a.gap || (b.change||0)-(a.change||0));
+
+        comparator.innerHTML=rows.length
+          ? `<div class="pp-buy-table-wrap">
+              <table class="pp-buy-table">
+                <thead><tr>
+                  <th>Article</th><th>Fournisseur</th><th>Date</th>
+                  <th class="num">Dernier prix</th><th class="num">Prix précédent</th><th class="num">Évolution</th>
+                  <th>Meilleur fournisseur récent</th><th class="num">Meilleur prix</th><th class="num">Écart</th><th>Diagnostic</th>
+                </tr></thead>
+                <tbody>
+                  ${rows.slice(0,60).map(x=>{
+                      const rise=x.change!==null && x.change>0.01;
+                      const drop=x.change!==null && x.change<-0.01;
+                      const overpriced=x.gap>0.001 && ppBuyNormPP(x.bestSupplier)!==ppBuyNormPP(x.supplierName);
+                      let cls="good", label="Bon prix";
+                      if(overpriced){cls="bad";label="Plus cher";}
+                      else if(rise){cls="warn";label="En hausse";}
+                      else if(drop){cls="good";label="En baisse";}
+                      return `<tr>
+                        <td><strong>${ppBuyEscPP(x.name)}</strong><div style="font-size:10px;color:#7d8781">${ppBuyEscPP(x.unit||"")}</div></td>
+                        <td>${ppBuyEscPP(x.supplierName)}</td>
+                        <td>${ppReportDateLabelPP(x.date)}</td>
+                        <td class="num"><strong>${ppReportMoneyPP(x.price)}</strong></td>
+                        <td class="num">${x.previousPrice===null?"—":ppReportMoneyPP(x.previousPrice)}</td>
+                        <td class="num">${x.change===null?"—":`${x.change>=0?"+":""}${ppReportNumberPP(x.change,1)}%`}</td>
+                        <td>${ppBuyEscPP(x.bestSupplier)}<div style="font-size:10px;color:#7d8781">${ppReportDateLabelPP(x.bestDate)}</div></td>
+                        <td class="num">${ppReportMoneyPP(x.bestPrice)}</td>
+                        <td class="num">${x.gap>0?`+${ppReportMoneyPP(x.gap)}`:"—"}</td>
+                        <td><span class="pp-buy-status ${cls}">${label}</span></td>
+                      </tr>`;
+                  }).join("")}
+                </tbody>
+              </table>
+            </div>`
+          : '<div class="pp-buy-empty">Pas encore assez de données de prix fournisseurs.</div>';
+    }
+
+    const increases=document.getElementById("ppPurchaseTopIncreases");
+    if(increases){
+        const rows=intelligence
+          .filter(x=>x.change!==null && x.change>0.01)
+          .sort((a,b)=>b.change-a.change)
+          .slice(0,12);
+        increases.innerHTML=rows.length
+          ? rows.map((x,i)=>`
+              <div class="pp-buy-rank">
+                <div class="n">${i+1}</div>
+                <div><strong>${ppBuyEscPP(x.name)}</strong><small>${ppBuyEscPP(x.supplierName)} · ${ppReportMoneyPP(x.previousPrice)} → ${ppReportMoneyPP(x.price)}</small></div>
+                <div class="v">+${ppReportNumberPP(x.change,1)}%</div>
+              </div>`).join("")
+          : '<div class="pp-buy-empty">Aucune hausse calculable pour le moment.</div>';
+    }
+
+    const history=document.getElementById("ppPurchaseHistory");
+    if(history){
+        const rows=ppBuyRowsPP().slice(0,20);
+        history.innerHTML=rows.length
+          ? `<div class="pp-buy-table-wrap"><table class="pp-buy-table" style="min-width:620px">
+              <thead><tr><th>Date</th><th>Article</th><th>Fournisseur</th><th class="num">Qté</th><th class="num">Prix unitaire</th></tr></thead>
+              <tbody>${rows.map(r=>`<tr>
+                <td>${ppReportDateLabelPP(r.date)}</td>
+                <td><strong>${ppBuyEscPP(r.name)}</strong></td>
+                <td>${ppBuyEscPP(r.supplierName)}</td>
+                <td class="num">${ppReportNumberPP(r.qty,2)} ${ppBuyEscPP(r.unit)}</td>
+                <td class="num">${ppReportMoneyPP(r.price)}</td>
+              </tr>`).join("")}</tbody>
+            </table></div>`
+          : '<div class="pp-buy-empty">Aucun historique d’achat disponible.</div>';
+    }
+}
+
 function ppSetReportPeriodPP(period){
     ppReportPeriodPP=period;
     const custom=document.getElementById("ppReportCustomDates");
@@ -1194,6 +1564,7 @@ function ppRenderReportsSummaryPP(){
     try{ ppRenderProfitabilityPP(); }catch(err){ console.error("Rapports Rentabilité",err); }
     try{ ppRenderSalesAnalysisPP(); }catch(err){ console.error("Rapports Analyse des ventes",err); }
     try{ ppRenderStockFoodCostPP(); }catch(err){ console.error("Rapports Stock & Food Cost",err); }
+    try{ ppRenderPurchasesSuppliersPP(); }catch(err){ console.error("Rapports Achats & Fournisseurs",err); }
 }
 
 // Intégration douce avec le rendu existant du Manager.
