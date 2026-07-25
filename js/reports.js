@@ -1,6 +1,6 @@
 /* =========================================================
    PAUSE & PLATE MANAGER — RAPPORTS
-   ÉTAPES 1 + 2 + 3 : SYNTHÈSE + RENTABILITÉ + ANALYSE DES VENTES
+   ÉTAPES 1 + 2 + 3 + 4 : SYNTHÈSE + RENTABILITÉ + ANALYSE DES VENTES + STOCK & FOOD COST
    Module séparé pour ne pas toucher au cœur de app.js.
 ========================================================= */
 
@@ -340,6 +340,38 @@ function ppEnsureReportsStylesPP(){
       #reportsPage .pp-sales-bar-fill{height:100%;background:#094B2D;border-radius:999px}
       #reportsPage .pp-sales-bar-value{text-align:right;font-size:12px;font-weight:800;color:#18251b}
       #reportsPage .pp-sales-empty{text-align:center;color:#7d8781;padding:18px 8px}
+      #reportsPage .pp-stock-grid{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:12px}
+      #reportsPage .pp-stock-box{background:#fff;border:1px solid #e2e8e3;border-radius:15px;padding:15px}
+      #reportsPage .pp-stock-box small{display:block;color:#778179;font-weight:700;font-size:11px;text-transform:uppercase}
+      #reportsPage .pp-stock-box strong{display:block;margin-top:6px;font-size:21px;color:#18251b}
+      #reportsPage .pp-stock-box .sub{margin-top:5px;color:#79837d;font-size:11px}
+      #reportsPage .pp-stock-layout{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr);gap:14px}
+      #reportsPage .pp-stock-section{background:#fff;border:1px solid #e2e8e3;border-radius:16px;padding:16px}
+      #reportsPage .pp-stock-section h3{margin:0 0 5px;color:#18251b}
+      #reportsPage .pp-stock-section p{margin:0 0 14px;color:#6f7b73;font-size:13px}
+      #reportsPage .pp-stock-table-wrap{overflow:auto}
+      #reportsPage .pp-stock-table{width:100%;min-width:760px;border-collapse:collapse}
+      #reportsPage .pp-stock-table th,#reportsPage .pp-stock-table td{padding:10px 9px;border-bottom:1px solid #edf1ee;text-align:left;font-size:12px;white-space:nowrap}
+      #reportsPage .pp-stock-table th{background:#fafbfa;color:#68736c;text-transform:uppercase;font-size:10px}
+      #reportsPage .pp-stock-table .num{text-align:right}
+      #reportsPage .pp-stock-status{display:inline-block;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800}
+      #reportsPage .pp-stock-status.good{background:#eaf7ef;color:#177348}
+      #reportsPage .pp-stock-status.warn{background:#fff4d7;color:#896400}
+      #reportsPage .pp-stock-status.bad{background:#fdebec;color:#a83339}
+      #reportsPage .pp-stock-ranking{display:flex;flex-direction:column;gap:8px}
+      #reportsPage .pp-stock-rank{display:grid;grid-template-columns:30px 1fr auto;gap:9px;align-items:center;border:1px solid #e6ebe7;border-radius:12px;padding:10px;background:#fbfcfb}
+      #reportsPage .pp-stock-rank .n{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#edf5ef;color:#094B2D;font-weight:900}
+      #reportsPage .pp-stock-rank strong{font-size:13px;color:#18251b}
+      #reportsPage .pp-stock-rank small{display:block;color:#79837d;margin-top:2px}
+      #reportsPage .pp-stock-rank .v{font-weight:900;color:#094B2D;text-align:right}
+      #reportsPage .pp-stock-food-line{display:grid;grid-template-columns:1fr auto;gap:10px;padding:10px 0;border-bottom:1px solid #edf1ee}
+      #reportsPage .pp-stock-food-line:last-child{border-bottom:0}
+      #reportsPage .pp-stock-food-line span{color:#6f7b73;font-size:12px}
+      #reportsPage .pp-stock-food-line strong{color:#18251b;text-align:right}
+      #reportsPage .pp-stock-note{margin-top:12px;padding:11px 13px;border-radius:12px;background:#f8faf8;border:1px solid #e3e9e5;color:#5d6a62;font-size:12px;line-height:1.5}
+      #reportsPage .pp-stock-empty{text-align:center;color:#7d8781;padding:18px 8px}
+      @media(max-width:950px){#reportsPage .pp-stock-grid{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-stock-layout{grid-template-columns:1fr}}
+      @media(max-width:600px){#reportsPage .pp-stock-grid{grid-template-columns:1fr}}
       @media(max-width:950px){#reportsPage .pp-sales-grid{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-sales-layout{grid-template-columns:1fr}}
       @media(max-width:600px){#reportsPage .pp-sales-grid{grid-template-columns:1fr}#reportsPage .pp-sales-bar-row{grid-template-columns:85px 1fr 90px}}
       @media(max-width:950px){#reportsPage .pp-profit-grid,#reportsPage .pp-profit-flow{grid-template-columns:repeat(2,1fr)}}
@@ -362,7 +394,7 @@ function ppEnsureReportsSummaryUIPP(){
             <div class="pp-report-head">
               <div>
                 <h2>📈 Rapports</h2>
-                <p>Suivez la synthèse de gestion et la rentabilité sur la même période.</p>
+                <p>Suivez la synthèse, la rentabilité, les ventes et le stock sur la même période.</p>
               </div>
               <button type="button" class="btn" onclick="ppRenderReportsSummaryPP()">↻ Actualiser</button>
             </div>
@@ -371,6 +403,7 @@ function ppEnsureReportsSummaryUIPP(){
               <button type="button" class="pp-report-tab active" data-pp-report-tab="summary" onclick="ppSetReportsTabPP('summary')">📊 Synthèse</button>
               <button type="button" class="pp-report-tab" data-pp-report-tab="profitability" onclick="ppSetReportsTabPP('profitability')">💹 Rentabilité</button>
               <button type="button" class="pp-report-tab" data-pp-report-tab="sales" onclick="ppSetReportsTabPP('sales')">💰 Analyse des ventes</button>
+              <button type="button" class="pp-report-tab" data-pp-report-tab="stock" onclick="ppSetReportsTabPP('stock')">📦 Stock & Food Cost</button>
             </div>
 
             <div class="pp-report-filter-box">
@@ -447,6 +480,44 @@ function ppEnsureReportsSummaryUIPP(){
               </div>
             </section>
 
+            <section id="ppReportStockPanel" class="pp-report-panel">
+              <div id="ppStockAnalysisKPIs" class="pp-stock-grid"></div>
+
+              <div class="pp-stock-layout">
+                <div class="pp-stock-section">
+                  <h3>⚠️ Alertes de stock</h3>
+                  <p>Articles au stock minimum ou en dessous du seuil.</p>
+                  <div id="ppStockAlerts"></div>
+                </div>
+
+                <div class="pp-stock-section">
+                  <h3>🍽️ Food Cost & consommation</h3>
+                  <p>Lecture croisée entre coût matière théorique et sorties de stock enregistrées.</p>
+                  <div id="ppStockFoodCost"></div>
+                </div>
+              </div>
+
+              <div class="pp-stock-layout">
+                <div class="pp-stock-section">
+                  <h3>📤 Matières les plus sorties</h3>
+                  <p>Classement par valeur estimée des sorties pendant la période.</p>
+                  <div id="ppStockTopConsumption" class="pp-stock-ranking"></div>
+                </div>
+
+                <div class="pp-stock-section">
+                  <h3>🔄 Mouvements de la période</h3>
+                  <p>Entrées et sorties enregistrées dans le Manager.</p>
+                  <div id="ppStockMovementSummary"></div>
+                </div>
+              </div>
+
+              <div class="pp-stock-section">
+                <h3>📦 Valorisation du stock actuel</h3>
+                <p>Articles classés par valeur de stock au prix moyen actuel.</p>
+                <div id="ppStockValuation"></div>
+              </div>
+            </section>
+
           </div>`;
     }
     return page;
@@ -454,19 +525,23 @@ function ppEnsureReportsSummaryUIPP(){
 
 
 function ppSetReportsTabPP(tab){
-    const selected = ["summary","profitability","sales"].includes(tab) ? tab : "summary";
+    const selected = ["summary","profitability","sales","stock"].includes(tab) ? tab : "summary";
     document.querySelectorAll("#reportsPage [data-pp-report-tab]").forEach(btn=>{
         btn.classList.toggle("active",btn.dataset.ppReportTab===selected);
     });
     document.getElementById("ppReportSummaryPanel")?.classList.toggle("active",selected==="summary");
     document.getElementById("ppReportProfitabilityPanel")?.classList.toggle("active",selected==="profitability");
     document.getElementById("ppReportSalesPanel")?.classList.toggle("active",selected==="sales");
+    document.getElementById("ppReportStockPanel")?.classList.toggle("active",selected==="stock");
 
     if(selected==="profitability"){
         try{ ppRenderProfitabilityPP(); }catch(err){ console.error("Rapports Rentabilité",err); }
     }
     if(selected==="sales"){
         try{ ppRenderSalesAnalysisPP(); }catch(err){ console.error("Rapports Analyse des ventes",err); }
+    }
+    if(selected==="stock"){
+        try{ ppRenderStockFoodCostPP(); }catch(err){ console.error("Rapports Stock & Food Cost",err); }
     }
 }
 
@@ -836,6 +911,234 @@ function ppRenderSalesAnalysisPP(){
     }
 }
 
+
+function ppStockEscPP(value){
+    const s=String(value??"");
+    if(typeof escapeHTML==="function")return escapeHTML(s);
+    return s.replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[ch]));
+}
+
+function ppStockProductsPP(){
+    return Array.isArray(products)?products:[];
+}
+
+function ppStockMovementsPP(range){
+    return (Array.isArray(movements)?movements:[])
+      .filter(m=>ppReportInRangePP(m.date,range));
+}
+
+function ppStockProductForMovementPP(m){
+    return ppStockProductsPP().find(p=>Number(p.id)===Number(m?.productId));
+}
+
+function ppStockMovementValuePP(m){
+    const p=ppStockProductForMovementPP(m);
+    const unitPrice=Number(p?.price||0);
+    return Math.max(Number(m?.quantity||0),0)*Math.max(unitPrice,0);
+}
+
+function ppStockCurrentValuePP(){
+    return ppStockProductsPP().reduce((sum,p)=>{
+        return sum+Math.max(Number(p.stock||0),0)*Math.max(Number(p.price||0),0);
+    },0);
+}
+
+function ppStockLowRowsPP(){
+    return ppStockProductsPP()
+      .filter(p=>Number(p.stock||0)<=Number(p.minStock||0))
+      .map(p=>{
+          const stock=Number(p.stock||0);
+          const min=Number(p.minStock||0);
+          return {
+              id:p.id,
+              name:String(p.name||"Produit"),
+              category:String(p.category||"-"),
+              unit:String(p.unit||""),
+              stock,
+              min,
+              shortage:Math.max(min-stock,0),
+              value:Math.max(stock,0)*Math.max(Number(p.price||0),0)
+          };
+      })
+      .sort((a,b)=>{
+          const ar=a.min>0?a.stock/a.min:0;
+          const br=b.min>0?b.stock/b.min:0;
+          return ar-br || b.shortage-a.shortage;
+      });
+}
+
+function ppStockConsumptionRowsPP(range){
+    const map=new Map();
+
+    ppStockMovementsPP(range)
+      .filter(m=>m.type==="exit")
+      .forEach(m=>{
+          const p=ppStockProductForMovementPP(m);
+          const key=String(m.productId||m.productName||"unknown");
+          if(!map.has(key)){
+              map.set(key,{
+                  id:m.productId,
+                  name:String(p?.name||m.productName||"Produit"),
+                  unit:String(p?.unit||m.unit||""),
+                  qty:0,
+                  value:0,
+                  count:0
+              });
+          }
+          const row=map.get(key);
+          row.qty+=Number(m.quantity||0);
+          row.value+=ppStockMovementValuePP(m);
+          row.count++;
+      });
+
+    return [...map.values()].sort((a,b)=>b.value-a.value || b.qty-a.qty);
+}
+
+function ppStockBoxPP(label,value,sub=""){
+    return `<div class="pp-stock-box">
+      <small>${ppStockEscPP(label)}</small>
+      <strong>${value}</strong>
+      ${sub?`<div class="sub">${sub}</div>`:""}
+    </div>`;
+}
+
+function ppRenderStockFoodCostPP(){
+    const panel=document.getElementById("ppReportStockPanel");
+    if(!panel)return;
+
+    const range=ppReportCurrentRangePP();
+    const metrics=ppReportMetricsPP(range);
+    const list=ppStockMovementsPP(range);
+    const entries=list.filter(m=>m.type==="entry");
+    const exits=list.filter(m=>m.type==="exit");
+
+    const entryValue=entries.reduce((sum,m)=>sum+ppStockMovementValuePP(m),0);
+    const exitValue=exits.reduce((sum,m)=>sum+ppStockMovementValuePP(m),0);
+    const currentValue=ppStockCurrentValuePP();
+    const lowRows=ppStockLowRowsPP();
+    const consumption=ppStockConsumptionRowsPP(range);
+
+    const theoretical=Number(metrics.materialCost||0);
+    const caHT=Number(metrics.caHT||0);
+    const theoreticalPct=caHT>0?theoretical/caHT*100:0;
+    const recordedPct=caHT>0?exitValue/caHT*100:0;
+    const gap=exitValue-theoretical;
+
+    const kpis=document.getElementById("ppStockAnalysisKPIs");
+    if(kpis){
+        kpis.innerHTML=[
+            ppStockBoxPP("Valeur du stock",ppReportMoneyPP(currentValue),`${ppStockProductsPP().length} article(s)`),
+            ppStockBoxPP("Alertes stock",String(lowRows.length),lowRows.length?"À commander / vérifier":"Aucune alerte"),
+            ppStockBoxPP("Food Cost théorique",`${ppReportNumberPP(theoreticalPct,1)}%`,`${ppReportMoneyPP(theoretical)} de coût matière`),
+            ppStockBoxPP("Sorties enregistrées",ppReportMoneyPP(exitValue),`${exits.length} mouvement(s) de sortie`)
+        ].join("");
+    }
+
+    const alerts=document.getElementById("ppStockAlerts");
+    if(alerts){
+        alerts.innerHTML=lowRows.length
+          ? `<div class="pp-stock-table-wrap">
+              <table class="pp-stock-table">
+                <thead><tr><th>Article</th><th>Catégorie</th><th class="num">Stock</th><th class="num">Minimum</th><th class="num">À couvrir</th><th>Statut</th></tr></thead>
+                <tbody>
+                  ${lowRows.slice(0,20).map(r=>{
+                      const zero=r.stock<=0;
+                      return `<tr>
+                        <td><strong>${ppStockEscPP(r.name)}</strong></td>
+                        <td>${ppStockEscPP(r.category)}</td>
+                        <td class="num">${ppReportNumberPP(r.stock,2)} ${ppStockEscPP(r.unit)}</td>
+                        <td class="num">${ppReportNumberPP(r.min,2)} ${ppStockEscPP(r.unit)}</td>
+                        <td class="num">${ppReportNumberPP(r.shortage,2)} ${ppStockEscPP(r.unit)}</td>
+                        <td><span class="pp-stock-status ${zero?"bad":"warn"}">${zero?"Rupture":"À commander"}</span></td>
+                      </tr>`;
+                  }).join("")}
+                </tbody>
+              </table>
+            </div>`
+          : '<div class="pp-stock-empty">✅ Aucun article sous le seuil minimum.</div>';
+    }
+
+    const food=document.getElementById("ppStockFoodCost");
+    if(food){
+        const gapAbs=Math.abs(gap);
+        const gapLabel=gap>0?"Sorties supérieures au théorique":gap<0?"Sorties inférieures au théorique":"Écart nul";
+        const gapClass=gapAbs<0.01?"good":(theoretical>0 && gapAbs/theoretical<=0.10?"warn":"bad");
+        food.innerHTML=`
+          <div class="pp-stock-food-line"><span>Coût matière théorique</span><strong>${ppReportMoneyPP(theoretical)}</strong></div>
+          <div class="pp-stock-food-line"><span>Food Cost théorique</span><strong>${ppReportNumberPP(theoreticalPct,1)}%</strong></div>
+          <div class="pp-stock-food-line"><span>Sorties stock valorisées*</span><strong>${ppReportMoneyPP(exitValue)}</strong></div>
+          <div class="pp-stock-food-line"><span>Sorties / CA HT</span><strong>${ppReportNumberPP(recordedPct,1)}%</strong></div>
+          <div class="pp-stock-food-line"><span>Écart indicatif</span><strong><span class="pp-stock-status ${gapClass}">${gap>=0?"+":""}${ppReportMoneyPP(gap)}</span></strong></div>
+          <div class="pp-stock-note">
+            <strong>${gapLabel}.</strong><br>
+            * Les sorties sont valorisées au prix moyen actuel des articles. Cet écart est un indicateur de contrôle, pas un inventaire physique.
+          </div>`;
+    }
+
+    const top=document.getElementById("ppStockTopConsumption");
+    if(top){
+        top.innerHTML=consumption.length
+          ? consumption.slice(0,12).map((r,i)=>`
+              <div class="pp-stock-rank">
+                <div class="n">${i+1}</div>
+                <div>
+                  <strong>${ppStockEscPP(r.name)}</strong>
+                  <small>${ppReportNumberPP(r.qty,2)} ${ppStockEscPP(r.unit)} · ${r.count} sortie(s)</small>
+                </div>
+                <div class="v">${ppReportMoneyPP(r.value)}</div>
+              </div>
+            `).join("")
+          : '<div class="pp-stock-empty">Aucune sortie de stock sur la période.</div>';
+    }
+
+    const summary=document.getElementById("ppStockMovementSummary");
+    if(summary){
+        summary.innerHTML=`
+          <div class="pp-stock-food-line"><span>Entrées</span><strong>${entries.length} mouvement(s)</strong></div>
+          <div class="pp-stock-food-line"><span>Valeur estimée des entrées</span><strong>${ppReportMoneyPP(entryValue)}</strong></div>
+          <div class="pp-stock-food-line"><span>Sorties</span><strong>${exits.length} mouvement(s)</strong></div>
+          <div class="pp-stock-food-line"><span>Valeur estimée des sorties</span><strong>${ppReportMoneyPP(exitValue)}</strong></div>
+          <div class="pp-stock-food-line"><span>Total mouvements</span><strong>${list.length}</strong></div>
+          <div class="pp-stock-note">Les quantités ne sont pas additionnées entre unités différentes (kg, litre, pièce, etc.). Les valeurs monétaires permettent une lecture consolidée.</div>`;
+    }
+
+    const valuation=document.getElementById("ppStockValuation");
+    if(valuation){
+        const rows=ppStockProductsPP()
+          .map(p=>({
+              name:String(p.name||"Produit"),
+              category:String(p.category||"-"),
+              unit:String(p.unit||""),
+              stock:Number(p.stock||0),
+              price:Number(p.price||0),
+              min:Number(p.minStock||0),
+              value:Number(p.stock||0)*Number(p.price||0)
+          }))
+          .sort((a,b)=>b.value-a.value);
+
+        valuation.innerHTML=rows.length
+          ? `<div class="pp-stock-table-wrap">
+              <table class="pp-stock-table">
+                <thead><tr><th>Article</th><th>Catégorie</th><th class="num">Stock</th><th class="num">Prix moyen</th><th class="num">Valeur</th><th>Statut</th></tr></thead>
+                <tbody>
+                  ${rows.slice(0,30).map(r=>{
+                      const low=r.stock<=r.min;
+                      return `<tr>
+                        <td><strong>${ppStockEscPP(r.name)}</strong></td>
+                        <td>${ppStockEscPP(r.category)}</td>
+                        <td class="num">${ppReportNumberPP(r.stock,2)} ${ppStockEscPP(r.unit)}</td>
+                        <td class="num">${ppReportMoneyPP(r.price)}</td>
+                        <td class="num"><strong>${ppReportMoneyPP(r.value)}</strong></td>
+                        <td><span class="pp-stock-status ${low?"warn":"good"}">${low?"À commander":"OK"}</span></td>
+                      </tr>`;
+                  }).join("")}
+                </tbody>
+              </table>
+            </div>`
+          : '<div class="pp-stock-empty">Aucun article en stock.</div>';
+    }
+}
+
 function ppSetReportPeriodPP(period){
     ppReportPeriodPP=period;
     const custom=document.getElementById("ppReportCustomDates");
@@ -890,6 +1193,7 @@ function ppRenderReportsSummaryPP(){
 
     try{ ppRenderProfitabilityPP(); }catch(err){ console.error("Rapports Rentabilité",err); }
     try{ ppRenderSalesAnalysisPP(); }catch(err){ console.error("Rapports Analyse des ventes",err); }
+    try{ ppRenderStockFoodCostPP(); }catch(err){ console.error("Rapports Stock & Food Cost",err); }
 }
 
 // Intégration douce avec le rendu existant du Manager.
