@@ -1,6 +1,6 @@
 /* =========================================================
    PAUSE & PLATE MANAGER — RAPPORTS
-   ÉTAPE 1 : SYNTHÈSE DE GESTION
+   ÉTAPES 1 + 2 : SYNTHÈSE + RENTABILITÉ
    Module séparé pour ne pas toucher au cœur de app.js.
 ========================================================= */
 
@@ -288,6 +288,35 @@ function ppEnsureReportsStylesPP(){
       #reportsPage .pp-report-trend.bad{color:#b13b3b}
       #reportsPage .pp-report-trend.neutral{color:#737d77}
       #reportsPage .pp-report-note{background:#f8faf8;border:1px solid #dde7e0;border-radius:14px;padding:13px 15px;color:#536058;font-size:13px;line-height:1.5}
+      #reportsPage .pp-report-tabs{display:flex;gap:8px;flex-wrap:wrap;padding:4px 0 2px;border-bottom:1px solid #e3e8e4}
+      #reportsPage .pp-report-tab{border:1px solid #dce4de;background:#fff;color:#415048;border-radius:10px;padding:9px 14px;font-weight:800;cursor:pointer}
+      #reportsPage .pp-report-tab.active{background:#094B2D;color:#fff;border-color:#094B2D}
+      #reportsPage .pp-report-panel{display:none}
+      #reportsPage .pp-report-panel.active{display:block}
+      #reportsPage .pp-profit-grid{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:12px}
+      #reportsPage .pp-profit-box{background:#fff;border:1px solid #e2e8e3;border-radius:15px;padding:15px}
+      #reportsPage .pp-profit-box small{display:block;color:#778179;font-weight:700;font-size:11px;text-transform:uppercase}
+      #reportsPage .pp-profit-box strong{display:block;margin-top:6px;font-size:21px;color:#18251b}
+      #reportsPage .pp-profit-section{background:#fff;border:1px solid #e2e8e3;border-radius:16px;padding:16px}
+      #reportsPage .pp-profit-section h3{margin:0 0 5px;color:#18251b}
+      #reportsPage .pp-profit-section p{margin:0 0 14px;color:#6f7b73;font-size:13px}
+      #reportsPage .pp-profit-flow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+      #reportsPage .pp-profit-flow>div{background:#f8faf8;border:1px solid #e5ebe7;border-radius:12px;padding:12px;text-align:center}
+      #reportsPage .pp-profit-flow small{display:block;color:#6f7b73;font-weight:700}
+      #reportsPage .pp-profit-flow strong{display:block;margin-top:4px;font-size:17px}
+      #reportsPage .pp-profit-table-wrap{overflow:auto}
+      #reportsPage .pp-profit-table{width:100%;min-width:900px;border-collapse:collapse}
+      #reportsPage .pp-profit-table th,#reportsPage .pp-profit-table td{padding:10px 9px;border-bottom:1px solid #edf1ee;text-align:left;font-size:12px;white-space:nowrap}
+      #reportsPage .pp-profit-table th{background:#fafbfa;color:#68736c;text-transform:uppercase;font-size:10px}
+      #reportsPage .pp-profit-table .num{text-align:right}
+      #reportsPage .pp-profit-badge{display:inline-block;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800}
+      #reportsPage .pp-profit-badge.good{background:#eaf7ef;color:#177348}
+      #reportsPage .pp-profit-badge.warn{background:#fff4d7;color:#896400}
+      #reportsPage .pp-profit-badge.bad{background:#fdebec;color:#a83339}
+      #reportsPage .pp-profit-empty{text-align:center;color:#7d8781;padding:18px 8px}
+      @media(max-width:950px){#reportsPage .pp-profit-grid,#reportsPage .pp-profit-flow{grid-template-columns:repeat(2,1fr)}}
+      @media(max-width:600px){#reportsPage .pp-profit-grid,#reportsPage .pp-profit-flow{grid-template-columns:1fr}}
+
       @media(max-width:1200px){#reportsPage .pp-report-grid{grid-template-columns:repeat(2,minmax(185px,1fr))}}
       @media(max-width:650px){#reportsPage .pp-report-grid{grid-template-columns:1fr}#reportsPage .pp-report-custom{grid-template-columns:1fr}}
     `;
@@ -304,10 +333,15 @@ function ppEnsureReportsSummaryUIPP(){
           <div id="ppReportsSummaryStep1" class="pp-report-shell">
             <div class="pp-report-head">
               <div>
-                <h2>📈 Synthèse de gestion</h2>
-                <p>Les indicateurs essentiels de Pause & Plate sur une seule vue.</p>
+                <h2>📈 Rapports</h2>
+                <p>Suivez la synthèse de gestion et la rentabilité sur la même période.</p>
               </div>
               <button type="button" class="btn" onclick="ppRenderReportsSummaryPP()">↻ Actualiser</button>
+            </div>
+
+            <div class="pp-report-tabs">
+              <button type="button" class="pp-report-tab active" data-pp-report-tab="summary" onclick="ppSetReportsTabPP('summary')">📊 Synthèse</button>
+              <button type="button" class="pp-report-tab" data-pp-report-tab="profitability" onclick="ppSetReportsTabPP('profitability')">💹 Rentabilité</button>
             </div>
 
             <div class="pp-report-filter-box">
@@ -329,14 +363,184 @@ function ppEnsureReportsSummaryUIPP(){
               </div>
             </div>
 
-            <div id="ppReportSummaryCards" class="pp-report-grid"></div>
+            <section id="ppReportSummaryPanel" class="pp-report-panel active">
+              <div id="ppReportSummaryCards" class="pp-report-grid"></div>
+              <div class="pp-report-note">
+                <strong>ℹ️ Lecture du Food Cost :</strong> il est calculé de façon théorique à partir des ventes rattachées aux fiches techniques et des lignes de stock directement affectées. Il deviendra encore plus précis quand le futur POS sera connecté en temps réel.
+              </div>
+            </section>
 
-            <div class="pp-report-note">
-              <strong>ℹ️ Lecture du Food Cost :</strong> il est calculé de façon théorique à partir des ventes rattachées aux fiches techniques et des lignes de stock directement affectées. Il deviendra encore plus précis quand le futur POS sera connecté en temps réel.
-            </div>
+            <section id="ppReportProfitabilityPanel" class="pp-report-panel">
+              <div id="ppProfitabilityKPIs" class="pp-profit-grid"></div>
+
+              <div class="pp-profit-section">
+                <h3>🧮 Construction du résultat</h3>
+                <p>Lecture simple de la rentabilité sur la période sélectionnée.</p>
+                <div id="ppProfitabilityFlow" class="pp-profit-flow"></div>
+              </div>
+
+              <div class="pp-profit-section">
+                <h3>🍽️ Rentabilité des plats vendus</h3>
+                <p>Classement des fiches techniques réellement vendues selon la marge générée.</p>
+                <div id="ppProfitabilityRecipes"></div>
+              </div>
+            </section>
           </div>`;
     }
     return page;
+}
+
+
+function ppSetReportsTabPP(tab){
+    const selected = tab === "profitability" ? "profitability" : "summary";
+    document.querySelectorAll("#reportsPage [data-pp-report-tab]").forEach(btn=>{
+        btn.classList.toggle("active",btn.dataset.ppReportTab===selected);
+    });
+    document.getElementById("ppReportSummaryPanel")?.classList.toggle("active",selected==="summary");
+    document.getElementById("ppReportProfitabilityPanel")?.classList.toggle("active",selected==="profitability");
+    if(selected==="profitability"){
+        try{ ppRenderProfitabilityPP(); }catch(err){ console.error("Rapports Rentabilité",err); }
+    }
+}
+
+function ppProfitabilityRecipeRowsPP(range){
+    const map=new Map();
+
+    (Array.isArray(salesPP)?salesPP:[])
+      .filter(s=>ppReportInRangePP(s.date,range))
+      .forEach(sale=>{
+        (Array.isArray(sale.items)?sale.items:[]).forEach(item=>{
+            const recipe=(Array.isArray(recipesPP)?recipesPP:[])
+              .find(r=>Number(r.id)===Number(item.recipeId));
+            if(!recipe)return;
+
+            const qty=Number(item.quantity||0);
+            if(!(qty>0))return;
+
+            const portions=Math.max(Number(recipe.portions||1),1);
+            const recipeCost=typeof recipeTotalsPP==="function"
+              ? Number(recipeTotalsPP(recipe).cost||0)
+              : (Array.isArray(recipe.ingredients)?recipe.ingredients:[]).reduce((sum,ing)=>{
+                    const p=(Array.isArray(products)?products:[])
+                      .find(x=>Number(x.id)===Number(ing.productId));
+                    return sum+Number(ing.quantity||0)*Number(p?.price ?? ing.unitPrice ?? 0);
+                },0);
+
+            const unitCost=recipeCost/portions;
+            const unitSale=Number(recipe.salePrice||0);
+            const key=String(recipe.id);
+
+            if(!map.has(key)){
+                map.set(key,{
+                    id:recipe.id,
+                    name:String(recipe.name||"Fiche technique"),
+                    category:String(recipe.category||"-"),
+                    qty:0,
+                    caTTC:0,
+                    cost:0,
+                    margin:0
+                });
+            }
+
+            const row=map.get(key);
+            row.qty+=qty;
+            row.caTTC+=unitSale*qty;
+            row.cost+=unitCost*qty;
+            row.margin+=(unitSale-unitCost)*qty;
+        });
+      });
+
+    return [...map.values()]
+      .map(r=>({
+          ...r,
+          foodCost:r.caTTC>0?r.cost/r.caTTC*100:0,
+          marginRate:r.caTTC>0?r.margin/r.caTTC*100:0
+      }))
+      .sort((a,b)=>b.margin-a.margin);
+}
+
+function ppProfitabilityStatusPP(foodCost){
+    const pct=Number(foodCost||0);
+    if(pct<=30)return {cls:"good",label:"Très bon"};
+    if(pct<=35)return {cls:"warn",label:"À suivre"};
+    return {cls:"bad",label:"À corriger"};
+}
+
+function ppProfitabilityBoxPP(label,value,sub=""){
+    return `<div class="pp-profit-box"><small>${label}</small><strong>${value}</strong>${sub?`<div style="margin-top:5px;color:#79837d;font-size:11px">${sub}</div>`:""}</div>`;
+}
+
+function ppRenderProfitabilityPP(){
+    const panel=document.getElementById("ppReportProfitabilityPanel");
+    if(!panel)return;
+
+    const range=ppReportCurrentRangePP();
+    const current=ppReportMetricsPP(range);
+
+    const marginRate=current.caHT>0?current.grossMargin/current.caHT*100:0;
+    const resultRate=current.caHT>0?current.estimatedResult/current.caHT*100:0;
+
+    const kpis=document.getElementById("ppProfitabilityKPIs");
+    if(kpis){
+        kpis.innerHTML=[
+            ppProfitabilityBoxPP("Taux de marge brute",`${ppReportNumberPP(marginRate,1)}%`,"Marge brute / CA HT"),
+            ppProfitabilityBoxPP("Résultat estimé",ppReportMoneyPP(current.estimatedResult),`${ppReportNumberPP(resultRate,1)}% du CA HT`),
+            ppProfitabilityBoxPP("Coût matière",ppReportMoneyPP(current.materialCost),`Food Cost ${ppReportNumberPP(current.foodCost,1)}%`),
+            ppProfitabilityBoxPP("Dépenses HT",ppReportMoneyPP(current.expensesHT),"Charges de la période")
+        ].join("");
+    }
+
+    const flow=document.getElementById("ppProfitabilityFlow");
+    if(flow){
+        flow.innerHTML=[
+            ["CA HT",current.caHT],
+            ["− Coût matière",current.materialCost],
+            ["= Marge brute",current.grossMargin],
+            ["− Dépenses → Résultat",current.estimatedResult]
+        ].map(([label,value])=>`<div><small>${label}</small><strong>${ppReportMoneyPP(value)}</strong></div>`).join("");
+    }
+
+    const box=document.getElementById("ppProfitabilityRecipes");
+    if(!box)return;
+
+    const rows=ppProfitabilityRecipeRowsPP(range);
+    if(!rows.length){
+        box.innerHTML='<div class="pp-profit-empty">Aucune vente liée à une fiche technique sur cette période.</div>';
+        return;
+    }
+
+    box.innerHTML=`<div class="pp-profit-table-wrap">
+      <table class="pp-profit-table">
+        <thead>
+          <tr>
+            <th>Plat</th>
+            <th>Catégorie</th>
+            <th class="num">Qté</th>
+            <th class="num">CA TTC</th>
+            <th class="num">Coût matière</th>
+            <th class="num">Marge générée</th>
+            <th class="num">Food Cost</th>
+            <th>État</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r=>{
+              const st=ppProfitabilityStatusPP(r.foodCost);
+              const esc=typeof escapeHTML==="function"?escapeHTML:(v=>String(v));
+              return `<tr>
+                <td><strong>${esc(r.name)}</strong></td>
+                <td>${esc(r.category)}</td>
+                <td class="num">${ppReportNumberPP(r.qty,1)}</td>
+                <td class="num">${ppReportMoneyPP(r.caTTC)}</td>
+                <td class="num">${ppReportMoneyPP(r.cost)}</td>
+                <td class="num"><strong>${ppReportMoneyPP(r.margin)}</strong></td>
+                <td class="num">${ppReportNumberPP(r.foodCost,1)}%</td>
+                <td><span class="pp-profit-badge ${st.cls}">${st.label}</span></td>
+              </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 function ppSetReportPeriodPP(period){
@@ -389,6 +593,9 @@ function ppRenderReportsSummaryPP(){
         ppReportCardPP({label:"Food Cost th.",value:`${ppReportNumberPP(current.foodCost,1)}%`,icon:"🍽️",tone:current.foodCost<=30?"green":current.foodCost<=35?"gold":"red",sub:"Coût matière / CA HT",trend:ppReportTrendPP(current.foodCost,previous.foodCost,{inverse:true,points:true})}),
         ppReportCardPP({label:"Valeur du stock",value:ppReportMoneyPP(current.stockValue),icon:"📦",tone:"blue",sub:"Valorisation du stock actuel",trend:`<span class="pp-report-trend neutral">• Stock au prix moyen actuel</span>`})
     ].join("");
+
+
+    try{ ppRenderProfitabilityPP(); }catch(err){ console.error("Rapports Rentabilité",err); }
 }
 
 // Intégration douce avec le rendu existant du Manager.
