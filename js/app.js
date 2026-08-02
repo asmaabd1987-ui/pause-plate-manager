@@ -513,9 +513,14 @@ function updatePageTitle(page){
             "Gérez vos recettes et coûts de production"
         ],
 
+        tva:[
+            "TVA",
+            "Suivez la TVA collectée, récupérable et les délais de paiement"
+        ],
+
         accounting:[
-            "TVA & Comptabilité",
-            "Suivez votre TVA et vos données comptables"
+            "Comptabilité",
+            "Pilotez vos résultats, votre trésorerie et vos écritures"
         ],
 
         reports:[
@@ -6613,7 +6618,9 @@ const PP_EXTRA_KEYS = {
     sales: "pause_plate_sales",
     expenses: "pause_plate_expenses",
     recipes: "pause_plate_recipes",
-    dailySalesScans: "pause_plate_daily_sales_scans"
+    dailySalesScans: "pause_plate_daily_sales_scans",
+    accountingEntries: "pause_plate_accounting_entries",
+    accountingSettings: "pause_plate_accounting_settings"
 };
 
 let supplierPaymentsPP = loadStorage(PP_EXTRA_KEYS.supplierPayments, []);
@@ -6624,6 +6631,8 @@ let salesPP = loadStorage(PP_EXTRA_KEYS.sales, []);
 let expensesPP = loadStorage(PP_EXTRA_KEYS.expenses, []);
 let recipesPP = loadStorage(PP_EXTRA_KEYS.recipes, []);
 let dailySalesScansPP = loadStorage(PP_EXTRA_KEYS.dailySalesScans, []);
+let accountingEntriesPP = loadStorage(PP_EXTRA_KEYS.accountingEntries, []);
+let accountingSettingsPP = loadStorage(PP_EXTRA_KEYS.accountingSettings, []);
 
 supplierPaymentsPP = Array.isArray(supplierPaymentsPP) ? supplierPaymentsPP : [];
 clientsPP = Array.isArray(clientsPP) ? clientsPP : [];
@@ -6636,6 +6645,8 @@ expensesPP = expensesPP.map(ppNormalizeExpensePP);
 recipesPP = Array.isArray(recipesPP) ? recipesPP : [];
 recipesPP = recipesPP.map(r=>({...r,ingredients:Array.isArray(r.ingredients)?r.ingredients:[],salePrice:Number(r.salePrice||0)}));
 dailySalesScansPP = Array.isArray(dailySalesScansPP) ? dailySalesScansPP : [];
+accountingEntriesPP = Array.isArray(accountingEntriesPP) ? accountingEntriesPP : [];
+accountingSettingsPP = Array.isArray(accountingSettingsPP) ? accountingSettingsPP : [];
 
 
 clientsPP = clientsPP.map(c => ({
@@ -6683,6 +6694,8 @@ function saveData(){
     localStorage.setItem(PP_EXTRA_KEYS.expenses, JSON.stringify(expensesPP));
     localStorage.setItem(PP_EXTRA_KEYS.recipes, JSON.stringify(recipesPP));
     localStorage.setItem(PP_EXTRA_KEYS.dailySalesScans, JSON.stringify(dailySalesScansPP));
+    localStorage.setItem(PP_EXTRA_KEYS.accountingEntries, JSON.stringify(accountingEntriesPP));
+    localStorage.setItem(PP_EXTRA_KEYS.accountingSettings, JSON.stringify(accountingSettingsPP));
 }
 
 
@@ -6732,6 +6745,8 @@ function renderAll(){
     renderSalesPP();
     renderExpensesPP();
     renderRecipesPP();
+    ensureAccountingModulePP();
+    renderAccountingPP();
 }
 
 function ensurePPExtraUI(){
@@ -7234,7 +7249,7 @@ function printClientSituationPP(id){const c=clientsPP.find(x=>Number(x.id)===Num
 let ppActiveTVAModule = "deductible";
 
 function ensureTVASubmenuPP(){
-    const page=document.getElementById('accountingPage');
+    const page=document.getElementById('tvaPage');
     if(!page) return;
     if(document.getElementById('ppTVASubmenu')) return;
 
@@ -7301,7 +7316,7 @@ function showTVASubmodulePP(name){
 ========================================================= */
 
 function ensureTVAAchatsUIPP(){
-    const page=document.getElementById('accountingPage');
+    const page=document.getElementById('tvaPage');
     ensureTVASubmenuPP();
     if(!page) return;
 
@@ -7791,7 +7806,7 @@ function printTVAAchatsPP(){
 ========================================================= */
 
 function ensureTVACollecteeUIPP(){
-    const page=document.getElementById('accountingPage');
+    const page=document.getElementById('tvaPage');
     ensureTVASubmenuPP();
     if(!page || document.getElementById('ppTVACollecteeModule')) return;
 
@@ -8030,7 +8045,7 @@ function getTVAQuarterSituationPP(){
 }
 
 function ensureTVASituationUIPP(){
-    const page=document.getElementById('accountingPage');
+    const page=document.getElementById('tvaPage');
     ensureTVASubmenuPP();
     if(!page || document.getElementById('ppTVASituationModule')) return;
     const wrap=document.createElement('div');
@@ -8116,7 +8131,7 @@ function ppPaymentDeadlineStatusBadgePP(info){
     return `<span style="display:inline-block;padding:5px 9px;border-radius:999px;background:${c[0]};color:${c[1]};font-size:11px;font-weight:900">${escapeHTML(info.label)}</span>`;
 }
 function ensurePaymentDeadlinesUIPP(){
-    const page=document.getElementById('accountingPage');ensureTVASubmenuPP();if(!page||document.getElementById('ppPaymentDeadlinesModule'))return;
+    const page=document.getElementById('tvaPage');ensureTVASubmenuPP();if(!page||document.getElementById('ppPaymentDeadlinesModule'))return;
     const wrap=document.createElement('div');wrap.id='ppPaymentDeadlinesModule';
     wrap.innerHTML=`
       <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
@@ -10434,6 +10449,341 @@ renderSalesPP=function(){
 
 
 /* =========================================================
+   COMPTABILITÉ — MODULE SÉPARÉ DE LA TVA
+   Pré-comptabilité automatique + écritures manuelles
+========================================================= */
+
+const PP_ACCOUNTING_ACCOUNTS = [
+    {code:'1111',label:'Capital / solde d’ouverture'},
+    {code:'3421',label:'Clients'},
+    {code:'3455',label:'État — TVA récupérable'},
+    {code:'4411',label:'Fournisseurs'},
+    {code:'4455',label:'État — TVA facturée'},
+    {code:'5141',label:'Banques'},
+    {code:'5161',label:'Caisses'},
+    {code:'6111',label:'Achats de marchandises'},
+    {code:'6121',label:'Achats de matières premières'},
+    {code:'6125',label:'Achats non stockés — eau, électricité et fournitures'},
+    {code:'6131',label:'Locations et charges locatives'},
+    {code:'6133',label:'Entretien et réparations'},
+    {code:'6145',label:'Frais postaux et télécommunications'},
+    {code:'6146',label:'Transport et déplacements'},
+    {code:'6147',label:'Publicité et communication'},
+    {code:'6148',label:'Honoraires et autres charges externes'},
+    {code:'6161',label:'Impôts et taxes'},
+    {code:'6171',label:'Rémunérations du personnel'},
+    {code:'6174',label:'Charges sociales'},
+    {code:'6181',label:'Autres charges d’exploitation'},
+    {code:'7111',label:'Ventes de marchandises'},
+    {code:'7185',label:'Autres produits d’exploitation'}
+];
+
+let ppActiveAccountingTab='summary';
+let ppAccountingEntryEditId=null;
+
+function ppAccountingAccountPP(code){
+    return PP_ACCOUNTING_ACCOUNTS.find(a=>a.code===String(code))||{code:String(code||''),label:'Compte '+String(code||'')};
+}
+
+function ppAccountingSettingsPP(){
+    const current=accountingSettingsPP[0]||{};
+    const year=new Date().getFullYear();
+    return {
+        openingDate:String(current.openingDate||`${year}-01-01`).slice(0,10),
+        openingCash:Number(current.openingCash||0),
+        openingBank:Number(current.openingBank||0),
+        fiscalYearStart:String(current.fiscalYearStart||`${year}-01-01`).slice(0,10)
+    };
+}
+
+function ppAccountingModeAccountPP(mode){
+    return /esp[eè]ce|cash/i.test(String(mode||''))?'5161':'5141';
+}
+
+function ppAccountingExpenseAccountPP(category){
+    const key=normalizeText(category||'');
+    if(key.includes('loyer'))return '6131';
+    if(key.includes('salaire'))return '6171';
+    if(key.includes('cnss'))return '6174';
+    if(key.includes('eau')||key.includes('electric')||key.includes('fourniture'))return '6125';
+    if(key.includes('internet')||key.includes('telecom'))return '6145';
+    if(key.includes('entretien')||key.includes('reparation'))return '6133';
+    if(key.includes('transport'))return '6146';
+    if(key.includes('marketing')||key.includes('publicite'))return '6147';
+    if(key.includes('honoraire')||key.includes('bancaire'))return '6148';
+    if(key.includes('taxe')||key.includes('impot'))return '6161';
+    return '6181';
+}
+
+function ppAccountingLinePP(account,debit=0,credit=0,label=''){
+    const info=ppAccountingAccountPP(account);
+    return {account:String(account),accountLabel:info.label,debit:Math.max(Number(debit||0),0),credit:Math.max(Number(credit||0),0),label:String(label||'')};
+}
+
+function ppAccountingNormalizeEntryPP(raw){
+    const entry=raw||{};
+    return {
+        id:entry.id??createId(),date:String(entry.date||'').slice(0,10),journal:String(entry.journal||'OD'),
+        piece:String(entry.piece||''),label:String(entry.label||''),source:String(entry.source||'manual'),sourceId:entry.sourceId??null,
+        lines:(Array.isArray(entry.lines)?entry.lines:[]).map(line=>ppAccountingLinePP(line.account,line.debit,line.credit,line.label)),
+        createdAt:entry.createdAt||new Date().toISOString(),updatedAt:entry.updatedAt||entry.createdAt||new Date().toISOString()
+    };
+}
+
+accountingEntriesPP=accountingEntriesPP.map(ppAccountingNormalizeEntryPP).filter(e=>e.lines.length>=2);
+
+function ppAccountingClientPaymentEventsPP(inv){
+    const id=Number(inv?.id),events=[];let allocated=0;
+    clientPaymentsPP.forEach(p=>(p.allocations||[]).forEach(a=>{
+        if(Number(a.invoiceId)!==id)return;
+        const amount=Math.max(Number(a.amount||0),0);if(!(amount>0))return;
+        allocated+=amount;events.push({date:String(p.date||inv.date||'').slice(0,10),amount,mode:p.mode||'Virement',reference:p.reference||''});
+    }));
+    const direct=Math.max(Number(inv?.paid||0)-allocated,0);
+    if(direct>0)events.push({date:String(inv?.paymentDate||inv?.date||'').slice(0,10),amount:direct,mode:inv?.mode||'Autre',reference:'Règlement saisi à la facture'});
+    return events;
+}
+
+function ppAccountingGeneratedJournalPP(){
+    const entries=[];
+    const add=(entry)=>{
+        const normalized=ppAccountingNormalizeEntryPP(entry);
+        const debit=normalized.lines.reduce((s,l)=>s+l.debit,0),credit=normalized.lines.reduce((s,l)=>s+l.credit,0);
+        if(normalized.date&&normalized.lines.length>=2&&Math.abs(debit-credit)<0.02&&debit>0)entries.push(normalized);
+    };
+
+    const opening=ppAccountingSettingsPP(),openingLines=[];
+    if(Math.abs(opening.openingCash)>0.005)openingLines.push(ppAccountingLinePP('5161',opening.openingCash>0?opening.openingCash:0,opening.openingCash<0?-opening.openingCash:0));
+    if(Math.abs(opening.openingBank)>0.005)openingLines.push(ppAccountingLinePP('5141',opening.openingBank>0?opening.openingBank:0,opening.openingBank<0?-opening.openingBank:0));
+    const openingNet=opening.openingCash+opening.openingBank;
+    if(Math.abs(openingNet)>0.005)openingLines.push(ppAccountingLinePP('1111',openingNet<0?-openingNet:0,openingNet>0?openingNet:0));
+    if(openingLines.length>=2)add({id:'accounting-opening',date:opening.openingDate,journal:'AN',piece:'À-NOUVEAU',label:'Soldes d’ouverture',source:'opening',lines:openingLines});
+
+    salesPP.forEach(sale=>{
+        const ttc=Math.max(Number(sale.totalTTC||0),0);if(!(ttc>0))return;
+        const ht=ttc/1.10,vat=ttc-ht,piece=sale.number||`V-${sale.id}`;
+        add({id:`sale-${sale.id}`,date:sale.date,journal:'VE',piece,label:`Vente — ${sale.client||'comptoir'}`,source:'sale',sourceId:sale.id,
+            lines:[ppAccountingLinePP('3421',ttc,0),ppAccountingLinePP('7111',0,ht),ppAccountingLinePP('4455',0,vat)]});
+        if(sale.paymentDate){
+            add({id:`sale-payment-${sale.id}`,date:sale.paymentDate,journal:'BQ',piece,label:`Encaissement vente ${piece}`,source:'sale-payment',sourceId:sale.id,
+                lines:[ppAccountingLinePP(ppAccountingModeAccountPP(sale.mode),ttc,0),ppAccountingLinePP('3421',0,ttc)]});
+        }
+    });
+
+    clientInvoicesPP.forEach(inv=>{
+        const ttc=Math.max(Number(inv.totalTTC||0),0);if(!(ttc>0))return;
+        const ht=ttc/1.10,vat=ttc-ht,piece=inv.number||`FC-${inv.id}`;
+        add({id:`client-invoice-${inv.id}`,date:inv.date,journal:'VE',piece,label:`Facture client — ${inv.clientName||''}`,source:'client-invoice',sourceId:inv.id,
+            lines:[ppAccountingLinePP('3421',ttc,0),ppAccountingLinePP('7111',0,ht),ppAccountingLinePP('4455',0,vat)]});
+        ppAccountingClientPaymentEventsPP(inv).forEach((payment,index)=>add({id:`client-invoice-payment-${inv.id}-${index}`,date:payment.date,journal:ppAccountingModeAccountPP(payment.mode)==='5161'?'CA':'BQ',piece:payment.reference||piece,label:`Encaissement client — ${inv.clientName||''}`,source:'client-payment',sourceId:inv.id,
+            lines:[ppAccountingLinePP(ppAccountingModeAccountPP(payment.mode),payment.amount,0),ppAccountingLinePP('3421',0,payment.amount)]}));
+    });
+
+    invoices.forEach(inv=>{
+        const ttc=Math.max(Number(inv.totalTTC||0),0),ht=Math.max(Number(inv.totalHT||0),0),vat=Math.max(Number(inv.tva??(ttc-ht)),0);if(!(ttc>0))return;
+        const piece=inv.number||`FA-${inv.id}`;
+        add({id:`supplier-invoice-${inv.id}`,date:inv.date,journal:'AC',piece,label:`Achat — ${inv.supplierName||''}`,source:'supplier-invoice',sourceId:inv.id,
+            lines:[ppAccountingLinePP('6111',ht,0),...(vat>0?[ppAccountingLinePP('3455',vat,0)]:[]),ppAccountingLinePP('4411',0,ttc)]});
+        ppInvoicePaymentEventsTVA(inv).forEach((payment,index)=>add({id:`supplier-payment-${inv.id}-${index}`,date:payment.date,journal:ppAccountingModeAccountPP(payment.mode)==='5161'?'CA':'BQ',piece:payment.reference||piece,label:`Règlement fournisseur — ${inv.supplierName||''}`,source:'supplier-payment',sourceId:inv.id,
+            lines:[ppAccountingLinePP('4411',payment.amount,0),ppAccountingLinePP(ppAccountingModeAccountPP(payment.mode),0,payment.amount)]}));
+    });
+
+    expensesPP.forEach(expense=>{
+        const ttc=Math.max(Number(expense.totalTTC??expense.amount??0),0),ht=Math.max(Number(expense.totalHT??ttc),0),vat=Math.max(Number(expense.vatAmount??(ttc-ht)),0);if(!(ttc>0))return;
+        const piece=expense.reference||`DEP-${expense.id}`,account=ppAccountingExpenseAccountPP(expense.category);
+        add({id:`expense-${expense.id}`,date:expense.date,journal:'AC',piece,label:`${expense.category||'Dépense'} — ${expense.beneficiary||''}`,source:'expense',sourceId:expense.id,
+            lines:[ppAccountingLinePP(account,ht,0),...(vat>0?[ppAccountingLinePP('3455',vat,0)]:[]),ppAccountingLinePP('4411',0,ttc)]});
+        ppExpensePaymentsPP(expense).forEach((payment,index)=>add({id:`expense-payment-${expense.id}-${index}`,date:payment.date,journal:ppAccountingModeAccountPP(payment.mode)==='5161'?'CA':'BQ',piece:payment.reference||piece,label:`Règlement dépense — ${expense.beneficiary||expense.category||''}`,source:'expense-payment',sourceId:expense.id,
+            lines:[ppAccountingLinePP('4411',payment.amount,0),ppAccountingLinePP(ppAccountingModeAccountPP(payment.mode),0,payment.amount)]}));
+    });
+
+    return entries.sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.piece).localeCompare(String(b.piece),'fr'));
+}
+
+function ppAccountingJournalPP(){
+    return [...ppAccountingGeneratedJournalPP(),...accountingEntriesPP.map(ppAccountingNormalizeEntryPP)]
+        .sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.piece).localeCompare(String(b.piece),'fr'));
+}
+
+function ppAccountingRangePP(){
+    const now=new Date(),first=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`,today=now.toISOString().slice(0,10);
+    return {from:getValue('ppAccFrom')||first,to:getValue('ppAccTo')||today};
+}
+
+function ppAccountingEntriesInRangePP(){
+    const {from,to}=ppAccountingRangePP(),query=normalizeText(getValue('ppAccSearch'));
+    return ppAccountingJournalPP().filter(entry=>{
+        if(from&&entry.date<from)return false;if(to&&entry.date>to)return false;
+        if(query&&!normalizeText(`${entry.journal} ${entry.piece} ${entry.label} ${entry.lines.map(l=>`${l.account} ${l.accountLabel} ${l.label}`).join(' ')}`).includes(query))return false;
+        return true;
+    });
+}
+
+function ppAccountingBalanceMapPP(entries){
+    const map=new Map();
+    entries.forEach(entry=>entry.lines.forEach(line=>{
+        if(!map.has(line.account))map.set(line.account,{account:line.account,label:line.accountLabel,debit:0,credit:0});
+        const row=map.get(line.account);row.debit+=Number(line.debit||0);row.credit+=Number(line.credit||0);
+    }));
+    return map;
+}
+
+function ppAccountingTreasuryBalancePP(account,to){
+    const settings=ppAccountingSettingsPP();
+    const movement=ppAccountingJournalPP().filter(e=>(!settings.openingDate||e.date>=settings.openingDate)&&(!to||e.date<=to))
+        .flatMap(e=>e.lines).filter(l=>l.account===account).reduce((sum,l)=>sum+Number(l.debit||0)-Number(l.credit||0),0);
+    return movement;
+}
+
+function ppAccountingStatsPP(){
+    const entries=ppAccountingEntriesInRangePP(),map=ppAccountingBalanceMapPP(entries),net=(code)=>(map.get(code)?.credit||0)-(map.get(code)?.debit||0);
+    const revenues=[...map.values()].filter(r=>r.account.startsWith('7')).reduce((s,r)=>s+r.credit-r.debit,0);
+    const charges=[...map.values()].filter(r=>r.account.startsWith('6')).reduce((s,r)=>s+r.debit-r.credit,0);
+    const purchases=[...map.values()].filter(r=>/^61(1|2)/.test(r.account)).reduce((s,r)=>s+r.debit-r.credit,0);
+    const stock=products.reduce((s,p)=>s+Math.max(Number(p.stock||0),0)*Math.max(Number(p.price||0),0),0);
+    const {to}=ppAccountingRangePP(),caisse=ppAccountingTreasuryBalancePP('5161',to),banque=ppAccountingTreasuryBalancePP('5141',to);
+    const cumulative=ppAccountingBalanceMapPP(ppAccountingJournalPP().filter(e=>!to||e.date<=to));
+    const clients=Math.max((cumulative.get('3421')?.debit||0)-(cumulative.get('3421')?.credit||0),0);
+    const suppliers=Math.max((cumulative.get('4411')?.credit||0)-(cumulative.get('4411')?.debit||0),0);
+    return {entries,map,revenues,charges,purchases,result:revenues-charges,grossMargin:revenues-purchases,stock,caisse,banque,treasury:caisse+banque,clients,suppliers,net};
+}
+
+function ensureAccountingModulePP(){
+    const page=document.getElementById('accountingPage');if(!page)return;
+    hideLegacyModuleContentPP(page,'ppAccountingModule');
+    if(document.getElementById('ppAccountingModule'))return;
+    if(!document.getElementById('ppAccountingStyles')){
+        const style=document.createElement('style');style.id='ppAccountingStyles';style.textContent=`
+        #ppAccountingModule .pp-acc-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+        #ppAccountingModule .pp-acc-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #e4e7ec}
+        #ppAccountingModule .pp-acc-tab.active{background:#075c38;color:#fff;border-color:#075c38}
+        #ppAccountingModule .pp-acc-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;background:#fff;border:1px solid #e4e7ec;border-radius:14px;padding:14px;margin-bottom:16px}
+        #ppAccountingModule .pp-acc-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:16px}
+        #ppAccountingModule .pp-acc-card{background:#fff;border:1px solid #e4e7ec;border-left:5px solid #0b6b45;border-radius:15px;padding:16px;cursor:pointer;transition:.18s;box-shadow:0 3px 10px rgba(16,24,40,.04)}
+        #ppAccountingModule .pp-acc-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(16,24,40,.10)}
+        #ppAccountingModule .pp-acc-card span{display:block;color:#667085;font-size:13px;font-weight:700;margin-bottom:7px}
+        #ppAccountingModule .pp-acc-card strong{display:block;font-size:23px;color:#12372a}
+        #ppAccountingModule .pp-acc-panel{background:#fff;border:1px solid #e4e7ec;border-radius:15px;padding:16px;margin-bottom:16px;overflow:auto}
+        #ppAccountingModule table{width:100%;min-width:760px}
+        #ppAccountingModule .pp-acc-positive{color:#067647}.pp-acc-negative{color:#b42318}
+        #ppAccountingEntryLines input,#ppAccountingEntryLines select{width:100%;min-width:110px}
+        @media(max-width:700px){#ppAccountingModule .pp-acc-cards{grid-template-columns:1fr 1fr}#ppAccountingModule .pp-acc-card strong{font-size:18px}}
+        `;document.head.appendChild(style);
+    }
+    const now=new Date(),first=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`,today=now.toISOString().slice(0,10);
+    const wrap=document.createElement('div');wrap.id='ppAccountingModule';wrap.innerHTML=`
+      <div class="pp-acc-toolbar"><div><h2 style="margin:0 0 4px">🧮 Comptabilité</h2><p style="margin:0;color:#667085">Pré-comptabilité alimentée automatiquement par vos opérations.</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="openAccountingEntryPP()">➕ Écriture manuelle</button><button class="btn" onclick="openAccountingSettingsPP()">⚙️ Soldes d’ouverture</button><button class="btn print" onclick="printAccountingPP()">🖨️ Imprimer</button></div></div>
+      <div class="pp-acc-tabs">
+        <button class="btn pp-acc-tab" data-tab="summary" onclick="showAccountingTabPP('summary')">📊 Synthèse</button>
+        <button class="btn pp-acc-tab" data-tab="result" onclick="showAccountingTabPP('result')">📈 Compte de résultat</button>
+        <button class="btn pp-acc-tab" data-tab="treasury" onclick="showAccountingTabPP('treasury')">💳 Trésorerie</button>
+        <button class="btn pp-acc-tab" data-tab="journal" onclick="showAccountingTabPP('journal')">📒 Journal</button>
+        <button class="btn pp-acc-tab" data-tab="ledger" onclick="showAccountingTabPP('ledger')">📚 Grand livre</button>
+        <button class="btn pp-acc-tab" data-tab="balance" onclick="showAccountingTabPP('balance')">⚖️ Balance</button>
+      </div>
+      <div class="pp-acc-filters"><div><label>Du</label><input id="ppAccFrom" type="date" value="${first}" onchange="renderAccountingPP()"></div><div><label>Au</label><input id="ppAccTo" type="date" value="${today}" onchange="renderAccountingPP()"></div><div><label>Recherche</label><input id="ppAccSearch" placeholder="Pièce, compte, libellé…" oninput="renderAccountingPP()"></div><div style="display:flex;align-items:end"><button class="btn" style="width:100%" onclick="resetAccountingPeriodPP()">Mois en cours</button></div></div>
+      <div id="ppAccountingContent"></div>
+      <div style="font-size:12px;color:#667085;background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px">ℹ️ Situation interne de pré-comptabilité. Les déclarations et états comptables officiels doivent être contrôlés et validés par votre comptable.</div>`;
+    page.appendChild(wrap);ensureAccountingModalsPP();
+}
+
+function showAccountingTabPP(tab){ppActiveAccountingTab=tab;renderAccountingPP();}
+function resetAccountingPeriodPP(){const n=new Date();setValue('ppAccFrom',`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-01`);setValue('ppAccTo',n.toISOString().slice(0,10));setValue('ppAccSearch','');renderAccountingPP();}
+
+function ppAccountingCardPP(label,value,tab,icon,accent='#0b6b45',subtitle='Voir le détail'){
+    return `<div class="pp-acc-card" style="border-left-color:${accent}" onclick="showAccountingTabPP('${tab}')"><span>${icon} ${escapeHTML(label)}</span><strong>${escapeHTML(value)}</strong><small style="color:#667085">${escapeHTML(subtitle)} →</small></div>`;
+}
+
+function renderAccountingSummaryPP(stats){
+    return `<div class="pp-acc-cards">
+      ${ppAccountingCardPP('Produits / CA HT',formatMoney(stats.revenues),'result','💰')}
+      ${ppAccountingCardPP('Charges',formatMoney(stats.charges),'result','🧾','#d97706')}
+      ${ppAccountingCardPP('Résultat provisoire',formatMoney(stats.result),'result','🎯',stats.result>=0?'#067647':'#b42318')}
+      ${ppAccountingCardPP('Trésorerie actuelle',formatMoney(stats.treasury),'treasury','💳','#2563eb')}
+      ${ppAccountingCardPP('Créances clients',formatMoney(stats.clients),'ledger','👥','#7c3aed','Compte 3421')}
+      ${ppAccountingCardPP('Dettes fournisseurs',formatMoney(stats.suppliers),'ledger','🏭','#dc2626','Compte 4411')}
+      ${ppAccountingCardPP('Valeur du stock',formatMoney(stats.stock),'balance','📦','#475467','Stock au prix moyen actuel')}
+      ${ppAccountingCardPP('Écritures de la période',String(stats.entries.length),'journal','📒','#0891b2')}
+    </div><div class="pp-acc-panel"><h3 style="margin-top:0">Lecture rapide</h3><div class="details-grid"><div class="details-label">Marge après achats</div><div class="details-value"><strong>${formatMoney(stats.grossMargin)}</strong></div><div class="details-label">Caisse</div><div class="details-value">${formatMoney(stats.caisse)}</div><div class="details-label">Banque</div><div class="details-value">${formatMoney(stats.banque)}</div><div class="details-label">Période</div><div class="details-value">${formatDate(ppAccountingRangePP().from)} → ${formatDate(ppAccountingRangePP().to)}</div></div></div>`;
+}
+
+function renderAccountingResultPP(stats){
+    const rows=[...stats.map.values()].filter(r=>r.account.startsWith('6')||r.account.startsWith('7')).sort((a,b)=>a.account.localeCompare(b.account));
+    return `<div class="pp-acc-cards">${ppAccountingCardPP('Produits',formatMoney(stats.revenues),'journal','💰')}${ppAccountingCardPP('Charges',formatMoney(stats.charges),'journal','🧾','#d97706')}${ppAccountingCardPP('Marge après achats',formatMoney(stats.grossMargin),'journal','📊','#2563eb')}${ppAccountingCardPP('Résultat provisoire',formatMoney(stats.result),'journal','🎯',stats.result>=0?'#067647':'#b42318')}</div><div class="pp-acc-panel"><h3 style="margin-top:0">Compte de résultat provisoire</h3><table><thead><tr><th>Compte</th><th>Libellé</th><th>Charges</th><th>Produits</th><th>Solde</th></tr></thead><tbody>${rows.map(r=>{const charge=r.account.startsWith('6')?r.debit-r.credit:0,product=r.account.startsWith('7')?r.credit-r.debit:0;return `<tr><td><strong>${r.account}</strong></td><td>${escapeHTML(r.label)}</td><td>${charge?formatMoney(charge):'-'}</td><td>${product?formatMoney(product):'-'}</td><td><strong>${formatMoney(product-charge)}</strong></td></tr>`;}).join('')||'<tr><td colspan="5" class="empty">Aucun mouvement sur cette période.</td></tr>'}</tbody><tfoot><tr><th colspan="2">Totaux</th><th>${formatMoney(stats.charges)}</th><th>${formatMoney(stats.revenues)}</th><th>${formatMoney(stats.result)}</th></tr></tfoot></table></div>`;
+}
+
+function renderAccountingTreasuryPP(stats){
+    const entries=stats.entries.flatMap(e=>e.lines.filter(l=>l.account==='5141'||l.account==='5161').map(l=>({...l,date:e.date,piece:e.piece,entryLabel:e.label,journal:e.journal})));
+    const receipts=entries.reduce((s,l)=>s+l.debit,0),payments=entries.reduce((s,l)=>s+l.credit,0);
+    return `<div class="pp-acc-cards">${ppAccountingCardPP('Caisse actuelle',formatMoney(stats.caisse),'treasury','💵')}${ppAccountingCardPP('Banque actuelle',formatMoney(stats.banque),'treasury','🏦','#2563eb')}${ppAccountingCardPP('Encaissements période',formatMoney(receipts),'journal','⬆️','#067647')}${ppAccountingCardPP('Décaissements période',formatMoney(payments),'journal','⬇️','#b42318')}</div><div class="pp-acc-panel"><h3 style="margin-top:0">Mouvements de trésorerie</h3><table><thead><tr><th>Date</th><th>Journal</th><th>Pièce</th><th>Compte</th><th>Libellé</th><th>Entrée</th><th>Sortie</th></tr></thead><tbody>${entries.map(l=>`<tr><td>${formatDate(l.date)}</td><td>${escapeHTML(l.journal)}</td><td>${escapeHTML(l.piece||'-')}</td><td>${l.account} — ${escapeHTML(l.accountLabel)}</td><td>${escapeHTML(l.entryLabel)}</td><td class="pp-acc-positive">${l.debit?formatMoney(l.debit):'-'}</td><td class="pp-acc-negative">${l.credit?formatMoney(l.credit):'-'}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">Aucun mouvement de trésorerie.</td></tr>'}</tbody></table></div>`;
+}
+
+function renderAccountingJournalPP(stats){
+    const rows=stats.entries.flatMap(entry=>entry.lines.map((line,index)=>({...line,entry,index})));
+    return `<div class="pp-acc-panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><h3 style="margin:0">Journal comptable</h3><span class="status success">Débit = Crédit</span></div><table><thead><tr><th>Date</th><th>Journal</th><th>Pièce</th><th>Compte</th><th>Libellé</th><th>Débit</th><th>Crédit</th><th>Source</th><th></th></tr></thead><tbody>${rows.map(({entry,index,...line})=>`<tr><td>${index===0?formatDate(entry.date):''}</td><td>${index===0?escapeHTML(entry.journal):''}</td><td>${index===0?escapeHTML(entry.piece||'-'):''}</td><td><strong>${line.account}</strong><br><small>${escapeHTML(line.accountLabel)}</small></td><td>${escapeHTML(line.label||entry.label)}</td><td>${line.debit?formatMoney(line.debit):'-'}</td><td>${line.credit?formatMoney(line.credit):'-'}</td><td>${escapeHTML(entry.source==='manual'?'Manuelle':'Automatique')}</td><td>${index===0&&entry.source==='manual'?`<div class="action-buttons"><button class="btn small edit" onclick="openAccountingEntryPP('${entry.id}')">✏️</button><button class="btn small danger" onclick="deleteAccountingEntryPP('${entry.id}')">🗑️</button></div>`:''}</td></tr>`).join('')||'<tr><td colspan="9" class="empty">Aucune écriture.</td></tr>'}</tbody></table></div>`;
+}
+
+function renderAccountingLedgerPP(stats){
+    const selected=getValue('ppAccLedgerAccount')||'3421',all=ppAccountingJournalPP().filter(e=>{const r=ppAccountingRangePP();return (!r.from||e.date>=r.from)&&(!r.to||e.date<=r.to);});let running=0;
+    const rows=all.flatMap(entry=>entry.lines.filter(l=>l.account===selected).map(line=>{running+=line.debit-line.credit;return {entry,line,running};}));
+    const options=PP_ACCOUNTING_ACCOUNTS.map(a=>`<option value="${a.code}" ${a.code===selected?'selected':''}>${a.code} — ${escapeHTML(a.label)}</option>`).join('');
+    return `<div class="pp-acc-panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3 style="margin:0">Grand livre</h3><select id="ppAccLedgerAccount" onchange="renderAccountingPP()" style="max-width:390px">${options}</select></div><table><thead><tr><th>Date</th><th>Journal</th><th>Pièce</th><th>Libellé</th><th>Débit</th><th>Crédit</th><th>Solde progressif</th></tr></thead><tbody>${rows.map(({entry,line,running})=>`<tr><td>${formatDate(entry.date)}</td><td>${escapeHTML(entry.journal)}</td><td>${escapeHTML(entry.piece||'-')}</td><td>${escapeHTML(line.label||entry.label)}</td><td>${line.debit?formatMoney(line.debit):'-'}</td><td>${line.credit?formatMoney(line.credit):'-'}</td><td><strong>${formatMoney(running)}</strong></td></tr>`).join('')||'<tr><td colspan="7" class="empty">Aucun mouvement pour ce compte.</td></tr>'}</tbody></table></div>`;
+}
+
+function renderAccountingBalancePP(stats){
+    const rows=[...stats.map.values()].sort((a,b)=>a.account.localeCompare(b.account)),totalDebit=rows.reduce((s,r)=>s+r.debit,0),totalCredit=rows.reduce((s,r)=>s+r.credit,0);
+    return `<div class="pp-acc-panel"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><h3 style="margin:0">Balance des comptes</h3><span class="status ${Math.abs(totalDebit-totalCredit)<0.02?'success':'danger'}">Écart : ${formatMoney(Math.abs(totalDebit-totalCredit))}</span></div><table><thead><tr><th>Compte</th><th>Libellé</th><th>Total débit</th><th>Total crédit</th><th>Solde débiteur</th><th>Solde créditeur</th></tr></thead><tbody>${rows.map(r=>{const diff=r.debit-r.credit;return `<tr><td><strong>${r.account}</strong></td><td>${escapeHTML(r.label)}</td><td>${formatMoney(r.debit)}</td><td>${formatMoney(r.credit)}</td><td>${diff>0?formatMoney(diff):'-'}</td><td>${diff<0?formatMoney(-diff):'-'}</td></tr>`;}).join('')||'<tr><td colspan="6" class="empty">Aucun mouvement.</td></tr>'}</tbody><tfoot><tr><th colspan="2">Totaux</th><th>${formatMoney(totalDebit)}</th><th>${formatMoney(totalCredit)}</th><th>${formatMoney(rows.reduce((s,r)=>s+Math.max(r.debit-r.credit,0),0))}</th><th>${formatMoney(rows.reduce((s,r)=>s+Math.max(r.credit-r.debit,0),0))}</th></tr></tfoot></table></div>`;
+}
+
+function renderAccountingPP(){
+    ensureAccountingModulePP();const content=document.getElementById('ppAccountingContent');if(!content)return;
+    document.querySelectorAll('#ppAccountingModule .pp-acc-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===ppActiveAccountingTab));
+    const stats=ppAccountingStatsPP();
+    if(ppActiveAccountingTab==='result')content.innerHTML=renderAccountingResultPP(stats);
+    else if(ppActiveAccountingTab==='treasury')content.innerHTML=renderAccountingTreasuryPP(stats);
+    else if(ppActiveAccountingTab==='journal')content.innerHTML=renderAccountingJournalPP(stats);
+    else if(ppActiveAccountingTab==='ledger')content.innerHTML=renderAccountingLedgerPP(stats);
+    else if(ppActiveAccountingTab==='balance')content.innerHTML=renderAccountingBalancePP(stats);
+    else content.innerHTML=renderAccountingSummaryPP(stats);
+}
+
+function ppAccountingAccountOptionsPP(selected=''){
+    return PP_ACCOUNTING_ACCOUNTS.map(a=>`<option value="${a.code}" ${String(selected)===a.code?'selected':''}>${a.code} — ${escapeHTML(a.label)}</option>`).join('');
+}
+
+function ensureAccountingModalsPP(){
+    if(!document.getElementById('ppAccountingEntryModal')){const modal=document.createElement('div');modal.id='ppAccountingEntryModal';modal.className='modal-overlay';modal.innerHTML=`<div class="modal" style="max-width:1050px"><div class="modal-header"><h2 id="ppAccountingEntryTitle">Écriture manuelle</h2><button onclick="closeModal('ppAccountingEntryModal')">×</button></div><form id="ppAccountingEntryForm"><div class="form-grid"><div><label>Date</label><input id="ppAccountingEntryDate" type="date" required></div><div><label>Journal</label><select id="ppAccountingEntryJournal"><option>OD</option><option>AC</option><option>VE</option><option>BQ</option><option>CA</option></select></div><div><label>N° pièce</label><input id="ppAccountingEntryPiece" required></div><div><label>Libellé</label><input id="ppAccountingEntryLabel" required></div></div><div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px"><strong>Lignes de l’écriture</strong><button type="button" class="btn small" onclick="ppAddAccountingLineRowPP()">➕ Ajouter une ligne</button></div><div style="overflow:auto"><table style="width:100%;min-width:820px"><thead><tr><th>Compte</th><th>Libellé ligne</th><th>Débit</th><th>Crédit</th><th></th></tr></thead><tbody id="ppAccountingEntryLines"></tbody><tfoot><tr><th colspan="2">Totaux</th><th id="ppAccountingEntryDebit">0,00 DH</th><th id="ppAccountingEntryCredit">0,00 DH</th><th id="ppAccountingEntryGap"></th></tr></tfoot></table></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppAccountingEntryModal')">Annuler</button><button type="submit" class="btn primary">Enregistrer l’écriture</button></div></form></div>`;document.body.appendChild(modal);document.getElementById('ppAccountingEntryForm').addEventListener('submit',e=>{e.preventDefault();saveAccountingEntryPP();});}
+    if(!document.getElementById('ppAccountingSettingsModal')){const modal=document.createElement('div');modal.id='ppAccountingSettingsModal';modal.className='modal-overlay';modal.innerHTML=`<div class="modal"><div class="modal-header"><h2>⚙️ Soldes d’ouverture</h2><button onclick="closeModal('ppAccountingSettingsModal')">×</button></div><form id="ppAccountingSettingsForm"><div class="form-grid"><div><label>Début exercice</label><input id="ppAccFiscalStart" type="date" required></div><div><label>Date des soldes d’ouverture</label><input id="ppAccOpeningDate" type="date" required></div><div><label>Solde caisse</label><input id="ppAccOpeningCash" type="number" step="0.01"></div><div><label>Solde banque</label><input id="ppAccOpeningBank" type="number" step="0.01"></div></div><p style="color:#667085;font-size:13px">Ces soldes servent uniquement au calcul de la trésorerie actuelle.</p><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppAccountingSettingsModal')">Annuler</button><button class="btn primary">Enregistrer</button></div></form></div>`;document.body.appendChild(modal);document.getElementById('ppAccountingSettingsForm').addEventListener('submit',e=>{e.preventDefault();saveAccountingSettingsPP();});}
+}
+
+function openAccountingEntryPP(id=null){
+    ensureAccountingModalsPP();ppAccountingEntryEditId=id;
+    const entry=id?accountingEntriesPP.find(e=>String(e.id)===String(id)):null;
+    setText('ppAccountingEntryTitle',entry?'Modifier l’écriture':'Nouvelle écriture manuelle');setValue('ppAccountingEntryDate',entry?.date||new Date().toISOString().slice(0,10));setValue('ppAccountingEntryJournal',entry?.journal||'OD');setValue('ppAccountingEntryPiece',entry?.piece||'');setValue('ppAccountingEntryLabel',entry?.label||'');
+    const body=document.getElementById('ppAccountingEntryLines');body.innerHTML='';(entry?.lines?.length?entry.lines:[{account:'6181',debit:0,credit:0},{account:'5141',debit:0,credit:0}]).forEach(ppAddAccountingLineRowPP);ppUpdateAccountingEntryTotalsPP();openModal('ppAccountingEntryModal');
+}
+
+function ppAddAccountingLineRowPP(data={}){const body=document.getElementById('ppAccountingEntryLines');if(!body)return;const row=document.createElement('tr');row.className='pp-accounting-line';row.innerHTML=`<td><select class="pp-acc-line-account" onchange="ppUpdateAccountingEntryTotalsPP()">${ppAccountingAccountOptionsPP(data.account||'6181')}</select></td><td><input class="pp-acc-line-label" value="${escapeHTML(data.label||'')}"></td><td><input class="pp-acc-line-debit" type="number" min="0" step="0.01" value="${Number(data.debit||0)||''}" oninput="ppUpdateAccountingEntryTotalsPP()"></td><td><input class="pp-acc-line-credit" type="number" min="0" step="0.01" value="${Number(data.credit||0)||''}" oninput="ppUpdateAccountingEntryTotalsPP()"></td><td><button type="button" class="btn small danger" onclick="this.closest('tr').remove();ppUpdateAccountingEntryTotalsPP()">×</button></td>`;body.appendChild(row);}
+
+function ppAccountingManualLinesPP(){return [...document.querySelectorAll('#ppAccountingEntryLines .pp-accounting-line')].map(row=>({account:row.querySelector('.pp-acc-line-account').value,label:row.querySelector('.pp-acc-line-label').value.trim(),debit:Math.max(Number(row.querySelector('.pp-acc-line-debit').value||0),0),credit:Math.max(Number(row.querySelector('.pp-acc-line-credit').value||0),0)})).filter(l=>l.debit>0||l.credit>0);}
+function ppUpdateAccountingEntryTotalsPP(){const lines=ppAccountingManualLinesPP(),debit=lines.reduce((s,l)=>s+l.debit,0),credit=lines.reduce((s,l)=>s+l.credit,0),gap=Math.abs(debit-credit);setText('ppAccountingEntryDebit',formatMoney(debit));setText('ppAccountingEntryCredit',formatMoney(credit));const el=document.getElementById('ppAccountingEntryGap');if(el){el.textContent=gap<0.01?'✓ Équilibrée':`Écart ${formatMoney(gap)}`;el.style.color=gap<0.01?'#067647':'#b42318';}}
+
+function saveAccountingEntryPP(){
+    const lines=ppAccountingManualLinesPP(),debit=lines.reduce((s,l)=>s+l.debit,0),credit=lines.reduce((s,l)=>s+l.credit,0);
+    if(lines.length<2){alert('Ajoutez au moins deux lignes comptables.');return;}if(!(debit>0)||Math.abs(debit-credit)>=0.01){alert('L’écriture doit être équilibrée : total débit = total crédit.');return;}
+    const old=ppAccountingEntryEditId?accountingEntriesPP.find(e=>String(e.id)===String(ppAccountingEntryEditId)):null;
+    const entry=ppAccountingNormalizeEntryPP({id:old?.id||createId(),date:getValue('ppAccountingEntryDate'),journal:getValue('ppAccountingEntryJournal'),piece:getValue('ppAccountingEntryPiece').trim(),label:getValue('ppAccountingEntryLabel').trim(),source:'manual',lines,createdAt:old?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()});
+    if(old){const i=accountingEntriesPP.findIndex(e=>String(e.id)===String(old.id));accountingEntriesPP[i]=entry;}else accountingEntriesPP.push(entry);
+    saveData();closeModal('ppAccountingEntryModal');renderAccountingPP();
+}
+
+function deleteAccountingEntryPP(id){if(!confirm('Supprimer cette écriture manuelle ?'))return;accountingEntriesPP=accountingEntriesPP.filter(e=>String(e.id)!==String(id));saveData();renderAccountingPP();}
+function openAccountingSettingsPP(){ensureAccountingModalsPP();const s=ppAccountingSettingsPP();setValue('ppAccFiscalStart',s.fiscalYearStart);setValue('ppAccOpeningDate',s.openingDate);setValue('ppAccOpeningCash',s.openingCash);setValue('ppAccOpeningBank',s.openingBank);openModal('ppAccountingSettingsModal');}
+function saveAccountingSettingsPP(){accountingSettingsPP=[{fiscalYearStart:getValue('ppAccFiscalStart'),openingDate:getValue('ppAccOpeningDate'),openingCash:Number(getValue('ppAccOpeningCash')||0),openingBank:Number(getValue('ppAccOpeningBank')||0),updatedAt:new Date().toISOString()}];saveData();closeModal('ppAccountingSettingsModal');renderAccountingPP();}
+function printAccountingPP(){const content=document.getElementById('ppAccountingContent');if(!content)return;const labels={summary:'Synthèse comptable',result:'Compte de résultat',treasury:'Trésorerie',journal:'Journal comptable',ledger:'Grand livre',balance:'Balance'};const range=ppAccountingRangePP();printDocument(labels[ppActiveAccountingTab]||'Comptabilité',`<div class="doc-head"><h1>Pause & Plate</h1><p>${escapeHTML(labels[ppActiveAccountingTab]||'Comptabilité')}</p></div><p><strong>Période :</strong> ${formatDate(range.from)} → ${formatDate(range.to)}</p>${content.innerHTML}`);}
+
+
+/* =========================================================
    FIREBASE CLOUD SYNC — PAUSE & PLATE
    Authentication + Firestore + LocalStorage migration
 ========================================================= */
@@ -10473,7 +10823,9 @@ const PP_CLOUD_DATASETS = {
     sales: () => salesPP,
     expenses: () => expensesPP,
     recipes: () => recipesPP,
-    dailySalesScans: () => dailySalesScansPP
+    dailySalesScans: () => dailySalesScansPP,
+    accountingEntries: () => accountingEntriesPP,
+    accountingSettings: () => accountingSettingsPP
 };
 
 function ppFirebaseAvailable(){
@@ -10653,6 +11005,8 @@ function ppSetDataset(key,items){
         case "expenses": expensesPP=safe.map(ppNormalizeExpensePP); break;
         case "recipes": recipesPP=safe; break;
         case "dailySalesScans": dailySalesScansPP=safe; break;
+        case "accountingEntries": accountingEntriesPP=safe; break;
+        case "accountingSettings": accountingSettingsPP=safe; break;
     }
 }
 
@@ -10669,10 +11023,12 @@ function ppSaveLocalOnly(){
     localStorage.setItem(PP_EXTRA_KEYS.expenses,JSON.stringify(expensesPP));
     localStorage.setItem(PP_EXTRA_KEYS.recipes,JSON.stringify(recipesPP));
     localStorage.setItem(PP_EXTRA_KEYS.dailySalesScans,JSON.stringify(dailySalesScansPP));
+    localStorage.setItem(PP_EXTRA_KEYS.accountingEntries,JSON.stringify(accountingEntriesPP));
+    localStorage.setItem(PP_EXTRA_KEYS.accountingSettings,JSON.stringify(accountingSettingsPP));
 }
 
 function ppLocalHasData(){
-    return products.length||movements.length||suppliers.length||invoices.length||supplierPaymentsPP.length||clientsPP.length||clientInvoicesPP.length||clientPaymentsPP.length||salesPP.length||expensesPP.length||recipesPP.length||dailySalesScansPP.length;
+    return products.length||movements.length||suppliers.length||invoices.length||supplierPaymentsPP.length||clientsPP.length||clientInvoicesPP.length||clientPaymentsPP.length||salesPP.length||expensesPP.length||recipesPP.length||dailySalesScansPP.length||accountingEntriesPP.length||accountingSettingsPP.length;
 }
 
 async function ppCloudHasData(){
