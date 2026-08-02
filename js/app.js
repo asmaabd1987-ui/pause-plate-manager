@@ -8492,8 +8492,8 @@ function ensureRecipesModulePP(){
         <div><h2 style="margin:0 0 4px">🍽️ Fiches Techniques</h2><p style="margin:0;color:#667085">Recettes, grammages, coût matière et marge.</p></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="importFichesTechniquesPP(true,true)">🔄 Importer / mettre à jour les 179 fiches</button><button class="btn primary" onclick="openRecipePP()">➕ Nouvelle fiche technique</button></div>
       </div>
-      <div style="display:grid;grid-template-columns:minmax(220px,1fr) minmax(180px,280px);gap:10px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:15px">
-        <input id="ppRecipeSearch" placeholder="🔎 Rechercher une fiche..." oninput="renderRecipesPP()" style="padding:10px">
+      <div style="display:grid;grid-template-columns:minmax(260px,1fr) minmax(180px,280px);gap:10px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:15px">
+        <input id="ppRecipeSearch" placeholder="🔎 Rechercher par plat ou article..." oninput="renderRecipesPP()" style="padding:10px">
         <select id="ppRecipeCategoryFilter" onchange="renderRecipesPP()" style="padding:10px"><option value="">Toutes les catégories</option>${PP_RECIPE_CATEGORIES.map(x=>`<option>${x}</option>`).join('')}</select>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:15px">
@@ -8511,7 +8511,11 @@ function recipeTotalsPP(r){const cost=(r.ingredients||[]).reduce((a,i)=>a+recipe
 function renderRecipesPP(){
     ensureRecipesModulePP();const tb=document.getElementById('ppRecipesTable');if(!tb)return;
     const q=normalizeText(getValue('ppRecipeSearch')),cat=getValue('ppRecipeCategoryFilter');
-    const rows=recipesPP.filter(r=>(!q||normalizeText(r.name).includes(q))&&(!cat||r.category===cat));
+    const rows=recipesPP.filter(r=>{
+        const ingredientNames=(r.ingredients||[]).map(i=>products.find(p=>Number(p.id)===Number(i.productId))?.name||'').join(' ');
+        const searchableText=normalizeText(`${r.name||''} ${r.sourceCode||''} ${ingredientNames}`);
+        return (!q||searchableText.includes(q))&&(!cat||r.category===cat);
+    });
     setText('ppRecipeCount',String(rows.length));
     const totals=rows.map(recipeTotalsPP);setText('ppRecipeAvgCost',formatMoney(totals.length?totals.reduce((a,t)=>a+t.cost,0)/totals.length:0));setText('ppRecipeAvgPct',formatNumber(totals.length?totals.reduce((a,t)=>a+t.pct,0)/totals.length:0)+'%');
     if(!rows.length){tb.innerHTML='<tr><td colspan="9" class="empty">Aucune fiche technique enregistrée.</td></tr>';return;}
