@@ -7,6 +7,60 @@
 let ppReportPeriodPP = "month";
 let ppReportCustomFromPP = "";
 let ppReportCustomToPP = "";
+let ppReportArticleFilterPP = "";
+let ppReportSupplierFilterPP = "";
+
+function ppReportNormPP(value){
+    return String(value??"")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+      .toLowerCase().trim().replace(/\s+/g," ");
+}
+
+function ppReportSelectedArticlePP(){
+    if(!ppReportArticleFilterPP)return null;
+    return (Array.isArray(products)?products:[])
+      .find(p=>String(p.id)===String(ppReportArticleFilterPP))||null;
+}
+
+function ppReportSelectedSupplierPP(){
+    if(!ppReportSupplierFilterPP)return null;
+    return (Array.isArray(suppliers)?suppliers:[])
+      .find(s=>String(s.id)===String(ppReportSupplierFilterPP))||null;
+}
+
+function ppReportLineMatchesArticlePP(line){
+    const article=ppReportSelectedArticlePP();
+    if(!article)return true;
+    if(line?.productId!==null && line?.productId!==undefined && String(line.productId)===String(article.id))return true;
+    return ppReportNormPP(line?.name||line?.productName)===ppReportNormPP(article.name);
+}
+
+function ppReportInvoiceMatchesSupplierPP(inv){
+    const supplier=ppReportSelectedSupplierPP();
+    if(!supplier)return true;
+    if(inv?.supplierId!==null && inv?.supplierId!==undefined && String(inv.supplierId)===String(supplier.id))return true;
+    return ppReportNormPP(inv?.supplierName)===ppReportNormPP(supplier.name);
+}
+
+function ppReportRecipeMatchesArticlePP(recipe){
+    const article=ppReportSelectedArticlePP();
+    if(!article)return true;
+    return (Array.isArray(recipe?.ingredients)?recipe.ingredients:[])
+      .some(i=>String(i.productId)===String(article.id));
+}
+
+function ppReportInvoiceFilteredTTCPP(inv){
+    if(!ppReportInvoiceMatchesSupplierPP(inv))return 0;
+    if(!ppReportSelectedArticlePP())return ppReportInvoiceTTCPP(inv);
+    return (Array.isArray(inv?.lines)?inv.lines:[])
+      .filter(ppReportLineMatchesArticlePP)
+      .reduce((sum,line)=>{
+          const qty=Number(line?.quantity||0),price=Number(line?.price||0);
+          const ht=Number(line?.totalHT ?? qty*price ?? 0);
+          const rate=Number(line?.vatRate||0);
+          return sum+Number(line?.totalTTC ?? (ht+Number(line?.vatAmount ?? ht*rate/100)) ?? 0);
+      },0);
+}
 
 function ppReportPad2PP(n){
     return String(n).padStart(2,"0");
@@ -143,7 +197,33 @@ function ppReportExpenseHTPP(expense){
     return rate>0 ? ttc/(1+rate/100) : ttc;
 }
 
+function ppReportExpenseMatchesSupplierPP(expense){
+    const supplier=ppReportSelectedSupplierPP();
+    if(!supplier)return true;
+    const hay=ppReportNormPP(`${expense?.beneficiary||""} ${expense?.supplierName||""}`);
+    return hay.includes(ppReportNormPP(supplier.name));
+}
+
+function ppReportFilteredSaleTTCPP(sale){
+    const article=ppReportSelectedArticlePP();
+    if(!article)return Number(sale?.totalTTC||0);
+    return (Array.isArray(sale?.items)?sale.items:[]).reduce((sum,item)=>{
+        const recipe=(Array.isArray(recipesPP)?recipesPP:[]).find(r=>Number(r.id)===Number(item.recipeId));
+        if(!recipe||!ppReportRecipeMatchesArticlePP(recipe))return sum;
+        return sum+Number(recipe.salePrice||0)*Number(item.quantity||0);
+    },0);
+}
+
 function ppReportSalesRowsPP(range){
+    if(ppReportSelectedArticlePP()){
+        return (Array.isArray(salesPP)?salesPP:[])
+          .filter(s=>ppReportInRangePP(s.date,range))
+          .map(s=>{
+              const ttc=ppReportFilteredSaleTTCPP(s),ht=ttc/1.10;
+              return {date:s.date,ttc,ht,vat:Math.max(ttc-ht,0)};
+          })
+          .filter(r=>r.ttc>0);
+    }
     let rows=[];
     try{
         if(typeof getTVACollecteeRowsPP === "function"){
@@ -178,7 +258,17 @@ function ppReportMaterialCostPP(range){
                         const p=(Array.isArray(products)?products:[]).find(x=>Number(x.id)===Number(ing.productId));
                         return sum + Number(ing.quantity||0)*Number(p?.price ?? ing.unitPrice ?? 0);
                     },0);
-                total += (recipeCost/portions)*Number(item.quantity||0);
+                if(ppReportSelectedArticlePP()){
+                    const selectedCost=(Array.isArray(recipe.ingredients)?recipe.ingredients:[])
+                      .filter(ing=>String(ing.productId)===String(ppReportArticleFilterPP))
+                      .reduce((sum,ing)=>{
+                          const p=(Array.isArray(products)?products:[]).find(x=>Number(x.id)===Number(ing.productId));
+                          return sum+Number(ing.quantity||0)*Number(p?.price ?? ing.unitPrice ?? 0);
+                      },0);
+                    total += (selectedCost/portions)*Number(item.quantity||0);
+                }else{
+                    total += (recipeCost/portions)*Number(item.quantity||0);
+                }
             });
         });
 
@@ -190,6 +280,7 @@ function ppReportMaterialCostPP(range){
         .forEach(scan=>{
             (Array.isArray(scan.items)?scan.items:[]).forEach(item=>{
                 if(item.recipeId || !item.stockProductId)return;
+                if(ppReportSelectedArticlePP() && String(item.stockProductId)!==String(ppReportArticleFilterPP))return;
                 const p=(Array.isArray(products)?products:[]).find(x=>Number(x.id)===Number(item.stockProductId));
                 if(p) total += Number(p.price||0)*Number(item.quantity||0);
             });
@@ -205,10 +296,10 @@ function ppReportMetricsPP(range){
 
     const purchases=(Array.isArray(invoices)?invoices:[])
         .filter(inv=>ppReportInRangePP(inv.date,range))
-        .reduce((sum,inv)=>sum+ppReportInvoiceTTCPP(inv),0);
+        .reduce((sum,inv)=>sum+ppReportInvoiceFilteredTTCPP(inv),0);
 
     const expenseRows=(Array.isArray(expensesPP)?expensesPP:[])
-        .filter(e=>ppReportInRangePP(e.date,range));
+        .filter(e=>ppReportInRangePP(e.date,range)&&ppReportExpenseMatchesSupplierPP(e));
     const expensesTTC=expenseRows.reduce((sum,e)=>sum+ppReportExpenseTTCPP(e),0);
     const expensesHT=expenseRows.reduce((sum,e)=>sum+ppReportExpenseHTPP(e),0);
 
@@ -218,6 +309,7 @@ function ppReportMetricsPP(range){
     const foodCost=caHT>0 ? materialCost/caHT*100 : 0;
 
     const stockValue=(Array.isArray(products)?products:[])
+        .filter(p=>!ppReportSelectedArticlePP()||String(p.id)===String(ppReportArticleFilterPP))
         .reduce((sum,p)=>sum+Number(p.stock||0)*Number(p.price||0),0);
 
     return {caTTC,caHT,purchases,expensesTTC,expensesHT,materialCost,grossMargin,estimatedResult,foodCost,stockValue};
@@ -244,13 +336,40 @@ function ppReportTrendPP(current,previous,{inverse=false,points=false}={}){
     return `<span class="pp-report-trend ${good?'good':'bad'}">${pct>0?'↑':'↓'} ${pct>0?'+':''}${ppReportNumberPP(pct,1)}% vs période précédente</span>`;
 }
 
-function ppReportCardPP({label,value,trend,icon,tone="green",sub=""}){
-    return `<article class="pp-report-card ${tone}">
+function ppReportCardPP({label,value,trend,icon,tone="green",sub="",target="summary"}){
+    return `<article class="pp-report-card ${tone}" role="button" tabindex="0" data-report-target="${target}" onclick="ppOpenReportCardPP('${target}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();ppOpenReportCardPP('${target}');}">
         <div class="pp-report-card-top"><span class="pp-report-card-label">${label}</span><span class="pp-report-card-icon">${icon}</span></div>
         <strong class="pp-report-card-value">${value}</strong>
         ${sub?`<div class="pp-report-card-sub">${sub}</div>`:""}
         ${trend||""}
+        <div class="pp-report-card-open">Voir le rapport →</div>
     </article>`;
+}
+
+function ppOpenReportCardPP(target){
+    ppSetReportsTabPP(target);
+    setTimeout(()=>{
+        const panel=document.querySelector("#reportsPage .pp-report-panel.active");
+        panel?.scrollIntoView({behavior:"smooth",block:"start"});
+    },40);
+}
+
+function ppOpenReportDetailPP(tab,targetId){
+    ppSetReportsTabPP(tab);
+    setTimeout(()=>{
+        const target=document.getElementById(targetId);
+        if(!target)return;
+        const focusBox=target.closest?.(".pp-profit-section,.pp-sales-section,.pp-stock-section,.pp-buy-section,.pp-expense-section")||target;
+        focusBox.classList.remove("pp-report-focus-flash");
+        void focusBox.offsetWidth;
+        focusBox.classList.add("pp-report-focus-flash");
+        focusBox.scrollIntoView({behavior:"smooth",block:"start"});
+        setTimeout(()=>focusBox.classList.remove("pp-report-focus-flash"),1600);
+    },50);
+}
+
+function ppClickableReportBoxAttrsPP(tab,targetId){
+    return `role="button" tabindex="0" onclick="ppOpenReportDetailPP('${tab}','${targetId}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();ppOpenReportDetailPP('${tab}','${targetId}');}"`;
 }
 
 function ppEnsureReportsStylesPP(){
@@ -267,12 +386,16 @@ function ppEnsureReportsStylesPP(){
       #reportsPage .pp-report-period-btn{border:1px solid #d6ddd8;background:#fff;color:#34413a;border-radius:10px;padding:9px 13px;font-weight:700;cursor:pointer}
       #reportsPage .pp-report-period-btn:hover{border-color:#094B2D}
       #reportsPage .pp-report-period-btn.active{background:#094B2D;color:#fff;border-color:#094B2D}
-      #reportsPage .pp-report-custom{display:grid;grid-template-columns:repeat(2,minmax(160px,220px));gap:10px;margin-top:12px}
+      #reportsPage .pp-report-custom{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:10px;margin-top:12px}
       #reportsPage .pp-report-custom label{font-size:12px;color:#667085;font-weight:700;display:block;margin-bottom:5px}
-      #reportsPage .pp-report-custom input{width:100%;border:1px solid #d6ddd8;border-radius:9px;padding:9px 10px;background:#fff}
+      #reportsPage .pp-report-custom input,#reportsPage .pp-report-custom select{width:100%;border:1px solid #d6ddd8;border-radius:9px;padding:9px 10px;background:#fff}
+      #reportsPage .pp-report-custom-reset{display:flex;align-items:flex-end}
+      #reportsPage .pp-report-custom-reset button{width:100%}
       #reportsPage .pp-report-range{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid #eef0ef;color:#58645e;font-size:13px}
       #reportsPage .pp-report-grid{display:grid;grid-template-columns:repeat(4,minmax(185px,1fr));gap:13px}
-      #reportsPage .pp-report-card{position:relative;background:#fff;border:1px solid #e7ebe8;border-radius:17px;padding:17px;min-height:145px;box-shadow:0 6px 20px rgba(0,0,0,.045);overflow:hidden}
+      #reportsPage .pp-report-card{position:relative;background:#fff;border:1px solid #e7ebe8;border-radius:17px;padding:17px;min-height:165px;box-shadow:0 6px 20px rgba(0,0,0,.045);overflow:hidden;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+      #reportsPage .pp-report-card:hover{transform:translateY(-2px);box-shadow:0 10px 26px rgba(0,0,0,.09);border-color:#b9c9be}
+      #reportsPage .pp-report-card:focus{outline:3px solid rgba(9,75,45,.2);outline-offset:2px}
       #reportsPage .pp-report-card:before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:#094B2D}
       #reportsPage .pp-report-card.gold:before{background:#D9A51E}
       #reportsPage .pp-report-card.red:before{background:#b94d4d}
@@ -283,6 +406,13 @@ function ppEnsureReportsStylesPP(){
       #reportsPage .pp-report-card-icon{font-size:22px}
       #reportsPage .pp-report-card-value{display:block;font-size:25px;line-height:1.15;margin:14px 0 5px;color:#18251b}
       #reportsPage .pp-report-card-sub{font-size:12px;color:#7b857f;margin-bottom:8px}
+      #reportsPage .pp-report-card-open{font-size:12px;font-weight:900;color:#094B2D;margin-top:10px}
+      #reportsPage .pp-report-detail-link{display:block;margin-top:9px;color:#094B2D;font-size:11px;font-weight:900}
+      #reportsPage .pp-report-clickable-box{cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+      #reportsPage .pp-report-clickable-box:hover{transform:translateY(-2px);box-shadow:0 9px 22px rgba(0,0,0,.08);border-color:#b9c9be}
+      #reportsPage .pp-report-clickable-box:focus{outline:3px solid rgba(9,75,45,.2);outline-offset:2px}
+      #reportsPage .pp-report-focus-flash{animation:ppReportFocusFlash 1.5s ease}
+      @keyframes ppReportFocusFlash{0%,100%{box-shadow:none}35%{box-shadow:0 0 0 4px rgba(217,165,30,.35),0 10px 28px rgba(0,0,0,.10)}}
       #reportsPage .pp-report-trend{display:inline-block;font-size:12px;font-weight:800;margin-top:8px}
       #reportsPage .pp-report-trend.good{color:#147a48}
       #reportsPage .pp-report-trend.bad{color:#b13b3b}
@@ -399,6 +529,16 @@ function ppEnsureReportsStylesPP(){
       #reportsPage .pp-buy-alert small{display:block;color:#7a8580;margin-top:4px}
       #reportsPage .pp-buy-note{margin-top:12px;padding:11px 13px;border-radius:12px;background:#f8faf8;border:1px solid #e3e9e5;color:#5d6a62;font-size:12px;line-height:1.5}
       #reportsPage .pp-buy-empty{text-align:center;color:#7d8781;padding:18px 8px}
+      #reportsPage .pp-expense-grid{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:12px}
+      #reportsPage .pp-expense-box{background:#fff;border:1px solid #e2e8e3;border-radius:15px;padding:15px}
+      #reportsPage .pp-expense-box small{display:block;color:#778179;font-weight:700;font-size:11px;text-transform:uppercase}
+      #reportsPage .pp-expense-box strong{display:block;margin-top:6px;font-size:21px;color:#18251b}
+      #reportsPage .pp-expense-section{background:#fff;border:1px solid #e2e8e3;border-radius:16px;padding:16px}
+      #reportsPage .pp-expense-table-wrap{overflow:auto}
+      #reportsPage .pp-expense-table{width:100%;min-width:940px;border-collapse:collapse}
+      #reportsPage .pp-expense-table th,#reportsPage .pp-expense-table td{padding:10px 9px;border-bottom:1px solid #edf1ee;text-align:left;font-size:12px;white-space:nowrap}
+      #reportsPage .pp-expense-table th{background:#fafbfa;color:#68736c;text-transform:uppercase;font-size:10px}
+      #reportsPage .pp-expense-table .num{text-align:right}
       @media(max-width:950px){#reportsPage .pp-buy-grid{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-buy-layout{grid-template-columns:1fr}}
       @media(max-width:600px){#reportsPage .pp-buy-grid{grid-template-columns:1fr}}
       @media(max-width:950px){#reportsPage .pp-stock-grid{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-stock-layout{grid-template-columns:1fr}}
@@ -409,7 +549,8 @@ function ppEnsureReportsStylesPP(){
       @media(max-width:600px){#reportsPage .pp-profit-grid,#reportsPage .pp-profit-flow{grid-template-columns:1fr}}
 
       @media(max-width:1200px){#reportsPage .pp-report-grid{grid-template-columns:repeat(2,minmax(185px,1fr))}}
-      @media(max-width:650px){#reportsPage .pp-report-grid{grid-template-columns:1fr}#reportsPage .pp-report-custom{grid-template-columns:1fr}}
+      @media(max-width:950px){#reportsPage .pp-report-custom{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-expense-grid{grid-template-columns:repeat(2,1fr)}}
+      @media(max-width:650px){#reportsPage .pp-report-grid{grid-template-columns:1fr}#reportsPage .pp-report-custom,#reportsPage .pp-expense-grid{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
 }
@@ -436,6 +577,7 @@ function ppEnsureReportsSummaryUIPP(){
               <button type="button" class="pp-report-tab" data-pp-report-tab="sales" onclick="ppSetReportsTabPP('sales')">💰 Analyse des ventes</button>
               <button type="button" class="pp-report-tab" data-pp-report-tab="stock" onclick="ppSetReportsTabPP('stock')">📦 Stock & Food Cost</button>
               <button type="button" class="pp-report-tab" data-pp-report-tab="purchases" onclick="ppSetReportsTabPP('purchases')">🧾 Achats & Fournisseurs</button>
+              <button type="button" class="pp-report-tab" data-pp-report-tab="expenses" onclick="ppSetReportsTabPP('expenses')">💸 Dépenses</button>
             </div>
 
             <div class="pp-report-filter-box">
@@ -450,6 +592,9 @@ function ppEnsureReportsSummaryUIPP(){
               <div id="ppReportCustomDates" class="pp-report-custom" style="display:none">
                 <div><label>Du</label><input id="ppReportFrom" type="date" onchange="ppUpdateCustomReportDatesPP()"></div>
                 <div><label>Au</label><input id="ppReportTo" type="date" onchange="ppUpdateCustomReportDatesPP()"></div>
+                <div><label>Article</label><select id="ppReportArticleFilter" onchange="ppUpdateCustomReportFiltersPP()"><option value="">Tous les articles</option></select></div>
+                <div><label>Fournisseur</label><select id="ppReportSupplierFilter" onchange="ppUpdateCustomReportFiltersPP()"><option value="">Tous les fournisseurs</option></select></div>
+                <div class="pp-report-custom-reset"><button type="button" class="btn" onclick="ppResetCustomReportFiltersPP()">Réinitialiser les filtres</button></div>
               </div>
               <div class="pp-report-range">
                 <strong id="ppReportCurrentRangeLabel">—</strong>
@@ -589,6 +734,15 @@ function ppEnsureReportsSummaryUIPP(){
               </div>
             </section>
 
+            <section id="ppReportExpensesPanel" class="pp-report-panel">
+              <div id="ppExpenseReportKPIs" class="pp-expense-grid"></div>
+              <div class="pp-expense-section">
+                <h3 style="margin:0 0 5px">💸 Détail des dépenses</h3>
+                <p style="margin:0 0 14px;color:#6f7b73;font-size:13px">Toutes les charges enregistrées sur la période et selon le fournisseur sélectionné.</p>
+                <div id="ppExpenseReportTable"></div>
+              </div>
+            </section>
+
           </div>`;
     }
     return page;
@@ -596,7 +750,7 @@ function ppEnsureReportsSummaryUIPP(){
 
 
 function ppSetReportsTabPP(tab){
-    const selected = ["summary","profitability","sales","stock","purchases"].includes(tab) ? tab : "summary";
+    const selected = ["summary","profitability","sales","stock","purchases","expenses"].includes(tab) ? tab : "summary";
     document.querySelectorAll("#reportsPage [data-pp-report-tab]").forEach(btn=>{
         btn.classList.toggle("active",btn.dataset.ppReportTab===selected);
     });
@@ -605,6 +759,7 @@ function ppSetReportsTabPP(tab){
     document.getElementById("ppReportSalesPanel")?.classList.toggle("active",selected==="sales");
     document.getElementById("ppReportStockPanel")?.classList.toggle("active",selected==="stock");
     document.getElementById("ppReportPurchasesPanel")?.classList.toggle("active",selected==="purchases");
+    document.getElementById("ppReportExpensesPanel")?.classList.toggle("active",selected==="expenses");
 
     if(selected==="profitability"){
         try{ ppRenderProfitabilityPP(); }catch(err){ console.error("Rapports Rentabilité",err); }
@@ -618,6 +773,9 @@ function ppSetReportsTabPP(tab){
     if(selected==="purchases"){
         try{ ppRenderPurchasesSuppliersPP(); }catch(err){ console.error("Rapports Achats & Fournisseurs",err); }
     }
+    if(selected==="expenses"){
+        try{ ppRenderExpensesReportPP(); }catch(err){ console.error("Rapports Dépenses",err); }
+    }
 }
 
 
@@ -630,7 +788,7 @@ function ppProfitabilityRecipeRowsPP(range){
         (Array.isArray(sale.items)?sale.items:[]).forEach(item=>{
             const recipe=(Array.isArray(recipesPP)?recipesPP:[])
               .find(r=>Number(r.id)===Number(item.recipeId));
-            if(!recipe)return;
+            if(!recipe||!ppReportRecipeMatchesArticlePP(recipe))return;
 
             const qty=Number(item.quantity||0);
             if(!(qty>0))return;
@@ -684,8 +842,8 @@ function ppProfitabilityStatusPP(foodCost){
     return {cls:"bad",label:"À corriger"};
 }
 
-function ppProfitabilityBoxPP(label,value,sub=""){
-    return `<div class="pp-profit-box"><small>${label}</small><strong>${value}</strong>${sub?`<div style="margin-top:5px;color:#79837d;font-size:11px">${sub}</div>`:""}</div>`;
+function ppProfitabilityBoxPP(label,value,sub="",targetId="ppProfitabilityFlow"){
+    return `<div class="pp-profit-box pp-report-clickable-box" ${ppClickableReportBoxAttrsPP("profitability",targetId)}><small>${label}</small><strong>${value}</strong>${sub?`<div style="margin-top:5px;color:#79837d;font-size:11px">${sub}</div>`:""}<span class="pp-report-detail-link">Voir le détail →</span></div>`;
 }
 
 function ppRenderProfitabilityPP(){
@@ -701,10 +859,10 @@ function ppRenderProfitabilityPP(){
     const kpis=document.getElementById("ppProfitabilityKPIs");
     if(kpis){
         kpis.innerHTML=[
-            ppProfitabilityBoxPP("Taux de marge brute",`${ppReportNumberPP(marginRate,1)}%`,"Marge brute / CA HT"),
-            ppProfitabilityBoxPP("Résultat estimé",ppReportMoneyPP(current.estimatedResult),`${ppReportNumberPP(resultRate,1)}% du CA HT`),
-            ppProfitabilityBoxPP("Coût matière",ppReportMoneyPP(current.materialCost),`Food Cost ${ppReportNumberPP(current.foodCost,1)}%`),
-            ppProfitabilityBoxPP("Dépenses HT",ppReportMoneyPP(current.expensesHT),"Charges de la période")
+            ppProfitabilityBoxPP("Taux de marge brute",`${ppReportNumberPP(marginRate,1)}%`,"Marge brute / CA HT","ppProfitabilityFlow"),
+            ppProfitabilityBoxPP("Résultat estimé",ppReportMoneyPP(current.estimatedResult),`${ppReportNumberPP(resultRate,1)}% du CA HT`,"ppProfitabilityFlow"),
+            ppProfitabilityBoxPP("Coût matière",ppReportMoneyPP(current.materialCost),`Food Cost ${ppReportNumberPP(current.foodCost,1)}%`,"ppProfitabilityRecipes"),
+            `<div class="pp-profit-box pp-report-clickable-box" ${ppClickableReportBoxAttrsPP("expenses","ppExpenseReportTable")}><small>Dépenses HT</small><strong>${ppReportMoneyPP(current.expensesHT)}</strong><div style="margin-top:5px;color:#79837d;font-size:11px">Charges de la période</div><span class="pp-report-detail-link">Voir le détail →</span></div>`
         ].join("");
     }
 
@@ -762,8 +920,11 @@ function ppRenderProfitabilityPP(){
 }
 
 function ppSalesPeriodRowsPP(range){
-    return (Array.isArray(salesPP)?salesPP:[])
+    const rows=(Array.isArray(salesPP)?salesPP:[])
       .filter(s=>ppReportInRangePP(s.date,range));
+    if(!ppReportSelectedArticlePP())return rows;
+    return rows.map(s=>({...s,totalTTC:ppReportFilteredSaleTTCPP(s),reportPayments:[]}))
+      .filter(s=>Number(s.totalTTC||0)>0);
 }
 
 function ppSalesTotalQtyPP(sales){
@@ -780,7 +941,7 @@ function ppSalesRecipeRowsPP(sales){
         (Array.isArray(sale.items)?sale.items:[]).forEach(item=>{
             const recipe=(Array.isArray(recipesPP)?recipesPP:[])
               .find(r=>Number(r.id)===Number(item.recipeId));
-            if(!recipe)return;
+            if(!recipe||!ppReportRecipeMatchesArticlePP(recipe))return;
 
             const qty=Number(item.quantity||0);
             if(!(qty>0))return;
@@ -886,11 +1047,12 @@ function ppSalesBucketsPP(range){
     return buckets;
 }
 
-function ppSalesBoxPP(label,value,sub=""){
-    return `<div class="pp-sales-box">
+function ppSalesBoxPP(label,value,sub="",targetId="ppSalesEvolution"){
+    return `<div class="pp-sales-box pp-report-clickable-box" ${ppClickableReportBoxAttrsPP("sales",targetId)}>
       <small>${label}</small>
       <strong>${value}</strong>
       ${sub?`<div style="margin-top:5px;color:#79837d;font-size:11px">${sub}</div>`:""}
+      <span class="pp-report-detail-link">Voir le détail →</span>
     </div>`;
 }
 
@@ -909,10 +1071,10 @@ function ppRenderSalesAnalysisPP(){
     const kpis=document.getElementById("ppSalesAnalysisKPIs");
     if(kpis){
         kpis.innerHTML=[
-            ppSalesBoxPP("Chiffre d’affaires TTC",ppReportMoneyPP(caTTC),`${sales.length} vente(s)`),
-            ppSalesBoxPP("Ticket moyen",ppReportMoneyPP(ticket),"CA TTC / nombre de ventes"),
-            ppSalesBoxPP("Quantité vendue",ppReportNumberPP(qty,1),"Articles / plats enregistrés"),
-            ppSalesBoxPP("Meilleure vente",topRecipe?topRecipe.name:"—",topRecipe?`${ppReportNumberPP(topRecipe.qty,1)} vendu(s)`:"Aucune vente")
+            ppSalesBoxPP("Chiffre d’affaires TTC",ppReportMoneyPP(caTTC),`${sales.length} vente(s)`,"ppSalesEvolution"),
+            ppSalesBoxPP("Ticket moyen",ppReportMoneyPP(ticket),"CA TTC / nombre de ventes","ppSalesEvolution"),
+            ppSalesBoxPP("Quantité vendue",ppReportNumberPP(qty,1),"Articles / plats enregistrés","ppSalesTopRecipes"),
+            ppSalesBoxPP("Meilleure vente",topRecipe?topRecipe.name:"—",topRecipe?`${ppReportNumberPP(topRecipe.qty,1)} vendu(s)`:"Aucune vente","ppSalesTopRecipes")
         ].join("");
     }
 
@@ -994,12 +1156,15 @@ function ppStockEscPP(value){
 }
 
 function ppStockProductsPP(){
-    return Array.isArray(products)?products:[];
+    const rows=Array.isArray(products)?products:[];
+    if(!ppReportSelectedArticlePP())return rows;
+    return rows.filter(p=>String(p.id)===String(ppReportArticleFilterPP));
 }
 
 function ppStockMovementsPP(range){
     return (Array.isArray(movements)?movements:[])
-      .filter(m=>ppReportInRangePP(m.date,range));
+      .filter(m=>ppReportInRangePP(m.date,range))
+      .filter(m=>!ppReportSelectedArticlePP()||String(m.productId)===String(ppReportArticleFilterPP));
 }
 
 function ppStockProductForMovementPP(m){
@@ -1069,11 +1234,12 @@ function ppStockConsumptionRowsPP(range){
     return [...map.values()].sort((a,b)=>b.value-a.value || b.qty-a.qty);
 }
 
-function ppStockBoxPP(label,value,sub=""){
-    return `<div class="pp-stock-box">
+function ppStockBoxPP(label,value,sub="",targetId="ppStockValuation"){
+    return `<div class="pp-stock-box pp-report-clickable-box" ${ppClickableReportBoxAttrsPP("stock",targetId)}>
       <small>${ppStockEscPP(label)}</small>
       <strong>${value}</strong>
       ${sub?`<div class="sub">${sub}</div>`:""}
+      <span class="pp-report-detail-link">Voir le détail →</span>
     </div>`;
 }
 
@@ -1102,10 +1268,10 @@ function ppRenderStockFoodCostPP(){
     const kpis=document.getElementById("ppStockAnalysisKPIs");
     if(kpis){
         kpis.innerHTML=[
-            ppStockBoxPP("Valeur du stock",ppReportMoneyPP(currentValue),`${ppStockProductsPP().length} article(s)`),
-            ppStockBoxPP("Alertes stock",String(lowRows.length),lowRows.length?"À commander / vérifier":"Aucune alerte"),
-            ppStockBoxPP("Food Cost théorique",`${ppReportNumberPP(theoreticalPct,1)}%`,`${ppReportMoneyPP(theoretical)} de coût matière`),
-            ppStockBoxPP("Sorties enregistrées",ppReportMoneyPP(exitValue),`${exits.length} mouvement(s) de sortie`)
+            ppStockBoxPP("Valeur du stock",ppReportMoneyPP(currentValue),`${ppStockProductsPP().length} article(s)`,"ppStockValuation"),
+            ppStockBoxPP("Alertes stock",String(lowRows.length),lowRows.length?"À commander / vérifier":"Aucune alerte","ppStockAlerts"),
+            ppStockBoxPP("Food Cost théorique",`${ppReportNumberPP(theoreticalPct,1)}%`,`${ppReportMoneyPP(theoretical)} de coût matière`,"ppStockFoodCost"),
+            ppStockBoxPP("Sorties enregistrées",ppReportMoneyPP(exitValue),`${exits.length} mouvement(s) de sortie`,"ppStockMovementSummary")
         ].join("");
     }
 
@@ -1239,6 +1405,13 @@ function ppBuyInvoiceDatePP(inv){
     return String(inv?.date||inv?.createdAt||"").slice(0,10);
 }
 
+function ppReportPurchaseRowMatchesSupplierPP(row){
+    const supplier=ppReportSelectedSupplierPP();
+    if(!supplier)return true;
+    if(row?.supplierId!==null && row?.supplierId!==undefined && String(row.supplierId)===String(supplier.id))return true;
+    return ppReportNormPP(row?.supplierName)===ppReportNormPP(supplier.name);
+}
+
 function ppBuyRowsPP(){
     const rows=[];
     ppBuyInvoicesPP().forEach(inv=>{
@@ -1272,7 +1445,11 @@ function ppBuyRowsPP(){
             });
         });
     });
-    return rows.filter(r=>r.date).sort((a,b)=>new Date(b.date)-new Date(a.date));
+    return rows
+      .filter(r=>r.date)
+      .filter(ppReportLineMatchesArticlePP)
+      .filter(ppReportPurchaseRowMatchesSupplierPP)
+      .sort((a,b)=>new Date(b.date)-new Date(a.date));
 }
 
 function ppBuyDaysPP(a,b){
@@ -1347,14 +1524,19 @@ function ppBuyIntelligencePP(){
 }
 
 function ppBuyPeriodInvoicesPP(range){
-    return ppBuyInvoicesPP().filter(inv=>ppReportInRangePP(ppBuyInvoiceDatePP(inv),range));
+    return ppBuyInvoicesPP().filter(inv=>{
+        if(!ppReportInRangePP(ppBuyInvoiceDatePP(inv),range)||!ppReportInvoiceMatchesSupplierPP(inv))return false;
+        if(!ppReportSelectedArticlePP())return true;
+        return (Array.isArray(inv.lines)?inv.lines:[]).some(ppReportLineMatchesArticlePP);
+    });
 }
 
-function ppBuyBoxPP(label,value,sub=""){
-    return `<div class="pp-buy-box">
+function ppBuyBoxPP(label,value,sub="",targetId="ppPurchaseHistory"){
+    return `<div class="pp-buy-box pp-report-clickable-box" ${ppClickableReportBoxAttrsPP("purchases",targetId)}>
       <small>${ppBuyEscPP(label)}</small>
       <strong>${value}</strong>
       ${sub?`<div class="sub">${sub}</div>`:""}
+      <span class="pp-report-detail-link">Voir le détail →</span>
     </div>`;
 }
 
@@ -1365,7 +1547,7 @@ function ppRenderPurchasesSuppliersPP(){
     const range=ppReportCurrentRangePP();
     const periodInvoices=ppBuyPeriodInvoicesPP(range);
     const intelligence=ppBuyIntelligencePP();
-    const totalTTC=periodInvoices.reduce((s,i)=>s+Number(i.totalTTC||0),0);
+    const totalTTC=periodInvoices.reduce((s,i)=>s+ppReportInvoiceFilteredTTCPP(i),0);
     const supplierIds=new Set(periodInvoices.map(i=>String(i.supplierId??i.supplierName??"")).filter(Boolean));
     const rises=intelligence.filter(x=>x.change!==null && x.change>0.01);
     const expensive=intelligence.filter(x=>x.gap>0.001 && ppBuyDaysPP(x.latestOverallDate,x.date)<=180);
@@ -1383,10 +1565,10 @@ function ppRenderPurchasesSuppliersPP(){
     const kpis=document.getElementById("ppPurchaseKPIs");
     if(kpis){
         kpis.innerHTML=[
-            ppBuyBoxPP("Achats TTC",ppReportMoneyPP(totalTTC),`${periodInvoices.length} facture(s)`),
-            ppBuyBoxPP("Fournisseurs actifs",String(supplierIds.size),"Sur la période sélectionnée"),
-            ppBuyBoxPP("Alertes hausse",String(rises.length),"Dernier prix > achat précédent"),
-            ppBuyBoxPP("Économie potentielle",ppReportMoneyPP(potentialSaving),"Vs meilleur prix récent connu")
+            ppBuyBoxPP("Achats TTC",ppReportMoneyPP(totalTTC),`${periodInvoices.length} facture(s)`,"ppPurchaseHistory"),
+            ppBuyBoxPP("Fournisseurs actifs",String(supplierIds.size),"Sur la période sélectionnée","ppPurchaseSupplierRanking"),
+            ppBuyBoxPP("Alertes hausse",String(rises.length),"Dernier prix > achat précédent","ppPurchasePriceAlerts"),
+            ppBuyBoxPP("Économie potentielle",ppReportMoneyPP(potentialSaving),"Vs meilleur prix récent connu","ppPurchaseComparator")
         ].join("");
     }
 
@@ -1419,7 +1601,7 @@ function ppRenderPurchasesSuppliersPP(){
         periodInvoices.forEach(inv=>{
             const name=String(inv.supplierName||"Fournisseur");
             const row=map.get(name)||{name,total:0,count:0};
-            row.total+=Number(inv.totalTTC||0); row.count++;
+            row.total+=ppReportInvoiceFilteredTTCPP(inv); row.count++;
             map.set(name,row);
         });
         const rows=[...map.values()].sort((a,b)=>b.total-a.total);
@@ -1509,10 +1691,92 @@ function ppRenderPurchasesSuppliersPP(){
     }
 }
 
+function ppReportExpenseRowsPP(range){
+    return (Array.isArray(expensesPP)?expensesPP:[])
+      .filter(e=>ppReportInRangePP(e.date,range)&&ppReportExpenseMatchesSupplierPP(e))
+      .sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+}
+
+function ppRenderExpensesReportPP(){
+    const panel=document.getElementById("ppReportExpensesPanel");
+    if(!panel)return;
+    const range=ppReportCurrentRangePP();
+    const rows=ppReportExpenseRowsPP(range);
+    const totalTTC=rows.reduce((sum,e)=>sum+ppReportExpenseTTCPP(e),0);
+    const totalHT=rows.reduce((sum,e)=>sum+ppReportExpenseHTPP(e),0);
+    const vat=Math.max(totalTTC-totalHT,0);
+    const average=rows.length?totalTTC/rows.length:0;
+    const esc=typeof escapeHTML==="function"?escapeHTML:(v=>String(v??""));
+
+    const kpis=document.getElementById("ppExpenseReportKPIs");
+    if(kpis){
+        kpis.innerHTML=[
+            ["Dépenses TTC",ppReportMoneyPP(totalTTC)],
+            ["Dépenses HT",ppReportMoneyPP(totalHT)],
+            ["TVA",ppReportMoneyPP(vat)],
+            ["Dépense moyenne",ppReportMoneyPP(average)]
+        ].map(([label,value])=>`<div class="pp-expense-box pp-report-clickable-box" ${ppClickableReportBoxAttrsPP("expenses","ppExpenseReportTable")}><small>${label}</small><strong>${value}</strong><span class="pp-report-detail-link">Voir le détail →</span></div>`).join("");
+    }
+
+    const table=document.getElementById("ppExpenseReportTable");
+    if(!table)return;
+    table.innerHTML=rows.length?`<div class="pp-expense-table-wrap"><table class="pp-expense-table">
+      <thead><tr><th>Date</th><th>Catégorie</th><th>Bénéficiaire</th><th>Libellé</th><th>Référence</th><th class="num">HT</th><th class="num">TVA</th><th class="num">TTC</th><th>Mode</th></tr></thead>
+      <tbody>${rows.slice(0,100).map(e=>{
+          const ttc=ppReportExpenseTTCPP(e),ht=ppReportExpenseHTPP(e);
+          return `<tr>
+            <td>${ppReportDateLabelPP(ppReportDateFromAnyPP(e.date))}</td>
+            <td>${esc(e.category||"-")}</td>
+            <td><strong>${esc(e.beneficiary||"-")}</strong></td>
+            <td>${esc(e.label||"-")}</td>
+            <td>${esc(e.reference||"-")}</td>
+            <td class="num">${ppReportMoneyPP(ht)}</td>
+            <td class="num">${ppReportMoneyPP(Math.max(ttc-ht,0))}</td>
+            <td class="num"><strong>${ppReportMoneyPP(ttc)}</strong></td>
+            <td>${esc(e.mode||"-")}</td>
+          </tr>`;
+      }).join("")}</tbody>
+    </table></div>`:'<div class="pp-buy-empty">Aucune dépense pour les filtres sélectionnés.</div>';
+}
+
 function ppSetReportPeriodPP(period){
     ppReportPeriodPP=period;
     const custom=document.getElementById("ppReportCustomDates");
     if(custom)custom.style.display=period==="custom"?"grid":"none";
+    ppRenderReportsSummaryPP();
+}
+
+function ppRefreshReportFilterOptionsPP(){
+    const esc=typeof escapeHTML==="function"?escapeHTML:(v=>String(v??""));
+    const articleSelect=document.getElementById("ppReportArticleFilter");
+    if(articleSelect){
+        const rows=(Array.isArray(products)?products:[]).slice().sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""),"fr"));
+        articleSelect.innerHTML='<option value="">Tous les articles</option>'+rows.map(p=>`<option value="${esc(p.id)}">${esc(p.name||"Article")} — ${esc(p.category||"-")}</option>`).join("");
+        articleSelect.value=ppReportArticleFilterPP;
+    }
+    const supplierSelect=document.getElementById("ppReportSupplierFilter");
+    if(supplierSelect){
+        const rows=(Array.isArray(suppliers)?suppliers:[]).slice().sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""),"fr"));
+        supplierSelect.innerHTML='<option value="">Tous les fournisseurs</option>'+rows.map(s=>`<option value="${esc(s.id)}">${esc(s.name||"Fournisseur")}</option>`).join("");
+        supplierSelect.value=ppReportSupplierFilterPP;
+    }
+}
+
+function ppUpdateCustomReportFiltersPP(){
+    ppReportArticleFilterPP=String(document.getElementById("ppReportArticleFilter")?.value||"");
+    ppReportSupplierFilterPP=String(document.getElementById("ppReportSupplierFilter")?.value||"");
+    ppReportPeriodPP="custom";
+    ppRenderReportsSummaryPP();
+}
+
+function ppResetCustomReportFiltersPP(){
+    ppReportArticleFilterPP="";
+    ppReportSupplierFilterPP="";
+    ppReportCustomFromPP="";
+    ppReportCustomToPP="";
+    const from=document.getElementById("ppReportFrom"),to=document.getElementById("ppReportTo");
+    if(from)from.value="";
+    if(to)to.value="";
     ppRenderReportsSummaryPP();
 }
 
@@ -1525,6 +1789,7 @@ function ppUpdateCustomReportDatesPP(){
 
 function ppRenderReportsSummaryPP(){
     if(!ppEnsureReportsSummaryUIPP())return;
+    ppRefreshReportFilterOptionsPP();
 
     const range=ppReportCurrentRangePP();
     const previousRange=ppReportPreviousRangePP(range);
@@ -1538,11 +1803,15 @@ function ppRenderReportsSummaryPP(){
     const custom=document.getElementById("ppReportCustomDates");
     if(custom)custom.style.display=ppReportPeriodPP==="custom"?"grid":"none";
     const fromInput=document.getElementById("ppReportFrom"),toInput=document.getElementById("ppReportTo");
-    if(fromInput && !fromInput.value)fromInput.value=range.from;
-    if(toInput && !toInput.value)toInput.value=range.to;
+    if(fromInput && fromInput.value!==range.from)fromInput.value=range.from;
+    if(toInput && toInput.value!==range.to)toInput.value=range.to;
 
     const currentLabel=document.getElementById("ppReportCurrentRangeLabel");
-    if(currentLabel)currentLabel.textContent=`${range.label} : ${ppReportDateLabelPP(range.from)} → ${ppReportDateLabelPP(range.to)}`;
+    const activeFilters=[];
+    const selectedArticle=ppReportSelectedArticlePP(),selectedSupplier=ppReportSelectedSupplierPP();
+    if(selectedArticle)activeFilters.push(`Article : ${selectedArticle.name}`);
+    if(selectedSupplier)activeFilters.push(`Fournisseur : ${selectedSupplier.name}`);
+    if(currentLabel)currentLabel.textContent=`${range.label} : ${ppReportDateLabelPP(range.from)} → ${ppReportDateLabelPP(range.to)}${activeFilters.length?' · '+activeFilters.join(' · '):''}`;
     const previousLabel=document.getElementById("ppReportPreviousRangeLabel");
     if(previousLabel)previousLabel.textContent=`Comparaison : ${ppReportDateLabelPP(previousRange.from)} → ${ppReportDateLabelPP(previousRange.to)}`;
 
@@ -1550,14 +1819,14 @@ function ppRenderReportsSummaryPP(){
     if(!cards)return;
 
     cards.innerHTML=[
-        ppReportCardPP({label:"CA TTC",value:ppReportMoneyPP(current.caTTC),icon:"💰",tone:"green",trend:ppReportTrendPP(current.caTTC,previous.caTTC)}),
-        ppReportCardPP({label:"CA HT",value:ppReportMoneyPP(current.caHT),icon:"🧾",tone:"neutral",trend:ppReportTrendPP(current.caHT,previous.caHT)}),
-        ppReportCardPP({label:"Achats TTC",value:ppReportMoneyPP(current.purchases),icon:"🛒",tone:"gold",trend:ppReportTrendPP(current.purchases,previous.purchases,{inverse:true})}),
-        ppReportCardPP({label:"Dépenses TTC",value:ppReportMoneyPP(current.expensesTTC),icon:"💸",tone:"red",trend:ppReportTrendPP(current.expensesTTC,previous.expensesTTC,{inverse:true})}),
-        ppReportCardPP({label:"Marge brute",value:ppReportMoneyPP(current.grossMargin),icon:"📊",tone:current.grossMargin>=0?"green":"red",sub:`Coût matière : ${ppReportMoneyPP(current.materialCost)}`,trend:ppReportTrendPP(current.grossMargin,previous.grossMargin)}),
-        ppReportCardPP({label:"Résultat estimé",value:ppReportMoneyPP(current.estimatedResult),icon:"🎯",tone:current.estimatedResult>=0?"green":"red",sub:"Marge brute − dépenses HT",trend:ppReportTrendPP(current.estimatedResult,previous.estimatedResult)}),
-        ppReportCardPP({label:"Food Cost th.",value:`${ppReportNumberPP(current.foodCost,1)}%`,icon:"🍽️",tone:current.foodCost<=30?"green":current.foodCost<=35?"gold":"red",sub:"Coût matière / CA HT",trend:ppReportTrendPP(current.foodCost,previous.foodCost,{inverse:true,points:true})}),
-        ppReportCardPP({label:"Valeur du stock",value:ppReportMoneyPP(current.stockValue),icon:"📦",tone:"blue",sub:"Valorisation du stock actuel",trend:`<span class="pp-report-trend neutral">• Stock au prix moyen actuel</span>`})
+        ppReportCardPP({label:"CA TTC",value:ppReportMoneyPP(current.caTTC),icon:"💰",tone:"green",target:"sales",trend:ppReportTrendPP(current.caTTC,previous.caTTC)}),
+        ppReportCardPP({label:"CA HT",value:ppReportMoneyPP(current.caHT),icon:"🧾",tone:"neutral",target:"sales",trend:ppReportTrendPP(current.caHT,previous.caHT)}),
+        ppReportCardPP({label:"Achats TTC",value:ppReportMoneyPP(current.purchases),icon:"🛒",tone:"gold",target:"purchases",trend:ppReportTrendPP(current.purchases,previous.purchases,{inverse:true})}),
+        ppReportCardPP({label:"Dépenses TTC",value:ppReportMoneyPP(current.expensesTTC),icon:"💸",tone:"red",target:"expenses",trend:ppReportTrendPP(current.expensesTTC,previous.expensesTTC,{inverse:true})}),
+        ppReportCardPP({label:"Marge brute",value:ppReportMoneyPP(current.grossMargin),icon:"📊",tone:current.grossMargin>=0?"green":"red",target:"profitability",sub:`Coût matière : ${ppReportMoneyPP(current.materialCost)}`,trend:ppReportTrendPP(current.grossMargin,previous.grossMargin)}),
+        ppReportCardPP({label:"Résultat estimé",value:ppReportMoneyPP(current.estimatedResult),icon:"🎯",tone:current.estimatedResult>=0?"green":"red",target:"profitability",sub:"Marge brute − dépenses HT",trend:ppReportTrendPP(current.estimatedResult,previous.estimatedResult)}),
+        ppReportCardPP({label:"Food Cost th.",value:`${ppReportNumberPP(current.foodCost,1)}%`,icon:"🍽️",tone:current.foodCost<=30?"green":current.foodCost<=35?"gold":"red",target:"stock",sub:"Coût matière / CA HT",trend:ppReportTrendPP(current.foodCost,previous.foodCost,{inverse:true,points:true})}),
+        ppReportCardPP({label:"Valeur du stock",value:ppReportMoneyPP(current.stockValue),icon:"📦",tone:"blue",target:"stock",sub:"Valorisation du stock actuel",trend:`<span class="pp-report-trend neutral">• Stock au prix moyen actuel</span>`})
     ].join("");
 
 
@@ -1565,6 +1834,7 @@ function ppRenderReportsSummaryPP(){
     try{ ppRenderSalesAnalysisPP(); }catch(err){ console.error("Rapports Analyse des ventes",err); }
     try{ ppRenderStockFoodCostPP(); }catch(err){ console.error("Rapports Stock & Food Cost",err); }
     try{ ppRenderPurchasesSuppliersPP(); }catch(err){ console.error("Rapports Achats & Fournisseurs",err); }
+    try{ ppRenderExpensesReportPP(); }catch(err){ console.error("Rapports Dépenses",err); }
 }
 
 // Intégration douce avec le rendu existant du Manager.
