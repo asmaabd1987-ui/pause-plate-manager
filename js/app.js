@@ -6503,22 +6503,7 @@ clientPaymentsPP = Array.isArray(clientPaymentsPP) ? clientPaymentsPP : [];
 salesPP = Array.isArray(salesPP) ? salesPP : [];
 salesPP = salesPP.map(s => ({...s, totalTTC:Number(s.totalTTC ?? 0), items:Array.isArray(s.items)?s.items:[]}));
 expensesPP = Array.isArray(expensesPP) ? expensesPP : [];
-expensesPP = expensesPP.map(e => {
-    const totalTTC = Number(e.totalTTC ?? e.amount ?? 0);
-    const vatRate = Number(e.vatRate ?? 0);
-    const totalHT = Number(e.totalHT ?? (vatRate > 0 ? totalTTC / (1 + vatRate / 100) : totalTTC));
-    const vatAmount = Number(e.vatAmount ?? Math.max(totalTTC - totalHT, 0));
-    return {
-        ...e,
-        amount: totalTTC,
-        totalHT,
-        vatRate,
-        vatAmount,
-        totalTTC,
-        paymentDate: e.paymentDate ?? e.date ?? "",
-        ice: String(e.ice ?? "")
-    };
-});
+expensesPP = expensesPP.map(ppNormalizeExpensePP);
 recipesPP = Array.isArray(recipesPP) ? recipesPP : [];
 recipesPP = recipesPP.map(r=>({...r,ingredients:Array.isArray(r.ingredients)?r.ingredients:[],salePrice:Number(r.salePrice||0)}));
 dailySalesScansPP = Array.isArray(dailySalesScansPP) ? dailySalesScansPP : [];
@@ -7301,7 +7286,7 @@ function refreshTVAExtraFiltersPP(){
         const current=modeSelect.value;
         const values=[...new Set([
             ...invoices.map(ppInvoicePaymentInfoTVA).map(x=>x.mode).filter(Boolean),
-            ...(typeof expensesPP!=='undefined'?expensesPP.map(e=>e.mode).filter(Boolean):[])
+            ...(typeof expensesPP!=='undefined'?expensesPP.flatMap(e=>typeof ppExpensePaymentsPP==='function'?ppExpensePaymentsPP(e).map(p=>p.mode):[e.mode]).filter(Boolean):[])
         ])].sort((a,b)=>a.localeCompare(b,'fr'));
         modeSelect.innerHTML='<option value="">Tous</option>'+values.map(x=>`<option value="${escapeHTML(x)}">${escapeHTML(x)}</option>`).join('');
         if([...modeSelect.options].some(o=>o.value===current)) modeSelect.value=current;
@@ -7468,38 +7453,49 @@ function getTVAAchatRowsPP(){
 
     /*
       Dépenses avec TVA (banque, électricité, internet, téléphone...).
-      Elles sont considérées déductibles à leur date de règlement.
+      La TVA devient déductible uniquement au prorata de chaque règlement,
+      dans la période correspondant à la date réelle de ce règlement.
     */
     if(typeof expensesPP!=='undefined' && Array.isArray(expensesPP)){
         expensesPP.forEach(e=>{
             const rate=Number(e.vatRate||0);
             if(!(rate>0))return;
-
-            const paymentDate=String(e.paymentDate||e.date||'').slice(0,10);
-            if(!paymentDate)return;
-
             const ht=Number(e.totalHT||0);
             const vat=Number(e.vatAmount||0);
             const ttc=Number(e.totalTTC??e.amount??(ht+vat));
+            if(!(ttc>0))return;
 
-            rows.push({
-                source:'expense',
-                expenseId:e.id,
-                invoiceId:'expense-'+e.id,
-                date:e.date,
-                deductionDate:paymentDate,
-                invoiceNumber:e.reference||'DÉP-'+e.id,
-                supplierId:null,
-                supplierName:e.beneficiary||e.category||'Dépense',
-                supplierICE:String(e.ice||''),
-                supplierNature:e.category||'Dépense',
-                rate,
-                ht,
-                vat,
-                ttc,
-                paymentMode:e.mode||'-',
-                paymentDate,
-                paymentStatus:'Réglée'
+            let remainingTTC=ttc;
+            const payments=typeof ppExpensePaymentsPP==='function'?ppExpensePaymentsPP(e):(Array.isArray(e.payments)?e.payments:[]);
+            payments.forEach(payment=>{
+                if(remainingTTC<=0.005)return;
+                const paymentDate=String(payment.date||'').slice(0,10);
+                const paidPart=Math.min(Math.max(Number(payment.amount||0),0),remainingTTC);
+                if(!paymentDate||!(paidPart>0))return;
+                const ratio=paidPart/ttc;
+
+                rows.push({
+                    source:'expense-payment',
+                    expenseId:e.id,
+                    expensePaymentId:payment.id,
+                    invoiceId:'expense-'+e.id,
+                    date:e.date,
+                    deductionDate:paymentDate,
+                    invoiceNumber:e.reference||'DÉP-'+e.id,
+                    supplierId:null,
+                    supplierName:e.beneficiary||e.category||'Dépense',
+                    supplierICE:String(e.ice||''),
+                    supplierNature:e.category||'Dépense',
+                    rate,
+                    ht:ht*ratio,
+                    vat:vat*ratio,
+                    ttc:paidPart,
+                    paymentMode:payment.mode||'-',
+                    paymentDate,
+                    paymentReference:payment.reference||'',
+                    paymentStatus:Number(e.due||0)>0.005?'Partiel':'Réglée'
+                });
+                remainingTTC-=paidPart;
             });
         });
     }
@@ -8283,6 +8279,50 @@ function printSalesPP(){const rows=filteredSalesModulePP().slice().sort((a,b)=>n
 ========================================================= */
 const PP_EXPENSE_CATEGORIES=['Loyer','Salaires','CNSS','Eau & Électricité','Internet','Entretien & Réparation','Transport','Fournitures','Marketing & Publicité','Honoraires','Frais bancaires','Taxes & Impôts','Autre'];
 
+function ppNormalizeExpensePP(rawExpense){
+    const e=rawExpense||{},totalTTC=Math.max(Number(e.totalTTC??e.amount??0),0),vatRate=Math.max(Number(e.vatRate??0),0);
+    const totalHT=Number(e.totalHT??(vatRate>0?totalTTC/(1+vatRate/100):totalTTC));
+    const vatAmount=Number(e.vatAmount??Math.max(totalTTC-totalHT,0));
+    const hadPaymentsField=Array.isArray(e.payments);
+    let payments=hadPaymentsField?e.payments:[];
+
+    // Les anciennes dépenses n'avaient pas d'historique de règlements :
+    // elles restent payées pour préserver exactement les données existantes.
+    if(!hadPaymentsField&&totalTTC>0){
+        payments=[{id:`legacy-expense-payment-${e.id??'old'}`,date:e.paymentDate??e.date??'',amount:totalTTC,mode:e.mode??'Autre',reference:e.paymentReference??e.reference??'',note:'Règlement repris automatiquement',createdAt:e.createdAt??new Date().toISOString()}];
+    }
+    return ppRefreshExpenseDerivedPP({...e,amount:totalTTC,totalHT,vatRate,vatAmount,totalTTC,dueDate:String(e.dueDate??e.date??'').slice(0,10),payments,ice:String(e.ice??'')});
+}
+
+function ppExpensePaymentsPP(expense){
+    return (Array.isArray(expense?.payments)?expense.payments:[]).map((p,index)=>({
+        id:p.id??`expense-payment-${expense?.id??'new'}-${index+1}`,
+        date:String(p.date||'').slice(0,10),
+        amount:Math.max(Number(p.amount||0),0),
+        mode:String(p.mode||'Autre'),
+        reference:String(p.reference||''),
+        note:String(p.note||''),
+        createdAt:p.createdAt||new Date().toISOString()
+    })).filter(p=>p.amount>0).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+}
+function ppExpensePaymentTotalsPP(expense){
+    const total=Math.max(Number(expense?.totalTTC??expense?.amount??0),0);
+    const rawPaid=ppExpensePaymentsPP(expense).reduce((sum,p)=>sum+Number(p.amount||0),0);
+    const paid=Math.min(rawPaid,total),due=Math.max(total-paid,0);
+    return {total,paid,due,status:paid<=0.005?'unpaid':due<=0.005?'paid':'partial'};
+}
+function ppRefreshExpenseDerivedPP(expense){
+    const payments=ppExpensePaymentsPP(expense),totals=ppExpensePaymentTotalsPP({...expense,payments});
+    const latest=payments.slice().filter(p=>p.date).sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+    return {...expense,payments,paidAmount:totals.paid,due:totals.due,paymentStatus:totals.status,paymentDate:latest?.date||'',mode:latest?.mode||''};
+}
+function ppExpenseStatusLabelPP(status){return status==='paid'?'Payée':status==='partial'?'Partiellement payée':'Non payée';}
+function ppExpenseStatusBadgePP(status){const kind=status==='paid'?'success':status==='partial'?'warning':'danger';return `<span class="status ${kind}">${ppExpenseStatusLabelPP(status)}</span>`;}
+function ppExpensePaidVATPP(expense){
+    const totals=ppExpensePaymentTotalsPP(expense),vat=Math.max(Number(expense?.vatAmount||0),0);
+    return totals.total>0?vat*(totals.paid/totals.total):0;
+}
+
 function ensureExpensesModulePP(){
     const page=document.getElementById('expensesPage');if(!page)return;
     hideLegacyModuleContentPP(page,'ppExpensesModule');
@@ -8298,26 +8338,30 @@ function ensureExpensesModulePP(){
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Du</label><input id="ppExpFrom" type="date" onchange="renderExpensesPP()" style="width:100%;padding:9px"></div>
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Au</label><input id="ppExpTo" type="date" onchange="renderExpensesPP()" style="width:100%;padding:9px"></div>
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Catégorie</label><select id="ppExpCategoryFilter" onchange="renderExpensesPP()" style="width:100%;padding:9px"><option value="">Toutes</option>${PP_EXPENSE_CATEGORIES.map(x=>`<option>${x}</option>`).join('')}</select></div>
-        <div><label style="display:block;font-weight:700;margin-bottom:5px">Mode</label><select id="ppExpModeFilter" onchange="renderExpensesPP()" style="width:100%;padding:9px"><option value="">Tous</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Autre</option></select></div>
+        <div><label style="display:block;font-weight:700;margin-bottom:5px">Statut</label><select id="ppExpStatusFilter" onchange="renderExpensesPP()" style="width:100%;padding:9px"><option value="">Tous</option><option value="unpaid">Non payées</option><option value="partial">Partiellement payées</option><option value="paid">Payées</option></select></div>
+        <div><label style="display:block;font-weight:700;margin-bottom:5px">Mode règlement</label><select id="ppExpModeFilter" onchange="renderExpensesPP()" style="width:100%;padding:9px"><option value="">Tous</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Autre</option></select></div>
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Recherche</label><input id="ppExpSearch" placeholder="Bénéficiaire, référence..." oninput="renderExpensesPP()" style="width:100%;padding:9px"></div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:15px">
         <div class="stat-card" style="padding:15px"><div style="color:#667085">Total HT</div><strong id="ppExpHT" style="font-size:22px">0 DH</strong></div>
-        <div class="stat-card" style="padding:15px"><div style="color:#667085">TVA déductible</div><strong id="ppExpVAT" style="font-size:22px">0 DH</strong></div>
         <div class="stat-card" style="padding:15px"><div style="color:#667085">Total TTC</div><strong id="ppExpTotal" style="font-size:22px">0 DH</strong></div>
+        <div class="stat-card" style="padding:15px"><div style="color:#667085">Montant réglé</div><strong id="ppExpPaid" style="font-size:22px;color:#087443">0 DH</strong></div>
+        <div class="stat-card" style="padding:15px"><div style="color:#667085">Reste à payer</div><strong id="ppExpDue" style="font-size:22px;color:#b42318">0 DH</strong></div>
+        <div class="stat-card" style="padding:15px"><div style="color:#667085">TVA déductible réglée</div><strong id="ppExpVAT" style="font-size:22px">0 DH</strong></div>
         <div class="stat-card" style="padding:15px"><div style="color:#667085">Nombre d'opérations</div><strong id="ppExpCount" style="font-size:22px">0</strong></div>
       </div>
-      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:15px;overflow:auto"><h3 style="margin-top:0">Récapitulatif par catégorie</h3><table style="width:100%;min-width:520px"><thead><tr><th>Catégorie</th><th>Nombre</th><th>Montant</th></tr></thead><tbody id="ppExpSummary"></tbody></table></div>
-      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;overflow:auto"><table style="width:100%;min-width:1450px"><thead><tr><th>Date</th><th>Catégorie</th><th>Bénéficiaire</th><th>ICE</th><th>Libellé</th><th>HT</th><th>Taux TVA</th><th>TVA</th><th>TTC</th><th>Mode</th><th>Date règlement</th><th>Référence</th><th>Actions</th></tr></thead><tbody id="ppExpensesTable"></tbody></table></div>`;
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:15px;overflow:auto"><h3 style="margin-top:0">Récapitulatif par catégorie</h3><table style="width:100%;min-width:720px"><thead><tr><th>Catégorie</th><th>Nombre</th><th>Total TTC</th><th>Réglé</th><th>Reste</th></tr></thead><tbody id="ppExpSummary"></tbody></table></div>
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;overflow:auto"><table style="width:100%;min-width:1900px"><thead><tr><th>Date</th><th>Échéance</th><th>Catégorie</th><th>Bénéficiaire</th><th>ICE</th><th>Libellé</th><th>HT</th><th>TVA</th><th>TTC</th><th>Réglé</th><th>Reste</th><th>Statut</th><th>Dernier règlement</th><th>Référence</th><th>Actions</th></tr></thead><tbody id="ppExpensesTable"></tbody></table></div>`;
     page.appendChild(wrap);ensureExpenseModalPP();
 }
 function ensureExpenseModalPP(){
     if(document.getElementById('ppExpenseModal'))return;
     const m=document.createElement('div');m.id='ppExpenseModal';m.className='modal-overlay';
-    m.innerHTML=`<div class="modal"><div class="modal-header"><h2 id="ppExpenseTitle">Nouvelle dépense</h2><button onclick="closeModal('ppExpenseModal')">×</button></div>
+    m.innerHTML=`<div class="modal" style="max-width:1000px"><div class="modal-header"><h2 id="ppExpenseTitle">Nouvelle dépense</h2><button onclick="closeModal('ppExpenseModal')">×</button></div>
     <form id="ppExpenseForm"><input type="hidden" id="ppExpenseId">
       <div class="form-grid">
         <div><label>Date dépense</label><input id="ppExpenseDate" type="date" required></div>
+        <div><label>Date d'échéance</label><input id="ppExpenseDueDate" type="date"></div>
         <div><label>Catégorie</label><select id="ppExpenseCategory" required>${PP_EXPENSE_CATEGORIES.map(x=>`<option>${x}</option>`).join('')}</select></div>
         <div><label>Bénéficiaire / Fournisseur</label><input id="ppExpenseBeneficiary" placeholder="Ex: ONEE, Maroc Telecom, Banque..."></div>
         <div><label>ICE (optionnel)</label><input id="ppExpenseIce"></div>
@@ -8326,13 +8370,40 @@ function ensureExpenseModalPP(){
         <div><label>Montant HT</label><input id="ppExpenseHT" type="number" min="0" step="0.01" oninput="recalcExpenseFromHT_PP()"></div>
         <div><label>Montant TVA</label><input id="ppExpenseVAT" type="number" step="0.01" readonly></div>
         <div><label>Montant TTC</label><input id="ppExpenseTTC" type="number" min="0.01" step="0.01" required oninput="recalcExpenseFromTTC_PP()"></div>
-        <div><label>Mode de paiement</label><select id="ppExpenseMode"><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Autre</option></select></div>
-        <div><label>Date règlement</label><input id="ppExpensePaymentDate" type="date" required></div>
       </div>
       <div><label>Libellé / Observation</label><textarea id="ppExpenseLabel"></textarea></div>
+      <div id="ppExpenseInitialPaymentBox" style="margin-top:14px;padding:14px;border:1px solid #d0d5dd;border-radius:12px;background:#f8fafc">
+        <h3 style="margin:0 0 10px">Règlement initial (optionnel)</h3>
+        <div class="form-grid">
+          <div><label>Montant réglé maintenant</label><input id="ppExpenseInitialAmount" type="number" min="0" step="0.01" placeholder="0.00"></div>
+          <div><label>Date règlement</label><input id="ppExpenseInitialDate" type="date"></div>
+          <div><label>Mode règlement</label><select id="ppExpenseInitialMode"><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Autre</option></select></div>
+          <div><label>Référence règlement</label><input id="ppExpenseInitialReference"></div>
+        </div>
+        <small style="color:#667085">Laissez le montant vide ou à 0 pour enregistrer la dépense comme non payée.</small>
+      </div>
+      <div id="ppExpensePaymentsBox" style="display:none;margin-top:14px;padding:14px;border:1px solid #d0d5dd;border-radius:12px"></div>
       <div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppExpenseModal')">Annuler</button><button class="btn primary">Enregistrer</button></div>
     </form></div>`;
     document.body.appendChild(m);document.getElementById('ppExpenseForm').addEventListener('submit',e=>{e.preventDefault();saveExpensePP();});
+    ensureExpensePaymentModalPP();
+}
+function ensureExpensePaymentModalPP(){
+    if(document.getElementById('ppExpensePaymentModal'))return;
+    const m=document.createElement('div');m.id='ppExpensePaymentModal';m.className='modal-overlay';
+    m.innerHTML=`<div class="modal" style="max-width:680px"><div class="modal-header"><h2>Ajouter un règlement</h2><button onclick="closeModal('ppExpensePaymentModal')">×</button></div>
+      <form id="ppExpensePaymentForm"><input type="hidden" id="ppExpensePaymentExpenseId">
+        <div id="ppExpensePaymentInfo" style="padding:12px;border-radius:10px;background:#f8fafc;margin-bottom:12px"></div>
+        <div class="form-grid">
+          <div><label>Montant payé</label><input id="ppExpensePaymentAmount" type="number" min="0.01" step="0.01" required></div>
+          <div><label>Date règlement</label><input id="ppExpensePaymentDate" type="date" required></div>
+          <div><label>Mode règlement</label><select id="ppExpensePaymentMode"><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Autre</option></select></div>
+          <div><label>Référence règlement</label><input id="ppExpensePaymentReference"></div>
+        </div>
+        <div><label>Note</label><textarea id="ppExpensePaymentNote"></textarea></div>
+        <div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppExpensePaymentModal')">Annuler</button><button class="btn primary">💳 Enregistrer le règlement</button></div>
+      </form></div>`;
+    document.body.appendChild(m);document.getElementById('ppExpensePaymentForm').addEventListener('submit',e=>{e.preventDefault();saveExpensePaymentPP();});
 }
 
 function recalcExpenseFromTTC_PP(){
@@ -8355,50 +8426,94 @@ function openExpensePP(id=null){
     const today=new Date().toISOString().slice(0,10);
     const ttc=Number(e?.totalTTC ?? e?.amount ?? 0),rate=Number(e?.vatRate??0);
     const ht=Number(e?.totalHT ?? (rate>0?ttc/(1+rate/100):ttc)),vat=Number(e?.vatAmount ?? (ttc-ht));
-    setValue('ppExpenseId',e?.id||'');setValue('ppExpenseDate',e?.date||today);setValue('ppExpenseCategory',e?.category||'Loyer');
+    setValue('ppExpenseId',e?.id||'');setValue('ppExpenseDate',e?.date||today);setValue('ppExpenseDueDate',e?.dueDate||e?.date||today);setValue('ppExpenseCategory',e?.category||'Loyer');
     setValue('ppExpenseBeneficiary',e?.beneficiary||'');setValue('ppExpenseIce',e?.ice||'');setValue('ppExpenseReference',e?.reference||'');
     setValue('ppExpenseVatRate',rate);setValue('ppExpenseHT',ht?ht.toFixed(2):'');setValue('ppExpenseVAT',vat?vat.toFixed(2):'0.00');setValue('ppExpenseTTC',ttc?ttc.toFixed(2):'');
-    setValue('ppExpenseMode',e?.mode||'Espèces');setValue('ppExpensePaymentDate',e?.paymentDate||e?.date||today);setValue('ppExpenseLabel',e?.label||'');
+    setValue('ppExpenseLabel',e?.label||'');setValue('ppExpenseInitialAmount','');setValue('ppExpenseInitialDate',today);setValue('ppExpenseInitialMode','Espèces');setValue('ppExpenseInitialReference','');
+    const initialBox=document.getElementById('ppExpenseInitialPaymentBox'),paymentsBox=document.getElementById('ppExpensePaymentsBox');
+    if(initialBox)initialBox.style.display=e?'none':'block';if(paymentsBox)paymentsBox.style.display=e?'block':'none';
+    if(e)renderExpensePaymentsHistoryPP(e);
     setText('ppExpenseTitle',e?'Modifier la dépense':'Nouvelle dépense');openModal('ppExpenseModal');
+}
+
+function renderExpensePaymentsHistoryPP(expense){
+    const box=document.getElementById('ppExpensePaymentsBox');if(!box)return;
+    const totals=ppExpensePaymentTotalsPP(expense),payments=ppExpensePaymentsPP(expense);
+    const body=payments.map(p=>`<tr><td>${p.date?formatDate(p.date):'-'}</td><td><strong>${formatMoney(p.amount)}</strong></td><td>${escapeHTML(p.mode||'-')}</td><td>${escapeHTML(p.reference||'-')}</td><td>${escapeHTML(p.note||'-')}</td><td><button type="button" class="btn small danger" onclick='deleteExpensePaymentPP(${JSON.stringify(expense.id)},${JSON.stringify(String(p.id))})'>🗑️</button></td></tr>`).join('');
+    box.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h3 style="margin:0">Règlements</h3><div style="margin-top:5px">${ppExpenseStatusBadgePP(totals.status)} &nbsp; Réglé : <strong>${formatMoney(totals.paid)}</strong> &nbsp; Reste : <strong>${formatMoney(totals.due)}</strong></div></div>${totals.due>0.005?`<button type="button" class="btn primary" onclick="openExpensePaymentPP(${expense.id})">💳 Ajouter un règlement</button>`:''}</div><div style="overflow:auto;margin-top:10px"><table style="width:100%;min-width:720px"><thead><tr><th>Date</th><th>Montant</th><th>Mode</th><th>Référence</th><th>Note</th><th></th></tr></thead><tbody>${body||'<tr><td colspan="6">Aucun règlement enregistré.</td></tr>'}</tbody></table></div>`;
 }
 
 function saveExpensePP(){
     const id=Number(getValue('ppExpenseId'))||null;
     const totalTTC=Number(getValue('ppExpenseTTC')||0),vatRate=Number(getValue('ppExpenseVatRate')||0);
-    if(!(totalTTC>0))return;
+    if(!(totalTTC>0)){alert('Saisissez un montant TTC supérieur à 0.');return;}
     const totalHT=vatRate>0?totalTTC/(1+vatRate/100):totalTTC,vatAmount=totalTTC-totalHT;
     const old=id?expensesPP.find(x=>Number(x.id)===id):null;
-    const obj={id:id||createId(),date:getValue('ppExpenseDate'),category:getValue('ppExpenseCategory'),beneficiary:getValue('ppExpenseBeneficiary').trim(),ice:getValue('ppExpenseIce').trim(),reference:getValue('ppExpenseReference').trim(),totalHT,vatRate,vatAmount,totalTTC,amount:totalTTC,mode:getValue('ppExpenseMode'),paymentDate:getValue('ppExpensePaymentDate'),label:getValue('ppExpenseLabel').trim(),createdAt:old?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
+    const existingPaid=old?ppExpensePaymentTotalsPP(old).paid:0;
+    if(old&&totalTTC+0.005<existingPaid){alert(`Le total TTC ne peut pas être inférieur au montant déjà réglé (${formatMoney(existingPaid)}).`);return;}
+    let payments=old?ppExpensePaymentsPP(old):[];
+    if(!old){
+        const initialAmount=Number(getValue('ppExpenseInitialAmount')||0),initialDate=getValue('ppExpenseInitialDate');
+        if(initialAmount>totalTTC+0.005){alert('Le règlement initial ne peut pas dépasser le montant TTC.');return;}
+        if(initialAmount>0&&!initialDate){alert('Saisissez la date du règlement initial.');return;}
+        if(initialAmount>0)payments.push({id:createId(),date:initialDate,amount:initialAmount,mode:getValue('ppExpenseInitialMode'),reference:getValue('ppExpenseInitialReference').trim(),note:'Règlement initial',createdAt:new Date().toISOString()});
+    }
+    let obj={id:id||createId(),date:getValue('ppExpenseDate'),dueDate:getValue('ppExpenseDueDate')||getValue('ppExpenseDate'),category:getValue('ppExpenseCategory'),beneficiary:getValue('ppExpenseBeneficiary').trim(),ice:getValue('ppExpenseIce').trim(),reference:getValue('ppExpenseReference').trim(),totalHT,vatRate,vatAmount,totalTTC,amount:totalTTC,payments,label:getValue('ppExpenseLabel').trim(),createdAt:old?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
+    obj=ppRefreshExpenseDerivedPP(obj);
     if(id){const n=expensesPP.findIndex(x=>Number(x.id)===id);if(n>=0)expensesPP[n]=obj;}else expensesPP.unshift(obj);
     saveData();closeModal('ppExpenseModal');renderExpensesPP();renderTVAAchatsPP();renderTVASituationPP();
+}
+function openExpensePaymentPP(expenseId){
+    ensureExpensePaymentModalPP();const expense=expensesPP.find(x=>Number(x.id)===Number(expenseId));if(!expense)return;
+    const totals=ppExpensePaymentTotalsPP(expense);if(totals.due<=0.005){alert('Cette dépense est déjà entièrement payée.');return;}
+    setValue('ppExpensePaymentExpenseId',expense.id);setValue('ppExpensePaymentAmount',totals.due.toFixed(2));setValue('ppExpensePaymentDate',new Date().toISOString().slice(0,10));setValue('ppExpensePaymentMode','Espèces');setValue('ppExpensePaymentReference','');setValue('ppExpensePaymentNote','');
+    const info=document.getElementById('ppExpensePaymentInfo');if(info)info.innerHTML=`<strong>${escapeHTML(expense.beneficiary||expense.category||'Dépense')}</strong><br>Total : ${formatMoney(totals.total)} — Déjà réglé : ${formatMoney(totals.paid)} — <strong>Reste : ${formatMoney(totals.due)}</strong>`;
+    openModal('ppExpensePaymentModal');
+}
+function saveExpensePaymentPP(){
+    const expenseId=Number(getValue('ppExpensePaymentExpenseId')),index=expensesPP.findIndex(x=>Number(x.id)===expenseId);if(index<0)return;
+    const expense=expensesPP[index],totals=ppExpensePaymentTotalsPP(expense),amount=Number(getValue('ppExpensePaymentAmount')||0),date=getValue('ppExpensePaymentDate');
+    if(!(amount>0)){alert('Saisissez un montant de règlement supérieur à 0.');return;}
+    if(amount>totals.due+0.005){alert(`Le règlement ne peut pas dépasser le reste à payer (${formatMoney(totals.due)}).`);return;}
+    if(!date){alert('Saisissez la date du règlement.');return;}
+    const payments=ppExpensePaymentsPP(expense);payments.push({id:createId(),date,amount:Math.min(amount,totals.due),mode:getValue('ppExpensePaymentMode'),reference:getValue('ppExpensePaymentReference').trim(),note:getValue('ppExpensePaymentNote').trim(),createdAt:new Date().toISOString()});
+    expensesPP[index]=ppRefreshExpenseDerivedPP({...expense,payments,updatedAt:new Date().toISOString()});
+    saveData();closeModal('ppExpensePaymentModal');renderExpensesPP();renderExpensePaymentsHistoryPP(expensesPP[index]);renderTVAAchatsPP();renderTVASituationPP();
+}
+function deleteExpensePaymentPP(expenseId,paymentId){
+    if(!confirm('Supprimer ce règlement ? La TVA déductible correspondante sera aussi retirée.'))return;
+    const index=expensesPP.findIndex(x=>Number(x.id)===Number(expenseId));if(index<0)return;
+    const expense=expensesPP[index],payments=ppExpensePaymentsPP(expense).filter(p=>String(p.id)!==String(paymentId));
+    expensesPP[index]=ppRefreshExpenseDerivedPP({...expense,payments,updatedAt:new Date().toISOString()});saveData();renderExpensesPP();renderExpensePaymentsHistoryPP(expensesPP[index]);renderTVAAchatsPP();renderTVASituationPP();
 }
 function deleteExpensePP(id){
     if(!confirm('Supprimer cette dépense ?'))return;
     expensesPP=expensesPP.filter(x=>Number(x.id)!==Number(id));saveData();renderExpensesPP();renderTVAAchatsPP();renderTVASituationPP();
 }
 function filteredExpensesPP(){
-    const from=getValue('ppExpFrom'),to=getValue('ppExpTo'),cat=getValue('ppExpCategoryFilter'),mode=getValue('ppExpModeFilter'),q=normalizeText(getValue('ppExpSearch'));
-    return expensesPP.filter(e=>{const d=String(e.date||'').slice(0,10);if(from&&d<from)return false;if(to&&d>to)return false;if(cat&&e.category!==cat)return false;if(mode&&e.mode!==mode)return false;if(q&&!normalizeText(`${e.beneficiary||''} ${e.reference||''} ${e.label||''} ${e.ice||''}`).includes(q))return false;return true;});
+    const from=getValue('ppExpFrom'),to=getValue('ppExpTo'),cat=getValue('ppExpCategoryFilter'),status=getValue('ppExpStatusFilter'),mode=getValue('ppExpModeFilter'),q=normalizeText(getValue('ppExpSearch'));
+    return expensesPP.filter(e=>{const d=String(e.date||'').slice(0,10),totals=ppExpensePaymentTotalsPP(e),payments=ppExpensePaymentsPP(e);if(from&&d<from)return false;if(to&&d>to)return false;if(cat&&e.category!==cat)return false;if(status&&totals.status!==status)return false;if(mode&&!payments.some(p=>p.mode===mode))return false;if(q&&!normalizeText(`${e.category||''} ${e.beneficiary||''} ${e.reference||''} ${e.label||''} ${e.ice||''} ${payments.map(p=>`${p.reference} ${p.note}`).join(' ')}`).includes(q))return false;return true;});
 }
 function renderExpensesPP(){
     ensureExpensesModulePP();const table=document.getElementById('ppExpensesTable');if(!table)return;
     const rows=filteredExpensesPP().slice().sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
-    const ht=rows.reduce((a,e)=>a+Number(e.totalHT||0),0),vat=rows.reduce((a,e)=>a+Number(e.vatAmount||0),0),ttc=rows.reduce((a,e)=>a+Number(e.totalTTC??e.amount??0),0);
-    setText('ppExpHT',formatMoney(ht));setText('ppExpVAT',formatMoney(vat));setText('ppExpTotal',formatMoney(ttc));setText('ppExpCount',String(rows.length));
+    const ht=rows.reduce((a,e)=>a+Number(e.totalHT||0),0),vat=rows.reduce((a,e)=>a+ppExpensePaidVATPP(e),0),ttc=rows.reduce((a,e)=>a+Number(e.totalTTC??e.amount??0),0),paid=rows.reduce((a,e)=>a+ppExpensePaymentTotalsPP(e).paid,0),due=rows.reduce((a,e)=>a+ppExpensePaymentTotalsPP(e).due,0);
+    setText('ppExpHT',formatMoney(ht));setText('ppExpVAT',formatMoney(vat));setText('ppExpTotal',formatMoney(ttc));setText('ppExpPaid',formatMoney(paid));setText('ppExpDue',formatMoney(due));setText('ppExpCount',String(rows.length));
     const summary=document.getElementById('ppExpSummary');
-    summary.innerHTML=PP_EXPENSE_CATEGORIES.map(cat=>{const rr=rows.filter(e=>e.category===cat);if(!rr.length)return '';return `<tr><td>${escapeHTML(cat)}</td><td>${rr.length}</td><td><strong>${formatMoney(rr.reduce((a,e)=>a+Number(e.totalTTC??e.amount??0),0))}</strong></td></tr>`;}).join('')||'<tr><td colspan="3">Aucune donnée</td></tr>';
-    if(!rows.length){table.innerHTML='<tr><td colspan="13" class="empty">Aucune dépense enregistrée.</td></tr>';return;}
-    table.innerHTML=rows.map(e=>`<tr><td>${formatDate(e.date)}</td><td>${escapeHTML(e.category)}</td><td>${escapeHTML(e.beneficiary||'-')}</td><td>${escapeHTML(e.ice||'-')}</td><td>${escapeHTML(e.label||'-')}</td><td>${formatMoney(e.totalHT||0)}</td><td><strong>${formatNumber(e.vatRate||0)}%</strong></td><td>${formatMoney(e.vatAmount||0)}</td><td><strong>${formatMoney(e.totalTTC??e.amount??0)}</strong></td><td>${escapeHTML(e.mode||'-')}</td><td>${e.paymentDate?formatDate(e.paymentDate):'-'}</td><td>${escapeHTML(e.reference||'-')}</td><td><div class="action-buttons"><button class="btn small edit" onclick="openExpensePP(${e.id})">✏️</button><button class="btn small print" onclick="printSingleExpensePP(${e.id})">🖨️</button><button class="btn small danger" onclick="deleteExpensePP(${e.id})">🗑️</button></div></td></tr>`).join('');
+    summary.innerHTML=PP_EXPENSE_CATEGORIES.map(cat=>{const rr=rows.filter(e=>e.category===cat);if(!rr.length)return '';const catTTC=rr.reduce((a,e)=>a+Number(e.totalTTC??e.amount??0),0),catPaid=rr.reduce((a,e)=>a+ppExpensePaymentTotalsPP(e).paid,0);return `<tr><td>${escapeHTML(cat)}</td><td>${rr.length}</td><td><strong>${formatMoney(catTTC)}</strong></td><td style="color:#087443"><strong>${formatMoney(catPaid)}</strong></td><td style="color:#b42318"><strong>${formatMoney(Math.max(catTTC-catPaid,0))}</strong></td></tr>`;}).join('')||'<tr><td colspan="5">Aucune donnée</td></tr>';
+    if(!rows.length){table.innerHTML='<tr><td colspan="15" class="empty">Aucune dépense enregistrée.</td></tr>';return;}
+    table.innerHTML=rows.map(e=>{const totals=ppExpensePaymentTotalsPP(e),latest=ppExpensePaymentsPP(e).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];return `<tr><td>${formatDate(e.date)}</td><td>${e.dueDate?formatDate(e.dueDate):'-'}</td><td>${escapeHTML(e.category)}</td><td>${escapeHTML(e.beneficiary||'-')}</td><td>${escapeHTML(e.ice||'-')}</td><td>${escapeHTML(e.label||'-')}</td><td>${formatMoney(e.totalHT||0)}</td><td>${formatNumber(e.vatRate||0)}%<br>${formatMoney(e.vatAmount||0)}</td><td><strong>${formatMoney(totals.total)}</strong></td><td style="color:#087443"><strong>${formatMoney(totals.paid)}</strong></td><td style="color:#b42318"><strong>${formatMoney(totals.due)}</strong></td><td>${ppExpenseStatusBadgePP(totals.status)}</td><td>${latest?.date?formatDate(latest.date):'-'}${latest?.mode?`<br><small>${escapeHTML(latest.mode)}</small>`:''}</td><td>${escapeHTML(e.reference||'-')}</td><td><div class="action-buttons">${totals.due>0.005?`<button class="btn small primary" title="Ajouter un règlement" onclick="openExpensePaymentPP(${e.id})">💳</button>`:''}<button class="btn small edit" onclick="openExpensePP(${e.id})">✏️</button><button class="btn small print" onclick="printSingleExpensePP(${e.id})">🖨️</button><button class="btn small danger" onclick="deleteExpensePP(${e.id})">🗑️</button></div></td></tr>`;}).join('');
 }
 function printSingleExpensePP(id){
     const e=expensesPP.find(x=>Number(x.id)===Number(id));if(!e)return;
-    printDocument('Dépense',`<div class="doc-head"><h1>Pause & Plate</h1><p>Pièce de dépense</p></div>${detailRowsHTML([['Date',formatDate(e.date)],['Catégorie',e.category],['Bénéficiaire',e.beneficiary||'-'],['ICE',e.ice||'-'],['Libellé',e.label||'-'],['Montant HT',formatMoney(e.totalHT||0)],['Taux TVA',formatNumber(e.vatRate||0)+'%'],['Montant TVA',formatMoney(e.vatAmount||0)],['Montant TTC',formatMoney(e.totalTTC??e.amount??0)],['Mode',e.mode||'-'],['Date règlement',e.paymentDate?formatDate(e.paymentDate):'-'],['Référence',e.reference||'-']])}`);
+    const totals=ppExpensePaymentTotalsPP(e),payments=ppExpensePaymentsPP(e),paymentRows=payments.map(p=>`<tr><td>${p.date?formatDate(p.date):'-'}</td><td>${formatMoney(p.amount)}</td><td>${escapeHTML(p.mode||'-')}</td><td>${escapeHTML(p.reference||'-')}</td><td>${escapeHTML(p.note||'-')}</td></tr>`).join('');
+    printDocument('Dépense',`<div class="doc-head"><h1>Pause & Plate</h1><p>Pièce de dépense</p></div>${detailRowsHTML([['Date',formatDate(e.date)],['Échéance',e.dueDate?formatDate(e.dueDate):'-'],['Catégorie',e.category],['Bénéficiaire',e.beneficiary||'-'],['ICE',e.ice||'-'],['Libellé',e.label||'-'],['Montant HT',formatMoney(e.totalHT||0)],['Taux TVA',formatNumber(e.vatRate||0)+'%'],['Montant TVA',formatMoney(e.vatAmount||0)],['Montant TTC',formatMoney(totals.total)],['Statut',ppExpenseStatusLabelPP(totals.status)],['Montant réglé',formatMoney(totals.paid)],['Reste à payer',formatMoney(totals.due)],['Référence pièce',e.reference||'-']])}<h3>Historique des règlements</h3><table><thead><tr><th>Date</th><th>Montant</th><th>Mode</th><th>Référence</th><th>Note</th></tr></thead><tbody>${paymentRows||'<tr><td colspan="5">Aucun règlement.</td></tr>'}</tbody></table>`);
 }
 function printExpensesPP(){
     const rows=filteredExpensesPP().slice().sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));
-    const ht=rows.reduce((a,e)=>a+Number(e.totalHT||0),0),vat=rows.reduce((a,e)=>a+Number(e.vatAmount||0),0),ttc=rows.reduce((a,e)=>a+Number(e.totalTTC??e.amount??0),0);
-    const body=rows.map(e=>`<tr><td>${formatDate(e.date)}</td><td>${escapeHTML(e.category)}</td><td>${escapeHTML(e.beneficiary||'-')}</td><td>${formatMoney(e.totalHT||0)}</td><td>${formatNumber(e.vatRate||0)}%</td><td>${formatMoney(e.vatAmount||0)}</td><td>${formatMoney(e.totalTTC??e.amount??0)}</td><td>${escapeHTML(e.mode||'-')}</td></tr>`).join('');
-    printDocument('Dépenses',`<div class="doc-head"><h1>Pause & Plate</h1><p>Situation des dépenses</p></div>${detailRowsHTML([['Total HT',formatMoney(ht)],['TVA',formatMoney(vat)],['Total TTC',formatMoney(ttc)]])}<table><thead><tr><th>Date</th><th>Catégorie</th><th>Bénéficiaire</th><th>HT</th><th>Taux</th><th>TVA</th><th>TTC</th><th>Mode</th></tr></thead><tbody>${body||'<tr><td colspan="8">Aucune dépense</td></tr>'}</tbody></table>`);
+    const ht=rows.reduce((a,e)=>a+Number(e.totalHT||0),0),vat=rows.reduce((a,e)=>a+ppExpensePaidVATPP(e),0),ttc=rows.reduce((a,e)=>a+Number(e.totalTTC??e.amount??0),0),paid=rows.reduce((a,e)=>a+ppExpensePaymentTotalsPP(e).paid,0),due=Math.max(ttc-paid,0);
+    const body=rows.map(e=>{const totals=ppExpensePaymentTotalsPP(e);return `<tr><td>${formatDate(e.date)}</td><td>${escapeHTML(e.category)}</td><td>${escapeHTML(e.beneficiary||'-')}</td><td>${formatMoney(totals.total)}</td><td>${formatMoney(totals.paid)}</td><td>${formatMoney(totals.due)}</td><td>${escapeHTML(ppExpenseStatusLabelPP(totals.status))}</td></tr>`;}).join('');
+    printDocument('Dépenses',`<div class="doc-head"><h1>Pause & Plate</h1><p>Situation des dépenses</p></div>${detailRowsHTML([['Total HT',formatMoney(ht)],['Total TTC',formatMoney(ttc)],['Montant réglé',formatMoney(paid)],['Reste à payer',formatMoney(due)],['TVA déductible réglée',formatMoney(vat)]])}<table><thead><tr><th>Date</th><th>Catégorie</th><th>Bénéficiaire</th><th>TTC</th><th>Réglé</th><th>Reste</th><th>Statut</th></tr></thead><tbody>${body||'<tr><td colspan="7">Aucune dépense</td></tr>'}</tbody></table>`);
 }
 
 
@@ -10333,7 +10448,7 @@ function ppSetDataset(key,items){
         case "clientInvoices": clientInvoicesPP=safe; break;
         case "clientPayments": clientPaymentsPP=safe; break;
         case "sales": salesPP=safe; break;
-        case "expenses": expensesPP=safe; break;
+        case "expenses": expensesPP=safe.map(ppNormalizeExpensePP); break;
         case "recipes": recipesPP=safe; break;
         case "dailySalesScans": dailySalesScansPP=safe; break;
     }
@@ -10702,6 +10817,37 @@ deleteExpensePP = function(id){
             ppWriteAudit('expenses',id,'delete',before,null,before.description||before.category||'Dépense');
         }
     },0);
+    return result;
+};
+
+const ppBaseOpenExpensePaymentPP = openExpensePaymentPP;
+openExpensePaymentPP = function(expenseId){
+    if(!ppCan('expenses','edit')){alert('Accès non autorisé.');return;}
+    return ppBaseOpenExpensePaymentPP(expenseId);
+};
+
+const ppBaseSaveExpensePaymentPP = saveExpensePaymentPP;
+saveExpensePaymentPP = function(){
+    if(!ppCan('expenses','edit')){alert('Accès non autorisé.');return;}
+    const expenseId=Number(document.getElementById('ppExpensePaymentExpenseId')?.value||0);
+    const before=ppAuditSnapshot(expensesPP.find(x=>Number(x.id)===expenseId));
+    const result=ppBaseSaveExpensePaymentPP();
+    const after=expensesPP.find(x=>Number(x.id)===expenseId);
+    if(before&&after&&JSON.stringify(before)!==JSON.stringify(ppAuditSnapshot(after))){
+        ppWriteAudit('expenses',expenseId,'update',before,after,'Ajout règlement dépense');
+    }
+    return result;
+};
+
+const ppBaseDeleteExpensePaymentPP = deleteExpensePaymentPP;
+deleteExpensePaymentPP = function(expenseId,paymentId){
+    if(!ppCan('expenses','edit')){alert('Accès non autorisé.');return;}
+    const before=ppAuditSnapshot(expensesPP.find(x=>Number(x.id)===Number(expenseId)));
+    const result=ppBaseDeleteExpensePaymentPP(expenseId,paymentId);
+    const after=expensesPP.find(x=>Number(x.id)===Number(expenseId));
+    if(before&&after&&JSON.stringify(before)!==JSON.stringify(ppAuditSnapshot(after))){
+        ppWriteAudit('expenses',expenseId,'update',before,after,'Suppression règlement dépense');
+    }
     return result;
 };
 
