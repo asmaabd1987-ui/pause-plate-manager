@@ -161,6 +161,8 @@ movements =
 suppliers =
     suppliers.map(function(supplier){
 
+        const paymentTerm=ppSupplierLegalTermPP(supplier);
+
         return {
 
             id:
@@ -214,6 +216,18 @@ suppliers =
                 Number(
                     supplier.paid ??
                     0
+                ),
+
+            paymentTermType:
+                paymentTerm.type,
+
+            paymentTermDays:
+                paymentTerm.days,
+
+            paymentTermNote:
+                String(
+                    supplier.paymentTermNote ??
+                    ""
                 )
 
         };
@@ -914,17 +928,47 @@ function deleteMovement(id){
    SUPPLIERS
 ========================================================= */
 
+function ppSupplierLegalTermPP(supplier={}){
+    const rawType=String(supplier.paymentTermType||'');
+    if(rawType==='exception'||Number(supplier.paymentTermDays)===180)return {type:'exception',days:180};
+    if(rawType==='agreed'||Number(supplier.paymentTermDays)===120)return {type:'agreed',days:120};
+    return {type:'default',days:60};
+}
+function ppSupplierTermLabelPP(supplier){
+    const term=ppSupplierLegalTermPP(supplier);
+    if(term.type==='exception')return '180 jours — Dérogation sectorielle';
+    if(term.type==='agreed')return '120 jours — Délai convenu';
+    return '60 jours — Délai légal';
+}
+function ppNormalizeSupplierPaymentTermPP(supplier={}){
+    const term=ppSupplierLegalTermPP(supplier);
+    return {...supplier,paymentTermType:term.type,paymentTermDays:term.days,paymentTermNote:String(supplier.paymentTermNote||'')};
+}
+function ppEnsureSupplierPaymentTermFieldsPP(){
+    if(document.getElementById('supplierPaymentTermType'))return;
+    const form=document.getElementById('supplierForm'),actions=form?.querySelector('.modal-actions');if(!form||!actions)return;
+    const box=document.createElement('div');box.id='ppSupplierPaymentTermBox';box.style.cssText='margin:14px 0;padding:14px;border:1px solid #d0d5dd;border-radius:12px;background:#f8fafc';
+    box.innerHTML=`<h3 style="margin:0 0 10px">Délai de paiement fournisseur</h3><label>Délai applicable *</label><select id="supplierPaymentTermType" onchange="ppUpdateSupplierPaymentTermHelpPP()" style="width:100%;padding:10px"><option value="default">60 jours — délai légal sans accord</option><option value="agreed">120 jours — délai convenu avec le fournisseur</option><option value="exception">180 jours — dérogation sectorielle uniquement</option></select><div id="supplierPaymentTermHelp" style="margin:8px 0;color:#667085;font-size:12px;line-height:1.5"></div><label>Référence accord / dérogation</label><textarea id="supplierPaymentTermNote" rows="2" placeholder="Ex: accord contractuel, secteur et référence de la dérogation..."></textarea>`;
+    form.insertBefore(box,actions);
+}
+function ppUpdateSupplierPaymentTermHelpPP(){
+    const type=getValue('supplierPaymentTermType')||'default',help=document.getElementById('supplierPaymentTermHelp');if(!help)return;
+    help.innerHTML=type==='exception'?'<strong style="color:#b42318">180 jours :</strong> à utiliser uniquement si le secteur bénéficie réellement d’une dérogation autorisée.':type==='agreed'?'<strong style="color:#896400">120 jours :</strong> accord entre les parties obligatoire.':'<strong style="color:#177348">60 jours :</strong> délai légal appliqué automatiquement en l’absence d’accord.';
+}
+
 function openSupplierModal(id = null){
-    editingSupplierId=id?Number(id):null; const form=document.getElementById("supplierForm"); if(form)form.reset(); const title=document.querySelector("#supplierModal .modal-header h2");
-    if(editingSupplierId){ const x=suppliers.find(s=>Number(s.id)===editingSupplierId); if(!x)return; if(title)title.textContent="Modifier un fournisseur"; setValue("supplierName",x.name);setValue("supplierPhone",x.phone);setValue("supplierEmail",x.email);setValue("supplierIce",x.ice);setValue("supplierIf",x.if);setValue("supplierAddress",x.address);setValue("supplierPurchases",x.purchases);setValue("supplierPaid",x.paid); }
-    else {if(title)title.textContent="Ajouter un fournisseur";setValue("supplierPurchases",0);setValue("supplierPaid",0);} openModal("supplierModal");
+    ppEnsureSupplierPaymentTermFieldsPP();editingSupplierId=id?Number(id):null; const form=document.getElementById("supplierForm"); if(form)form.reset(); const title=document.querySelector("#supplierModal .modal-header h2");
+    if(editingSupplierId){ const x=suppliers.find(s=>Number(s.id)===editingSupplierId); if(!x)return;const term=ppSupplierLegalTermPP(x); if(title)title.textContent="Modifier un fournisseur"; setValue("supplierName",x.name);setValue("supplierPhone",x.phone);setValue("supplierEmail",x.email);setValue("supplierIce",x.ice);setValue("supplierIf",x.if);setValue("supplierAddress",x.address);setValue("supplierPurchases",x.purchases);setValue("supplierPaid",x.paid);setValue('supplierPaymentTermType',term.type);setValue('supplierPaymentTermNote',x.paymentTermNote||''); }
+    else {if(title)title.textContent="Ajouter un fournisseur";setValue("supplierPurchases",0);setValue("supplierPaid",0);setValue('supplierPaymentTermType','default');setValue('supplierPaymentTermNote','');}ppUpdateSupplierPaymentTermHelpPP(); openModal("supplierModal");
 }
 
 
 function addSupplier(){
     const name=getValue("supplierName").trim(); if(!name){alert("Veuillez saisir le nom du fournisseur.");return;}
-    const data={name,phone:getValue("supplierPhone").trim(),email:getValue("supplierEmail").trim(),ice:getValue("supplierIce").trim(),if:getValue("supplierIf").trim(),address:getValue("supplierAddress").trim(),purchases:parseNumber(getValue("supplierPurchases")),paid:parseNumber(getValue("supplierPaid"))};
-    if(editingSupplierId){const x=suppliers.find(s=>Number(s.id)===editingSupplierId);if(!x)return;Object.assign(x,data);invoices.forEach(inv=>{if(Number(inv.supplierId)===editingSupplierId)inv.supplierName=name;});}
+    const paymentTermType=getValue('supplierPaymentTermType')||'default',paymentTerm=ppSupplierLegalTermPP({paymentTermType}),paymentTermNote=getValue('supplierPaymentTermNote').trim();
+    if(paymentTermType==='exception'&&!paymentTermNote){alert('Pour un délai de 180 jours, indiquez le secteur ou la référence de la dérogation.');return;}
+    const data={name,phone:getValue("supplierPhone").trim(),email:getValue("supplierEmail").trim(),ice:getValue("supplierIce").trim(),if:getValue("supplierIf").trim(),address:getValue("supplierAddress").trim(),purchases:parseNumber(getValue("supplierPurchases")),paid:parseNumber(getValue("supplierPaid")),paymentTermType:paymentTerm.type,paymentTermDays:paymentTerm.days,paymentTermNote,paymentTermUpdatedAt:new Date().toISOString()};
+    if(editingSupplierId){const x=suppliers.find(s=>Number(s.id)===editingSupplierId);if(!x)return;Object.assign(x,data);invoices.forEach(inv=>{if(Number(inv.supplierId)!==editingSupplierId)return;inv.supplierName=name;if(Number(inv.due||0)>0.005){inv.paymentTermType=paymentTerm.type;inv.paymentTermDays=paymentTerm.days;inv.paymentTermSource='supplier';inv.paymentTermNote=paymentTermNote;inv.dueDate=ppAddCalendarDaysPP(inv.date,paymentTerm.days);}});}
     else suppliers.push({id:createId(),...data});
     editingSupplierId=null;saveData();closeModal("supplierModal");renderAll();
 }
@@ -1038,23 +1082,30 @@ function ppInvoiceTermLabelPP(invoice){
     if(term.type==='agreed')return `Délai convenu — ${term.days} jours`;
     return `Dérogation sectorielle — ${term.days} jours`;
 }
+function ppApplySupplierTermToInvoicePP(){
+    const supplierId=Number(getValue('invoiceSupplier')),supplier=suppliers.find(s=>Number(s.id)===supplierId);
+    const term=supplier?ppSupplierLegalTermPP(supplier):{type:'default',days:60};
+    setValue('invoicePaymentTermType',term.type);setValue('invoicePaymentTermDays',term.days);ppUpdateInvoiceLegalDeadlinePP(false);
+    const note=document.getElementById('invoicePaymentTermNote');if(note&&supplier)note.innerHTML+=`<br><strong>Hérité de la fiche fournisseur : ${escapeHTML(supplier.name)}</strong>`;
+}
 function ppEnsureInvoicePaymentDeadlineFieldsPP(){
     if(document.getElementById('invoicePaymentTermType'))return;
     const grid=document.querySelector('#invoiceForm .form-grid');if(!grid)return;
-    const typeBox=document.createElement('div');typeBox.innerHTML=`<label>Base du délai de paiement</label><select id="invoicePaymentTermType" onchange="ppUpdateInvoiceLegalDeadlinePP(true)"><option value="default">Sans accord — délai légal 60 jours</option><option value="agreed">Délai convenu — maximum 120 jours</option><option value="exception">Dérogation sectorielle — maximum 180 jours</option><option value="cash">Paiement comptant</option></select>`;
+    const typeBox=document.createElement('div');typeBox.innerHTML=`<label>Base du délai (fiche fournisseur)</label><select id="invoicePaymentTermType" disabled><option value="default">60 jours — délai légal</option><option value="agreed">120 jours — délai convenu</option><option value="exception">180 jours — dérogation sectorielle</option></select>`;
     const daysBox=document.createElement('div');daysBox.innerHTML=`<label>Nombre de jours</label><input id="invoicePaymentTermDays" type="number" min="0" max="180" step="1" value="60" oninput="ppUpdateInvoiceLegalDeadlinePP(false)"><small id="invoicePaymentTermNote" style="display:block;color:#667085;margin-top:4px"></small>`;
     const dueBox=document.createElement('div');dueBox.innerHTML=`<label>Échéance légale calculée</label><input id="invoiceLegalDueDate" type="date" readonly>`;
     grid.append(typeBox,daysBox,dueBox);
     document.getElementById('invoiceDate')?.addEventListener('change',()=>ppUpdateInvoiceLegalDeadlinePP(false));
+    document.getElementById('invoiceSupplier')?.addEventListener('change',ppApplySupplierTermToInvoicePP);
 }
 function ppUpdateInvoiceLegalDeadlinePP(resetDays=false){
     const type=getValue('invoicePaymentTermType')||'default',input=document.getElementById('invoicePaymentTermDays');if(!input)return;
     let days=Math.max(Math.round(Number(input.value||0)),0),note='';
-    input.readOnly=false;
-    if(type==='cash'){days=0;input.readOnly=true;note='Paiement exigible à la date de facture.';}
-    else if(type==='default'){days=60;input.readOnly=true;note='Loi 69-21 : 60 jours lorsqu’aucun délai n’est convenu.';}
-    else if(type==='agreed'){if(resetDays||days<1||days>120)days=90;input.max='120';note='Accord entre les parties obligatoire — maximum 120 jours.';}
-    else {if(resetDays||days<1||days>180)days=180;input.max='180';note='Uniquement avec dérogation sectorielle autorisée — maximum 180 jours.';}
+    input.readOnly=true;
+    if(type==='cash'){days=0;note='Paiement exigible à la date de facture.';}
+    else if(type==='default'){days=60;note='Loi 69-21 : 60 jours lorsqu’aucun délai n’est convenu.';}
+    else if(type==='agreed'){days=120;note='Délai hérité de la fiche fournisseur — accord entre les parties obligatoire.';}
+    else {days=180;note='Délai hérité de la fiche fournisseur — dérogation sectorielle autorisée obligatoire.';}
     input.value=String(days);setValue('invoiceLegalDueDate',ppAddCalendarDaysPP(getValue('invoiceDate'),days));setText('invoicePaymentTermNote',note);
 }
 function ppInvoiceTermFromFormPP(){
@@ -1694,7 +1745,7 @@ function saveInvoice(){
     if(!lines.length){alert("Ajoutez au moins un produit.");return;}
     const totalHT=lines.reduce((a,l)=>a+l.totalHT,0),totalTVA=lines.reduce((a,l)=>a+l.vatAmount,0),totalTTC=totalHT+totalTVA,paid=parseNumber(getValue("invoicePaid"));
     if(editingInvoiceId){ const old=invoices.find(x=>Number(x.id)===editingInvoiceId); if(old) reverseInvoiceEffects(old); }
-    const invoice={id:editingInvoiceId||createId(),number,date:getValue("invoiceDate"),supplierId:supplier.id,supplierName:supplier.name,lines,totalHT,tva:totalTVA,totalTTC,paid,due:Math.max(totalTTC-paid,0),paymentTermType:paymentTerm.type,paymentTermDays:paymentTerm.days,dueDate:paymentTerm.dueDate,createdAt:editingInvoiceId?(invoices.find(x=>Number(x.id)===editingInvoiceId)?.createdAt||new Date().toISOString()):new Date().toISOString(),updatedAt:new Date().toISOString()};
+    const invoice={id:editingInvoiceId||createId(),number,date:getValue("invoiceDate"),supplierId:supplier.id,supplierName:supplier.name,lines,totalHT,tva:totalTVA,totalTTC,paid,due:Math.max(totalTTC-paid,0),paymentTermType:paymentTerm.type,paymentTermDays:paymentTerm.days,paymentTermSource:'supplier',paymentTermNote:supplier.paymentTermNote||'',dueDate:paymentTerm.dueDate,createdAt:editingInvoiceId?(invoices.find(x=>Number(x.id)===editingInvoiceId)?.createdAt||new Date().toISOString()):new Date().toISOString(),updatedAt:new Date().toISOString()};
     if(editingInvoiceId){const i=invoices.findIndex(x=>Number(x.id)===editingInvoiceId);invoices[i]=invoice;} else invoices.unshift(invoice);
     applyInvoiceEffects(invoice); editingInvoiceId=null;saveData();closeModal("invoiceModal");renderAll();alert("Facture enregistrée avec succès.");
 }
@@ -6970,7 +7021,7 @@ function renderSuppliers(){
         const paid=Math.max(Number(s.paid||0),invs.reduce((a,i)=>a+Number(i.paid||0),0));
         const due=Math.max(purchases-paid,0); let cls='success',txt='Soldé';
         if(due>0&&paid>0){cls='warning';txt='Partiellement payé';}else if(due>0){cls='danger';txt='Non payé';}
-        return `<tr><td><strong>${escapeHTML(s.name)}</strong></td><td>${escapeHTML(s.phone||'-')}</td><td>${escapeHTML(s.ice||'-')}</td><td>${formatMoney(purchases)}</td><td>${formatMoney(paid)}</td><td>${formatMoney(due)}</td><td><span class="status ${cls}">${txt}</span></td><td><div class="action-buttons"><button class="btn small view" onclick="viewSupplierSituationPP(${s.id})" title="Situation & Grand Livre">📊</button><button class="btn small" onclick="openSupplierPaymentPP(${s.id})" title="Règlement">💰</button><button class="btn small edit" onclick="openSupplierModal(${s.id})">✏️</button><button class="btn small print" onclick="printSupplierSituationPP(${s.id})">🖨️</button><button class="btn small danger" onclick="deleteSupplier(${s.id})">🗑️</button></div></td></tr>`;
+        return `<tr><td><strong>${escapeHTML(s.name)}</strong><div style="font-size:10px;color:#667085;margin-top:3px">⏳ ${escapeHTML(ppSupplierTermLabelPP(s))}</div></td><td>${escapeHTML(s.phone||'-')}</td><td>${escapeHTML(s.ice||'-')}</td><td>${formatMoney(purchases)}</td><td>${formatMoney(paid)}</td><td>${formatMoney(due)}</td><td><span class="status ${cls}">${txt}</span></td><td><div class="action-buttons"><button class="btn small view" onclick="viewSupplierSituationPP(${s.id})" title="Situation & Grand Livre">📊</button><button class="btn small" onclick="openSupplierPaymentPP(${s.id})" title="Règlement">💰</button><button class="btn small edit" onclick="openSupplierModal(${s.id})">✏️</button><button class="btn small print" onclick="printSupplierSituationPP(${s.id})">🖨️</button><button class="btn small danger" onclick="deleteSupplier(${s.id})">🗑️</button></div></td></tr>`;
     }).join('');
 }
 
@@ -6999,13 +7050,13 @@ function viewSupplierSituationPP(id){
     const s=suppliers.find(x=>Number(x.id)===Number(id));if(!s)return;
     const invs=supplierInvoicesPP(id);const purchases=invs.reduce((a,i)=>a+Number(i.totalTTC||0),0);const paid=Number(s.paid||0);const due=Math.max(purchases-paid,0);const advance=Math.max(paid-purchases,0);const ledger=supplierLedgerPP(id);
     const ledgerHtml=`<div style="overflow:auto;max-height:380px"><table style="width:100%;border-collapse:collapse"><thead><tr><th>Date</th><th>Pièce</th><th>Libellé</th><th>Débit</th><th>Crédit</th><th>Solde</th></tr></thead><tbody>${ledger.map(e=>`<tr><td>${e.date==='1900-01-01'?'-':formatDate(e.date)}</td><td>${escapeHTML(e.piece||'')}</td><td>${escapeHTML(e.label)}</td><td>${e.debit?formatMoney(e.debit):'-'}</td><td>${e.credit?formatMoney(e.credit):'-'}</td><td><strong>${formatMoney(e.balance)}</strong></td></tr>`).join('')||'<tr><td colspan="6">Aucune opération</td></tr>'}</tbody></table></div><div style="margin-top:12px"><button class="btn primary" onclick="closeModal('detailsModal');openSupplierPaymentPP(${s.id})">💰 Nouveau règlement</button></div>`;
-    showDetailsModal('Situation fournisseur - '+s.name,[["Total achats",formatMoney(purchases)],["Total réglé",formatMoney(paid)],["Reste à payer",formatMoney(due)],["Avance",formatMoney(advance)],["Nombre de factures",String(invs.length)],["Grand Livre",ledgerHtml]],()=>printSupplierSituationPP(id),true);
+    showDetailsModal('Situation fournisseur - '+s.name,[["Délai de paiement",ppSupplierTermLabelPP(s)],["Référence accord / dérogation",s.paymentTermNote||'-'],["Total achats",formatMoney(purchases)],["Total réglé",formatMoney(paid)],["Reste à payer",formatMoney(due)],["Avance",formatMoney(advance)],["Nombre de factures",String(invs.length)],["Grand Livre",ledgerHtml]],()=>printSupplierSituationPP(id),true);
 }
 
 function printSupplierSituationPP(id){
     const s=suppliers.find(x=>Number(x.id)===Number(id));if(!s)return;const invs=supplierInvoicesPP(id);const purchases=invs.reduce((a,i)=>a+Number(i.totalTTC||0),0);const paid=Number(s.paid||0),due=Math.max(purchases-paid,0),ledger=supplierLedgerPP(id);
     const rows=ledger.map(e=>`<tr><td>${e.date==='1900-01-01'?'-':formatDate(e.date)}</td><td>${escapeHTML(e.piece||'')}</td><td>${escapeHTML(e.label)}</td><td>${e.debit?formatMoney(e.debit):'-'}</td><td>${e.credit?formatMoney(e.credit):'-'}</td><td>${formatMoney(e.balance)}</td></tr>`).join('');
-    printDocument('Situation fournisseur - '+s.name,`<div class="doc-head"><h1>Pause & Plate</h1><p>Situation fournisseur & Grand Livre</p></div><h2>${escapeHTML(s.name)}</h2>${detailRowsHTML([["Téléphone",s.phone||'-'],["ICE",s.ice||'-'],["Total achats",formatMoney(purchases)],["Total réglé",formatMoney(paid)],["Reste à payer",formatMoney(due)]])}<h2>Grand Livre</h2><table><thead><tr><th>Date</th><th>Pièce</th><th>Libellé</th><th>Débit</th><th>Crédit</th><th>Solde</th></tr></thead><tbody>${rows||'<tr><td colspan="6">Aucune opération</td></tr>'}</tbody></table>`);
+    printDocument('Situation fournisseur - '+s.name,`<div class="doc-head"><h1>Pause & Plate</h1><p>Situation fournisseur & Grand Livre</p></div><h2>${escapeHTML(s.name)}</h2>${detailRowsHTML([["Téléphone",s.phone||'-'],["ICE",s.ice||'-'],["Délai de paiement",ppSupplierTermLabelPP(s)],["Référence accord / dérogation",s.paymentTermNote||'-'],["Total achats",formatMoney(purchases)],["Total réglé",formatMoney(paid)],["Reste à payer",formatMoney(due)]])}<h2>Grand Livre</h2><table><thead><tr><th>Date</th><th>Pièce</th><th>Libellé</th><th>Débit</th><th>Crédit</th><th>Solde</th></tr></thead><tbody>${rows||'<tr><td colspan="6">Aucune opération</td></tr>'}</tbody></table>`);
 }
 
 function viewSupplier(id){viewSupplierSituationPP(id);}
@@ -8096,7 +8147,7 @@ function renderPaymentDeadlinesPP(){
     const overdue=rows.filter(r=>r.info.code==='overdue'),soon=rows.filter(r=>r.info.code==='due_soon'),compliant=rows.filter(r=>r.info.code==='compliant'),paidLate=rows.filter(r=>r.info.code==='paid_late');
     document.getElementById('ppDeadlineCards').innerHTML=[['Factures en retard',String(overdue.length),'#b42318'],['Montant en retard',formatMoney(overdue.reduce((s,r)=>s+r.info.remaining,0)),'#b42318'],['Échéance ≤ 7 jours',String(soon.length),'#896400'],['Payées conformes',String(compliant.length),'#177348'],['Payées en retard',String(paidLate.length),'#7a2d8d']].map(([label,value,color])=>`<div class="stat-card" style="padding:15px"><div style="color:#667085">${label}</div><strong style="display:block;font-size:22px;color:${color};margin-top:5px">${value}</strong></div>`).join('');
     if(!rows.length){table.innerHTML='<tr><td colspan="10" class="empty">Aucune facture pour les filtres sélectionnés.</td></tr>';return;}
-    table.innerHTML=rows.map(({inv,info})=>`<tr><td>${formatDate(inv.date)}</td><td><strong>${escapeHTML(inv.number||'-')}</strong></td><td>${escapeHTML(inv.supplierName||'-')}</td><td>${escapeHTML(ppInvoiceTermLabelPP(inv))}</td><td><strong>${info.dueDate?formatDate(info.dueDate):'-'}</strong></td><td>${formatMoney(info.total)}</td><td style="color:#177348">${formatMoney(info.paid)}</td><td style="color:#b42318"><strong>${formatMoney(info.remaining)}</strong></td><td>${ppPaymentDeadlineStatusBadgePP(info)}</td><td><button class="btn small view" onclick="viewInvoice(${inv.id})">👁️ Voir facture</button></td></tr>`).join('');
+    table.innerHTML=rows.map(({inv,info})=>`<tr><td>${formatDate(inv.date)}</td><td><strong>${escapeHTML(inv.number||'-')}</strong></td><td>${escapeHTML(inv.supplierName||'-')}</td><td>${escapeHTML(ppInvoiceTermLabelPP(inv))}<div style="font-size:10px;color:#667085;margin-top:3px">🔗 Fiche fournisseur</div></td><td><strong>${info.dueDate?formatDate(info.dueDate):'-'}</strong></td><td>${formatMoney(info.total)}</td><td style="color:#177348">${formatMoney(info.paid)}</td><td style="color:#b42318"><strong>${formatMoney(info.remaining)}</strong></td><td>${ppPaymentDeadlineStatusBadgePP(info)}</td><td><button class="btn small view" onclick="viewInvoice(${inv.id})">👁️ Voir facture</button></td></tr>`).join('');
 }
 function resetPaymentDeadlineFiltersPP(){setValue('ppDeadlineSupplier','');setValue('ppDeadlineStatus','');setValue('ppDeadlineSearch','');renderPaymentDeadlinesPP();}
 function printPaymentDeadlinesPP(){
@@ -10592,7 +10643,7 @@ function ppSetDataset(key,items){
     switch(key){
         case "products": products=safe; break;
         case "movements": movements=safe; break;
-        case "suppliers": suppliers=safe; break;
+        case "suppliers": suppliers=safe.map(ppNormalizeSupplierPaymentTermPP); break;
         case "invoices": invoices=safe.map(ppNormalizeInvoiceDeadlinePP); break;
         case "supplierPayments": supplierPaymentsPP=safe; break;
         case "clients": clientsPP=safe; break;
