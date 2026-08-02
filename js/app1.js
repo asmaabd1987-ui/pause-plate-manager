@@ -8406,80 +8406,6 @@ function printExpensesPP(){
    FICHES TECHNIQUES — RECETTES & COÛT MATIÈRE
 ========================================================= */
 const PP_RECIPE_CATEGORIES=['Entrée','Plat','Pizza','Sushi','Tacos','Burger','Sandwich','Salade','Dessert','Boisson','Petit-déjeuner','Autre'];
-const PP_FICHES_IMPORT_VERSION='pause-plate-ft-179-v1';
-
-function ppImportedProductCategory(name){
-    const n=normalizeText(name);
-    if(/poisson|saumon|thon|crevette|calamar|moule|surimi|saint pierre|anchois|fruits de mer/.test(n))return 'Poissons';
-    if(/poulet|dinde|boeuf|viande|merguez|jambon|charcuterie|nugget/.test(n))return 'Viandes';
-    if(/lait|creme|fromage|mozzarella|beurre|yaourt|ricotta|cheddar|parmesan|oeuf/.test(n))return 'Produits laitiers';
-    if(/tomate|oignon|ail|poivron|citron|avocat|concombre|salade|roquette|champignon|carotte|pomme|banane|fraise|mangue|ananas|menthe|persil|legume|fruit/.test(n))return 'Fruits & Légumes';
-    if(/eau|jus|soda|sirop|cafe|the|boisson|lait/.test(n))return 'Boissons';
-    return 'Épicerie';
-}
-
-function ppImportedBaseUnit(sourceUnit){
-    const u=normalizeText(sourceUnit);
-    if(u==='g')return 'kg';
-    if(u==='ml'||u==='cl'||u==='l')return 'L';
-    return 'pièce';
-}
-
-function ppImportedQuantity(quantity,sourceUnit,targetUnit){
-    const q=Number(quantity||0),src=normalizeText(sourceUnit),dst=normalizeText(targetUnit);
-    if(src==='g'&&dst==='kg')return q/1000;
-    if(src==='ml'&&dst==='l')return q/1000;
-    if(src==='cl'&&dst==='l')return q/100;
-    if(src==='l'&&dst==='l')return q;
-    return q;
-}
-
-function ppFindImportedProduct(name){
-    const exact=products.find(p=>normalizeText(p.name)===normalizeText(name));
-    if(exact)return exact;
-    const wanted=normalizeText(name).replace(/\b(cuit|cuite|frais|fraiche|fin|noir)\b/g,'').replace(/\s+/g,' ').trim();
-    return products.find(p=>normalizeText(p.name).replace(/\b(cuit|cuite|frais|fraiche|fin|noir)\b/g,'').replace(/\s+/g,' ').trim()===wanted)||null;
-}
-
-function ppGetOrCreateImportedProduct(item){
-    let product=ppFindImportedProduct(item.name);
-    if(product)return product;
-    product={
-        id:createId(),name:item.name,category:ppImportedProductCategory(item.name),
-        unit:ppImportedBaseUnit(item.unit),stock:0,minStock:0,price:0,
-        lastPurchaseTVA:0,lastPurchaseTVAKnown:false,
-        importedFrom:'Pause_Plate_Fiches_Techniques_179_pages',createdAt:new Date().toISOString()
-    };
-    products.push(product);
-    return product;
-}
-
-function importFichesTechniquesPP(forceUpdate=false,showMessage=false){
-    const source=Array.isArray(window.PP_FICHES_TECHNIQUES_DATA)?window.PP_FICHES_TECHNIQUES_DATA:[];
-    if(!source.length){if(showMessage)alert("Le fichier des fiches techniques n'a pas été chargé.");return {added:0,updated:0,products:0};}
-    let added=0,updated=0;
-    const productCountBefore=products.length;
-    source.forEach(raw=>{
-        const ingredients=(raw.ingredients||[]).map(item=>{
-            const product=ppGetOrCreateImportedProduct(item);
-            return {productId:product.id,quantity:ppImportedQuantity(item.quantity,item.unit,product.unit),unit:product.unit,unitPrice:Number(product.price||0),sourceQuantity:Number(item.quantity||0),sourceUnit:item.unit};
-        });
-        let existing=recipesPP.find(r=>String(r.sourceCode||'')===String(raw.code||''));
-        if(!existing)existing=recipesPP.find(r=>normalizeText(r.name)===normalizeText(raw.name));
-        const payload={name:raw.name,category:raw.category||'Autre',salePrice:Number(raw.salePrice||0),portions:Number(raw.portions||1),notes:raw.notes||'',ingredients,sourceCode:raw.code,sourcePage:raw.sourcePage,sourceVersion:PP_FICHES_IMPORT_VERSION,updatedAt:new Date().toISOString()};
-        if(existing){
-            if(forceUpdate||existing.sourceVersion!==PP_FICHES_IMPORT_VERSION){Object.assign(existing,payload);updated++;}
-            else if(!existing.sourceCode){existing.sourceCode=raw.code;existing.sourcePage=raw.sourcePage;existing.sourceVersion=PP_FICHES_IMPORT_VERSION;updated++;}
-        }else{
-            recipesPP.push({id:createId(),...payload,createdAt:new Date().toISOString()});added++;
-        }
-    });
-    const createdProducts=products.length-productCountBefore;
-    if(added||updated||createdProducts){saveData();}
-    if(document.getElementById('ppRecipesTable'))renderRecipesPP();
-    if(showMessage)alert(`Import terminé.\n\n${source.length} fiches analysées\n${added} nouvelle(s) fiche(s)\n${updated} fiche(s) mise(s) à jour\n${createdProducts} article(s) de stock créé(s) automatiquement`);
-    return {added,updated,products:createdProducts};
-}
 
 function ensureRecipesModulePP(){
     const page=document.getElementById('recipesPage');if(!page)return;
@@ -8490,7 +8416,7 @@ function ensureRecipesModulePP(){
     wrap.innerHTML=`
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
         <div><h2 style="margin:0 0 4px">🍽️ Fiches Techniques</h2><p style="margin:0;color:#667085">Recettes, grammages, coût matière et marge.</p></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="importFichesTechniquesPP(true,true)">🔄 Importer / mettre à jour les 179 fiches</button><button class="btn primary" onclick="openRecipePP()">➕ Nouvelle fiche technique</button></div>
+        <button class="btn primary" onclick="openRecipePP()">➕ Nouvelle fiche technique</button>
       </div>
       <div style="display:grid;grid-template-columns:minmax(220px,1fr) minmax(180px,280px);gap:10px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:15px">
         <input id="ppRecipeSearch" placeholder="🔎 Rechercher une fiche..." oninput="renderRecipesPP()" style="padding:10px">
@@ -10460,7 +10386,6 @@ async function ppBootstrapCloud(user){
         await ppLoadAllCloud();
     }
     ppCloudReady=true;
-    importFichesTechniquesPP(false,false);
     ppAddCloudHeader();
     const userText=document.getElementById("ppCloudUser");
     if(userText)userText.textContent=(ppCurrentUserProfile?.name||ppCurrentUserProfile?.username||"Utilisateur")+" — "+ppCurrentRole;
@@ -10474,7 +10399,7 @@ async function ppBootstrapCloud(user){
 function ppInitFirebase(){
     if(!ppFirebaseAvailable()){
         alert("Firebase n'a pas pu être chargé. Vérifiez la connexion Internet.");
-        importFichesTechniquesPP(false,false);ensurePPExtraUI();renderAll();return;
+        ensurePPExtraUI();renderAll();return;
     }
     ppFirebaseApp=firebase.apps.length?firebase.app():firebase.initializeApp(PP_FIREBASE_CONFIG);
     ppAuth=firebase.auth();
