@@ -9,6 +9,10 @@ let ppReportCustomFromPP = "";
 let ppReportCustomToPP = "";
 let ppReportArticleFilterPP = "";
 let ppReportSupplierFilterPP = "";
+let ppExpenseReportCategoryPP = "";
+let ppExpenseReportStatusPP = "";
+let ppExpenseReportModePP = "";
+let ppExpenseReportSearchPP = "";
 
 function ppReportNormPP(value){
     return String(value??"")
@@ -195,6 +199,40 @@ function ppReportExpenseHTPP(expense){
     const ttc = ppReportExpenseTTCPP(expense);
     const rate = Number(expense?.vatRate||0);
     return rate>0 ? ttc/(1+rate/100) : ttc;
+}
+
+function ppReportExpensePaymentsPP(expense){
+    if(typeof ppExpensePaymentsPP==="function")return ppExpensePaymentsPP(expense);
+    if(Array.isArray(expense?.payments)){
+        return expense.payments.map((p,index)=>({
+            id:p.id??`expense-payment-${expense?.id??"old"}-${index+1}`,
+            date:ppReportDateFromAnyPP(p.date),
+            amount:Math.max(Number(p.amount||0),0),
+            mode:String(p.mode||"Autre"),
+            reference:String(p.reference||""),
+            note:String(p.note||"")
+        })).filter(p=>p.amount>0).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    }
+    const total=ppReportExpenseTTCPP(expense);
+    return total>0&&expense?.paymentDate?[{id:`legacy-${expense.id??"old"}`,date:ppReportDateFromAnyPP(expense.paymentDate||expense.date),amount:total,mode:String(expense.mode||"Autre"),reference:String(expense.reference||""),note:""}]:[];
+}
+
+function ppReportExpensePaymentTotalsPP(expense){
+    if(typeof ppExpensePaymentTotalsPP==="function")return ppExpensePaymentTotalsPP(expense);
+    const total=Math.max(ppReportExpenseTTCPP(expense),0);
+    const paid=Math.min(ppReportExpensePaymentsPP(expense).reduce((sum,p)=>sum+Number(p.amount||0),0),total);
+    const due=Math.max(total-paid,0);
+    return {total,paid,due,status:paid<=0.005?"unpaid":due<=0.005?"paid":"partial"};
+}
+
+function ppReportExpenseStatusLabelPP(status){
+    return status==="paid"?"Payée":status==="partial"?"Partiellement payée":"Non payée";
+}
+
+function ppReportExpensePaidVATPP(expense){
+    const totals=ppReportExpensePaymentTotalsPP(expense);
+    const vat=Math.max(Number(expense?.vatAmount??(ppReportExpenseTTCPP(expense)-ppReportExpenseHTPP(expense))??0),0);
+    return totals.total>0?vat*(totals.paid/totals.total):0;
 }
 
 function ppReportExpenseMatchesSupplierPP(expense){
@@ -529,7 +567,7 @@ function ppEnsureReportsStylesPP(){
       #reportsPage .pp-buy-alert small{display:block;color:#7a8580;margin-top:4px}
       #reportsPage .pp-buy-note{margin-top:12px;padding:11px 13px;border-radius:12px;background:#f8faf8;border:1px solid #e3e9e5;color:#5d6a62;font-size:12px;line-height:1.5}
       #reportsPage .pp-buy-empty{text-align:center;color:#7d8781;padding:18px 8px}
-      #reportsPage .pp-expense-grid{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:12px}
+      #reportsPage .pp-expense-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
       #reportsPage .pp-expense-box{background:#fff;border:1px solid #e2e8e3;border-radius:15px;padding:15px}
       #reportsPage .pp-expense-box small{display:block;color:#778179;font-weight:700;font-size:11px;text-transform:uppercase}
       #reportsPage .pp-expense-box strong{display:block;margin-top:6px;font-size:21px;color:#18251b}
@@ -539,6 +577,13 @@ function ppEnsureReportsStylesPP(){
       #reportsPage .pp-expense-table th,#reportsPage .pp-expense-table td{padding:10px 9px;border-bottom:1px solid #edf1ee;text-align:left;font-size:12px;white-space:nowrap}
       #reportsPage .pp-expense-table th{background:#fafbfa;color:#68736c;text-transform:uppercase;font-size:10px}
       #reportsPage .pp-expense-table .num{text-align:right}
+      #reportsPage .pp-expense-filters{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:10px;margin-bottom:14px;padding:12px;border:1px solid #e3e9e5;border-radius:13px;background:#f8faf8}
+      #reportsPage .pp-expense-filters label{display:block;margin-bottom:5px;font-size:11px;font-weight:800;color:#68736c}
+      #reportsPage .pp-expense-filters input,#reportsPage .pp-expense-filters select{width:100%;padding:9px 10px;border:1px solid #d6ddd8;border-radius:9px;background:#fff}
+      #reportsPage .pp-expense-status{display:inline-block;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:900}
+      #reportsPage .pp-expense-status.paid{background:#eaf7ef;color:#177348}
+      #reportsPage .pp-expense-status.partial{background:#fff4d7;color:#896400}
+      #reportsPage .pp-expense-status.unpaid{background:#fdebec;color:#a83339}
       @media(max-width:950px){#reportsPage .pp-buy-grid{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-buy-layout{grid-template-columns:1fr}}
       @media(max-width:600px){#reportsPage .pp-buy-grid{grid-template-columns:1fr}}
       @media(max-width:950px){#reportsPage .pp-stock-grid{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-stock-layout{grid-template-columns:1fr}}
@@ -549,8 +594,8 @@ function ppEnsureReportsStylesPP(){
       @media(max-width:600px){#reportsPage .pp-profit-grid,#reportsPage .pp-profit-flow{grid-template-columns:1fr}}
 
       @media(max-width:1200px){#reportsPage .pp-report-grid{grid-template-columns:repeat(2,minmax(185px,1fr))}}
-      @media(max-width:950px){#reportsPage .pp-report-custom{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-expense-grid{grid-template-columns:repeat(2,1fr)}}
-      @media(max-width:650px){#reportsPage .pp-report-grid{grid-template-columns:1fr}#reportsPage .pp-report-custom,#reportsPage .pp-expense-grid{grid-template-columns:1fr}}
+      @media(max-width:950px){#reportsPage .pp-report-custom{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-expense-grid{grid-template-columns:repeat(2,1fr)}#reportsPage .pp-expense-filters{grid-template-columns:repeat(2,1fr)}}
+      @media(max-width:650px){#reportsPage .pp-report-grid{grid-template-columns:1fr}#reportsPage .pp-report-custom,#reportsPage .pp-expense-grid,#reportsPage .pp-expense-filters{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
 }
@@ -738,7 +783,14 @@ function ppEnsureReportsSummaryUIPP(){
               <div id="ppExpenseReportKPIs" class="pp-expense-grid"></div>
               <div class="pp-expense-section">
                 <h3 style="margin:0 0 5px">💸 Détail des dépenses</h3>
-                <p style="margin:0 0 14px;color:#6f7b73;font-size:13px">Toutes les charges enregistrées sur la période et selon le fournisseur sélectionné.</p>
+                <p style="margin:0 0 14px;color:#6f7b73;font-size:13px">Situation des charges, règlements, soldes et TVA réellement déductible sur la période.</p>
+                <div class="pp-expense-filters">
+                  <div><label>Catégorie</label><select id="ppExpenseReportCategory" onchange="ppUpdateExpenseReportFiltersPP()"><option value="">Toutes</option></select></div>
+                  <div><label>Statut</label><select id="ppExpenseReportStatus" onchange="ppUpdateExpenseReportFiltersPP()"><option value="">Tous</option><option value="unpaid">Non payées</option><option value="partial">Partiellement payées</option><option value="paid">Payées</option></select></div>
+                  <div><label>Mode règlement</label><select id="ppExpenseReportMode" onchange="ppUpdateExpenseReportFiltersPP()"><option value="">Tous</option></select></div>
+                  <div><label>Recherche</label><input id="ppExpenseReportSearch" placeholder="Bénéficiaire, pièce..." oninput="ppUpdateExpenseReportFiltersPP()"></div>
+                  <div style="display:flex;align-items:flex-end"><button type="button" class="btn" style="width:100%" onclick="ppResetExpenseReportFiltersPP()">Réinitialiser</button></div>
+                </div>
                 <div id="ppExpenseReportTable"></div>
               </div>
             </section>
@@ -1693,8 +1745,54 @@ function ppRenderPurchasesSuppliersPP(){
 
 function ppReportExpenseRowsPP(range){
     return (Array.isArray(expensesPP)?expensesPP:[])
-      .filter(e=>ppReportInRangePP(e.date,range)&&ppReportExpenseMatchesSupplierPP(e))
+      .filter(e=>{
+          if(!ppReportInRangePP(e.date,range)||!ppReportExpenseMatchesSupplierPP(e))return false;
+          const totals=ppReportExpensePaymentTotalsPP(e),payments=ppReportExpensePaymentsPP(e);
+          if(ppExpenseReportCategoryPP&&String(e.category||"")!==ppExpenseReportCategoryPP)return false;
+          if(ppExpenseReportStatusPP&&totals.status!==ppExpenseReportStatusPP)return false;
+          if(ppExpenseReportModePP&&!payments.some(p=>String(p.mode||"")===ppExpenseReportModePP))return false;
+          if(ppExpenseReportSearchPP){
+              const hay=ppReportNormPP(`${e.category||""} ${e.beneficiary||""} ${e.label||""} ${e.reference||""} ${e.ice||""} ${payments.map(p=>`${p.reference||""} ${p.note||""}`).join(" ")}`);
+              if(!hay.includes(ppReportNormPP(ppExpenseReportSearchPP)))return false;
+          }
+          return true;
+      })
       .sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+}
+
+function ppRefreshExpenseReportFilterOptionsPP(){
+    const esc=typeof escapeHTML==="function"?escapeHTML:(v=>String(v??""));
+    const category=document.getElementById("ppExpenseReportCategory");
+    if(category){
+        const values=[...new Set((Array.isArray(expensesPP)?expensesPP:[]).map(e=>String(e.category||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"fr"));
+        category.innerHTML='<option value="">Toutes</option>'+values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join("");
+        category.value=ppExpenseReportCategoryPP;
+    }
+    const mode=document.getElementById("ppExpenseReportMode");
+    if(mode){
+        const values=[...new Set((Array.isArray(expensesPP)?expensesPP:[]).flatMap(e=>ppReportExpensePaymentsPP(e).map(p=>String(p.mode||"").trim())).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"fr"));
+        mode.innerHTML='<option value="">Tous</option>'+values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join("");
+        mode.value=ppExpenseReportModePP;
+    }
+    const status=document.getElementById("ppExpenseReportStatus"),search=document.getElementById("ppExpenseReportSearch");
+    if(status)status.value=ppExpenseReportStatusPP;if(search&&search.value!==ppExpenseReportSearchPP)search.value=ppExpenseReportSearchPP;
+}
+
+function ppUpdateExpenseReportFiltersPP(){
+    ppExpenseReportCategoryPP=String(document.getElementById("ppExpenseReportCategory")?.value||"");
+    ppExpenseReportStatusPP=String(document.getElementById("ppExpenseReportStatus")?.value||"");
+    ppExpenseReportModePP=String(document.getElementById("ppExpenseReportMode")?.value||"");
+    ppExpenseReportSearchPP=String(document.getElementById("ppExpenseReportSearch")?.value||"");
+    ppRenderExpensesReportPP();
+}
+
+function ppResetExpenseReportFiltersPP(){
+    ppExpenseReportCategoryPP="";ppExpenseReportStatusPP="";ppExpenseReportModePP="";ppExpenseReportSearchPP="";
+    ppRefreshExpenseReportFilterOptionsPP();ppRenderExpensesReportPP();
+}
+
+function ppOpenExpenseReportDetailPP(id){
+    if(typeof openExpensePP==="function")openExpensePP(id);
 }
 
 function ppRenderExpensesReportPP(){
@@ -1704,36 +1802,46 @@ function ppRenderExpensesReportPP(){
     const rows=ppReportExpenseRowsPP(range);
     const totalTTC=rows.reduce((sum,e)=>sum+ppReportExpenseTTCPP(e),0);
     const totalHT=rows.reduce((sum,e)=>sum+ppReportExpenseHTPP(e),0);
-    const vat=Math.max(totalTTC-totalHT,0);
-    const average=rows.length?totalTTC/rows.length:0;
+    const paid=rows.reduce((sum,e)=>sum+ppReportExpensePaymentTotalsPP(e).paid,0);
+    const due=rows.reduce((sum,e)=>sum+ppReportExpensePaymentTotalsPP(e).due,0);
+    const deductibleVAT=rows.reduce((sum,e)=>sum+ppReportExpensePaidVATPP(e),0);
+    const unsettled=rows.filter(e=>ppReportExpensePaymentTotalsPP(e).status!=="paid").length;
     const esc=typeof escapeHTML==="function"?escapeHTML:(v=>String(v??""));
+    ppRefreshExpenseReportFilterOptionsPP();
 
     const kpis=document.getElementById("ppExpenseReportKPIs");
     if(kpis){
         kpis.innerHTML=[
             ["Dépenses TTC",ppReportMoneyPP(totalTTC)],
             ["Dépenses HT",ppReportMoneyPP(totalHT)],
-            ["TVA",ppReportMoneyPP(vat)],
-            ["Dépense moyenne",ppReportMoneyPP(average)]
+            ["Montant réglé",ppReportMoneyPP(paid)],
+            ["Reste à payer",ppReportMoneyPP(due)],
+            ["TVA déductible réglée",ppReportMoneyPP(deductibleVAT)],
+            ["Non soldées",String(unsettled)]
         ].map(([label,value])=>`<div class="pp-expense-box pp-report-clickable-box" ${ppClickableReportBoxAttrsPP("expenses","ppExpenseReportTable")}><small>${label}</small><strong>${value}</strong><span class="pp-report-detail-link">Voir le détail →</span></div>`).join("");
     }
 
     const table=document.getElementById("ppExpenseReportTable");
     if(!table)return;
-    table.innerHTML=rows.length?`<div class="pp-expense-table-wrap"><table class="pp-expense-table">
-      <thead><tr><th>Date</th><th>Catégorie</th><th>Bénéficiaire</th><th>Libellé</th><th>Référence</th><th class="num">HT</th><th class="num">TVA</th><th class="num">TTC</th><th>Mode</th></tr></thead>
+    table.innerHTML=rows.length?`<div class="pp-expense-table-wrap"><table class="pp-expense-table" style="min-width:1500px">
+      <thead><tr><th>Date</th><th>Échéance</th><th>Catégorie</th><th>Bénéficiaire</th><th>Libellé / Référence</th><th class="num">HT</th><th class="num">TVA</th><th class="num">TTC</th><th class="num">Réglé</th><th class="num">Reste</th><th>Statut</th><th>Dernier règlement</th><th>Action</th></tr></thead>
       <tbody>${rows.slice(0,100).map(e=>{
-          const ttc=ppReportExpenseTTCPP(e),ht=ppReportExpenseHTPP(e);
+          const ttc=ppReportExpenseTTCPP(e),ht=ppReportExpenseHTPP(e),totals=ppReportExpensePaymentTotalsPP(e);
+          const latest=ppReportExpensePaymentsPP(e).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
           return `<tr>
             <td>${ppReportDateLabelPP(ppReportDateFromAnyPP(e.date))}</td>
+            <td>${e.dueDate?ppReportDateLabelPP(ppReportDateFromAnyPP(e.dueDate)):"-"}</td>
             <td>${esc(e.category||"-")}</td>
             <td><strong>${esc(e.beneficiary||"-")}</strong></td>
-            <td>${esc(e.label||"-")}</td>
-            <td>${esc(e.reference||"-")}</td>
+            <td>${esc(e.label||"-")}<div style="font-size:10px;color:#7d8781">${esc(e.reference||"-")}</div></td>
             <td class="num">${ppReportMoneyPP(ht)}</td>
             <td class="num">${ppReportMoneyPP(Math.max(ttc-ht,0))}</td>
             <td class="num"><strong>${ppReportMoneyPP(ttc)}</strong></td>
-            <td>${esc(e.mode||"-")}</td>
+            <td class="num" style="color:#177348"><strong>${ppReportMoneyPP(totals.paid)}</strong></td>
+            <td class="num" style="color:#a83339"><strong>${ppReportMoneyPP(totals.due)}</strong></td>
+            <td><span class="pp-expense-status ${totals.status}">${ppReportExpenseStatusLabelPP(totals.status)}</span></td>
+            <td>${latest?.date?ppReportDateLabelPP(latest.date):"-"}<div style="font-size:10px;color:#7d8781">${esc(latest?.mode||"")}</div></td>
+            <td><button type="button" class="btn small view" onclick='ppOpenExpenseReportDetailPP(${JSON.stringify(e.id)})'>👁️ Détails / règlements</button></td>
           </tr>`;
       }).join("")}</tbody>
     </table></div>`:'<div class="pp-buy-empty">Aucune dépense pour les filtres sélectionnés.</div>';

@@ -224,6 +224,8 @@ suppliers =
 invoices =
     invoices.map(function(invoice){
 
+        const legalTerm=ppInvoiceLegalTermPP(invoice);
+
         return {
 
             ...invoice,
@@ -255,8 +257,21 @@ invoices =
             due:
                 Number(
                     invoice.due ??
-                    0
+                    Math.max(Number(invoice.totalTTC||0)-Number(invoice.paid||0),0)
                 ),
+
+            paymentTermType:
+                legalTerm.type,
+
+            paymentTermDays:
+                legalTerm.days,
+
+            dueDate:
+                String(
+                    invoice.dueDate ||
+                    ppAddCalendarDaysPP(invoice.date,legalTerm.days) ||
+                    ""
+                ).slice(0,10),
 
             lines:
                 Array.isArray(
@@ -991,10 +1006,71 @@ function printSupplier(id){const s=suppliers.find(x=>Number(x.id)===Number(id));
    INVOICE MODAL
 ========================================================= */
 
+function ppAddCalendarDaysPP(isoDate,days){
+    const parts=String(isoDate||'').slice(0,10).split('-').map(Number);
+    if(parts.length!==3||!parts.every(Number.isFinite))return '';
+    const d=new Date(parts[0],parts[1]-1,parts[2],12,0,0,0);d.setDate(d.getDate()+Number(days||0));
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function ppDaysBetweenISOPP(from,to){
+    const a=String(from||'').slice(0,10).split('-').map(Number),b=String(to||'').slice(0,10).split('-').map(Number);
+    if(a.length!==3||b.length!==3||!a.every(Number.isFinite)||!b.every(Number.isFinite))return 0;
+    return Math.round((new Date(b[0],b[1]-1,b[2],12)-new Date(a[0],a[1]-1,a[2],12))/86400000);
+}
+function ppInvoiceLegalTermPP(invoice={}){
+    const allowed=['cash','default','agreed','exception'];
+    let type=allowed.includes(String(invoice.paymentTermType||''))?String(invoice.paymentTermType):'default';
+    let days=Math.max(Math.round(Number(invoice.paymentTermDays??60)),0);
+    if(type==='cash')days=0;
+    else if(type==='default')days=60;
+    else if(type==='agreed')days=Math.min(Math.max(days||90,1),120);
+    else if(type==='exception')days=Math.min(Math.max(days||180,1),180);
+    return {type,days};
+}
+function ppNormalizeInvoiceDeadlinePP(invoice={}){
+    const term=ppInvoiceLegalTermPP(invoice);
+    return {...invoice,totalHT:Number(invoice.totalHT||0),tva:Number(invoice.tva||0),totalTTC:Number(invoice.totalTTC||0),paid:Number(invoice.paid||0),due:Number(invoice.due??Math.max(Number(invoice.totalTTC||0)-Number(invoice.paid||0),0)),lines:Array.isArray(invoice.lines)?invoice.lines:[],paymentTermType:term.type,paymentTermDays:term.days,dueDate:String(invoice.dueDate||ppAddCalendarDaysPP(invoice.date,term.days)||'').slice(0,10)};
+}
+function ppInvoiceTermLabelPP(invoice){
+    const term=ppInvoiceLegalTermPP(invoice);
+    if(term.type==='cash')return 'Paiement comptant';
+    if(term.type==='default')return 'Délai légal — 60 jours';
+    if(term.type==='agreed')return `Délai convenu — ${term.days} jours`;
+    return `Dérogation sectorielle — ${term.days} jours`;
+}
+function ppEnsureInvoicePaymentDeadlineFieldsPP(){
+    if(document.getElementById('invoicePaymentTermType'))return;
+    const grid=document.querySelector('#invoiceForm .form-grid');if(!grid)return;
+    const typeBox=document.createElement('div');typeBox.innerHTML=`<label>Base du délai de paiement</label><select id="invoicePaymentTermType" onchange="ppUpdateInvoiceLegalDeadlinePP(true)"><option value="default">Sans accord — délai légal 60 jours</option><option value="agreed">Délai convenu — maximum 120 jours</option><option value="exception">Dérogation sectorielle — maximum 180 jours</option><option value="cash">Paiement comptant</option></select>`;
+    const daysBox=document.createElement('div');daysBox.innerHTML=`<label>Nombre de jours</label><input id="invoicePaymentTermDays" type="number" min="0" max="180" step="1" value="60" oninput="ppUpdateInvoiceLegalDeadlinePP(false)"><small id="invoicePaymentTermNote" style="display:block;color:#667085;margin-top:4px"></small>`;
+    const dueBox=document.createElement('div');dueBox.innerHTML=`<label>Échéance légale calculée</label><input id="invoiceLegalDueDate" type="date" readonly>`;
+    grid.append(typeBox,daysBox,dueBox);
+    document.getElementById('invoiceDate')?.addEventListener('change',()=>ppUpdateInvoiceLegalDeadlinePP(false));
+}
+function ppUpdateInvoiceLegalDeadlinePP(resetDays=false){
+    const type=getValue('invoicePaymentTermType')||'default',input=document.getElementById('invoicePaymentTermDays');if(!input)return;
+    let days=Math.max(Math.round(Number(input.value||0)),0),note='';
+    input.readOnly=false;
+    if(type==='cash'){days=0;input.readOnly=true;note='Paiement exigible à la date de facture.';}
+    else if(type==='default'){days=60;input.readOnly=true;note='Loi 69-21 : 60 jours lorsqu’aucun délai n’est convenu.';}
+    else if(type==='agreed'){if(resetDays||days<1||days>120)days=90;input.max='120';note='Accord entre les parties obligatoire — maximum 120 jours.';}
+    else {if(resetDays||days<1||days>180)days=180;input.max='180';note='Uniquement avec dérogation sectorielle autorisée — maximum 180 jours.';}
+    input.value=String(days);setValue('invoiceLegalDueDate',ppAddCalendarDaysPP(getValue('invoiceDate'),days));setText('invoicePaymentTermNote',note);
+}
+function ppInvoiceTermFromFormPP(){
+    const type=getValue('invoicePaymentTermType')||'default';let days=Math.max(Math.round(Number(getValue('invoicePaymentTermDays')||0)),0);
+    if(type==='cash')days=0;
+    if(type==='default')days=60;
+    if(type==='agreed'&&(days<1||days>120)){alert('Le délai convenu doit être compris entre 1 et 120 jours.');return null;}
+    if(type==='exception'&&(days<1||days>180)){alert('Le délai dérogatoire ne peut pas dépasser 180 jours.');return null;}
+    return {type,days,dueDate:ppAddCalendarDaysPP(getValue('invoiceDate'),days)};
+}
+
 function openInvoiceModal(id = null){
-    editingInvoiceId=id?Number(id):null; const form=document.getElementById("invoiceForm"); if(form)form.reset(); populateInvoiceSuppliers(); const container=document.getElementById("invoiceLines");if(container)container.innerHTML=""; const title=document.querySelector("#invoiceModal .modal-header h2");
-    if(editingInvoiceId){ const inv=invoices.find(x=>Number(x.id)===editingInvoiceId);if(!inv)return;if(title)title.textContent="🧾 Modifier la facture d'achat";setValue("invoiceSupplier",inv.supplierId);setValue("invoiceNumber",inv.number);setValue("invoiceDate",inv.date);setValue("invoicePaid",inv.paid);(inv.lines||[]).forEach(line=>addInvoiceLine(line));if(!(inv.lines||[]).length)addInvoiceLine(); }
-    else {if(title)title.textContent="🧾 Nouvelle facture d'achat";setValue("invoiceDate",new Date().toISOString().split("T")[0]);setValue("invoicePaid",0);addInvoiceLine();}
+    ppEnsureInvoicePaymentDeadlineFieldsPP();editingInvoiceId=id?Number(id):null; const form=document.getElementById("invoiceForm"); if(form)form.reset(); populateInvoiceSuppliers(); const container=document.getElementById("invoiceLines");if(container)container.innerHTML=""; const title=document.querySelector("#invoiceModal .modal-header h2");
+    if(editingInvoiceId){ const inv=invoices.find(x=>Number(x.id)===editingInvoiceId);if(!inv)return;const term=ppInvoiceLegalTermPP(inv);if(title)title.textContent="🧾 Modifier la facture d'achat";setValue("invoiceSupplier",inv.supplierId);setValue("invoiceNumber",inv.number);setValue("invoiceDate",inv.date);setValue("invoicePaid",inv.paid);setValue('invoicePaymentTermType',term.type);setValue('invoicePaymentTermDays',term.days);(inv.lines||[]).forEach(line=>addInvoiceLine(line));if(!(inv.lines||[]).length)addInvoiceLine(); }
+    else {if(title)title.textContent="🧾 Nouvelle facture d'achat";setValue("invoiceDate",new Date().toISOString().split("T")[0]);setValue("invoicePaid",0);setValue('invoicePaymentTermType','default');setValue('invoicePaymentTermDays',60);addInvoiceLine();}
+    ppUpdateInvoiceLegalDeadlinePP(false);
     updateInvoiceTotals();openModal("invoiceModal");
 }
 
@@ -1613,11 +1689,12 @@ function updateInvoiceTotals(){
 function saveInvoice(){
     const supplierId=Number(getValue("invoiceSupplier")); const supplier=suppliers.find(x=>Number(x.id)===supplierId); if(!supplier){alert("Veuillez sélectionner un fournisseur.");return;}
     const number=getValue("invoiceNumber").trim(); if(!number){alert("Veuillez saisir le numéro de facture.");return;}
+    const paymentTerm=ppInvoiceTermFromFormPP();if(!paymentTerm)return;
     const lines=[]; document.querySelectorAll("#invoiceLines .invoice-line").forEach(line=>{const productId=Number(line.querySelector(".invoice-product")?.value);const existing=products.find(p=>Number(p.id)===productId);const typed=(line.querySelector(".invoice-new-product")?.value||"").trim();const name=existing?existing.name:typed;const quantity=parseNumber(line.querySelector(".invoice-quantity")?.value);const price=parseNumber(line.querySelector(".invoice-price")?.value);const vatRate=parseNumber(line.querySelector(".invoice-vat")?.value);if(!name||quantity<=0)return;const totalHT=quantity*price,vatAmount=totalHT*vatRate/100;lines.push({productId:existing?existing.id:null,name,category:line.querySelector(".invoice-category")?.value||"Autre",unit:line.querySelector(".invoice-unit")?.value||"pièce",quantity,price,vatRate,vatKnown:line.dataset.vatKnown==="1",vatSource:line.dataset.vatSource||"",vatAmount,totalHT,totalTTC:totalHT+vatAmount});});
     if(!lines.length){alert("Ajoutez au moins un produit.");return;}
     const totalHT=lines.reduce((a,l)=>a+l.totalHT,0),totalTVA=lines.reduce((a,l)=>a+l.vatAmount,0),totalTTC=totalHT+totalTVA,paid=parseNumber(getValue("invoicePaid"));
     if(editingInvoiceId){ const old=invoices.find(x=>Number(x.id)===editingInvoiceId); if(old) reverseInvoiceEffects(old); }
-    const invoice={id:editingInvoiceId||createId(),number,date:getValue("invoiceDate"),supplierId:supplier.id,supplierName:supplier.name,lines,totalHT,tva:totalTVA,totalTTC,paid,due:Math.max(totalTTC-paid,0),createdAt:editingInvoiceId?(invoices.find(x=>Number(x.id)===editingInvoiceId)?.createdAt||new Date().toISOString()):new Date().toISOString()};
+    const invoice={id:editingInvoiceId||createId(),number,date:getValue("invoiceDate"),supplierId:supplier.id,supplierName:supplier.name,lines,totalHT,tva:totalTVA,totalTTC,paid,due:Math.max(totalTTC-paid,0),paymentTermType:paymentTerm.type,paymentTermDays:paymentTerm.days,dueDate:paymentTerm.dueDate,createdAt:editingInvoiceId?(invoices.find(x=>Number(x.id)===editingInvoiceId)?.createdAt||new Date().toISOString()):new Date().toISOString(),updatedAt:new Date().toISOString()};
     if(editingInvoiceId){const i=invoices.findIndex(x=>Number(x.id)===editingInvoiceId);invoices[i]=invoice;} else invoices.unshift(invoice);
     applyInvoiceEffects(invoice); editingInvoiceId=null;saveData();closeModal("invoiceModal");renderAll();alert("Facture enregistrée avec succès.");
 }
@@ -1637,7 +1714,8 @@ function renderInvoices(){
 function viewInvoice(id){
     const inv=invoices.find(x=>Number(x.id)===Number(id));if(!inv)return;
     const lines=(inv.lines||[]).map(l=>`${escapeHTML(l.name)} — ${formatNumber(l.quantity)} ${escapeHTML(l.unit)} × ${formatMoney(l.price)} — TVA ${l.vatRate}%`).join('<br>');
-    showDetailsModal("Facture "+inv.number,[["Fournisseur",inv.supplierName],["Date",formatDate(inv.date)],["Produits",lines||'-'],["Total HT",formatMoney(inv.totalHT)],["TVA",formatMoney(inv.tva)],["Total TTC",formatMoney(inv.totalTTC)],["Payé",formatMoney(inv.paid)],["Reste",formatMoney(inv.due)]],()=>printInvoice(id),true);
+    const deadline=ppInvoiceDeadlineInfoPP(inv);
+    showDetailsModal("Facture "+inv.number,[["Fournisseur",inv.supplierName],["Date",formatDate(inv.date)],["Base du délai",ppInvoiceTermLabelPP(inv)],["Échéance",deadline.dueDate?formatDate(deadline.dueDate):'-'],["Situation délai",deadline.label],["Produits",lines||'-'],["Total HT",formatMoney(inv.totalHT)],["TVA",formatMoney(inv.tva)],["Total TTC",formatMoney(inv.totalTTC)],["Payé",formatMoney(deadline.paid)],["Reste",formatMoney(deadline.remaining)]],()=>printInvoice(id),true);
 }
 
 
@@ -1652,7 +1730,7 @@ function reverseInvoiceEffects(invoice){
     movements=movements.filter(m=>Number(m.invoiceId)!==Number(invoice.id) && normalizeText(m.reason)!==normalizeText('Achat - Facture '+invoice.number));
 }
 function deleteInvoice(id){const inv=invoices.find(x=>Number(x.id)===Number(id));if(!inv)return;if(!confirm('Supprimer cette facture ? Le stock et la situation fournisseur seront corrigés automatiquement.'))return;reverseInvoiceEffects(inv);invoices=invoices.filter(x=>Number(x.id)!==Number(id));saveData();renderAll();}
-function printInvoice(id){const inv=invoices.find(x=>Number(x.id)===Number(id));if(!inv)return;const rows=(inv.lines||[]).map(l=>`<tr><td>${escapeHTML(l.name)}</td><td>${formatNumber(l.quantity)} ${escapeHTML(l.unit)}</td><td>${formatMoney(l.price)}</td><td>${l.vatRate}%</td><td>${formatMoney(l.totalHT)}</td></tr>`).join('');printDocument('Facture '+inv.number,`<div class="doc-head"><h1>Pause & Plate</h1><p>Manager</p></div><h2>Facture d'achat ${escapeHTML(inv.number)}</h2><p><strong>Fournisseur:</strong> ${escapeHTML(inv.supplierName)}<br><strong>Date:</strong> ${formatDate(inv.date)}</p><table><thead><tr><th>Produit</th><th>Quantité</th><th>PU HT</th><th>TVA</th><th>Total HT</th></tr></thead><tbody>${rows}</tbody></table><div class="totals"><p>Total HT: <strong>${formatMoney(inv.totalHT)}</strong></p><p>TVA: <strong>${formatMoney(inv.tva)}</strong></p><p>Total TTC: <strong>${formatMoney(inv.totalTTC)}</strong></p><p>Payé: <strong>${formatMoney(inv.paid)}</strong></p><p>Reste: <strong>${formatMoney(inv.due)}</strong></p></div>`);}
+function printInvoice(id){const inv=invoices.find(x=>Number(x.id)===Number(id));if(!inv)return;const deadline=ppInvoiceDeadlineInfoPP(inv),rows=(inv.lines||[]).map(l=>`<tr><td>${escapeHTML(l.name)}</td><td>${formatNumber(l.quantity)} ${escapeHTML(l.unit)}</td><td>${formatMoney(l.price)}</td><td>${l.vatRate}%</td><td>${formatMoney(l.totalHT)}</td></tr>`).join('');printDocument('Facture '+inv.number,`<div class="doc-head"><h1>Pause & Plate</h1><p>Manager</p></div><h2>Facture d'achat ${escapeHTML(inv.number)}</h2><p><strong>Fournisseur:</strong> ${escapeHTML(inv.supplierName)}<br><strong>Date:</strong> ${formatDate(inv.date)}<br><strong>Délai:</strong> ${escapeHTML(ppInvoiceTermLabelPP(inv))}<br><strong>Échéance:</strong> ${deadline.dueDate?formatDate(deadline.dueDate):'-'}<br><strong>Situation:</strong> ${escapeHTML(deadline.label)}</p><table><thead><tr><th>Produit</th><th>Quantité</th><th>PU HT</th><th>TVA</th><th>Total HT</th></tr></thead><tbody>${rows}</tbody></table><div class="totals"><p>Total HT: <strong>${formatMoney(inv.totalHT)}</strong></p><p>TVA: <strong>${formatMoney(inv.tva)}</strong></p><p>Total TTC: <strong>${formatMoney(inv.totalTTC)}</strong></p><p>Payé: <strong>${formatMoney(deadline.paid)}</strong></p><p>Reste: <strong>${formatMoney(deadline.remaining)}</strong></p></div>`);}
 
 /* =========================================================
    SCAN MODAL
@@ -7124,6 +7202,10 @@ function ensureTVASubmenuPP(){
         <button id="ppTVATabSituation" type="button" class="btn" onclick="showTVASubmodulePP('situation')" style="padding:16px;text-align:left">
             <div style="font-size:17px;font-weight:800">Situation TVA</div>
             <div style="font-size:12px;opacity:.8;margin-top:4px">TVA à payer / Crédit TVA</div>
+        </button>
+        <button id="ppTVATabDeadlines" type="button" class="btn" onclick="showTVASubmodulePP('deadlines')" style="padding:16px;text-align:left">
+            <div style="font-size:17px;font-weight:800">Délais de paiement</div>
+            <div style="font-size:12px;opacity:.8;margin-top:4px">Conformité loi 69-21</div>
         </button>`;
     page.prepend(nav);
 }
@@ -7131,11 +7213,13 @@ function ensureTVASubmenuPP(){
 function showTVASubmodulePP(name){
     ppActiveTVAModule=name;
     ensureTVASubmenuPP();
+    if(name==='deadlines')ensurePaymentDeadlinesUIPP();
 
     const modules={
         deductible:document.getElementById('ppTVAAchatsModule'),
         collectee:document.getElementById('ppTVACollecteeModule'),
-        situation:document.getElementById('ppTVASituationModule')
+        situation:document.getElementById('ppTVASituationModule'),
+        deadlines:document.getElementById('ppPaymentDeadlinesModule')
     };
 
     Object.entries(modules).forEach(([key,el])=>{
@@ -7145,7 +7229,8 @@ function showTVASubmodulePP(name){
     const tabs={
         deductible:document.getElementById('ppTVATabDeductible'),
         collectee:document.getElementById('ppTVATabCollectee'),
-        situation:document.getElementById('ppTVATabSituation')
+        situation:document.getElementById('ppTVATabSituation'),
+        deadlines:document.getElementById('ppTVATabDeadlines')
     };
 
     Object.entries(tabs).forEach(([key,btn])=>{
@@ -7156,6 +7241,7 @@ function showTVASubmodulePP(name){
     if(name==='deductible') renderTVAAchatsPP();
     if(name==='collectee') renderTVACollecteePP();
     if(name==='situation') renderTVASituationPP();
+    if(name==='deadlines') renderPaymentDeadlinesPP();
 }
 
 /* =========================================================
@@ -7951,6 +8037,71 @@ function printTVASituationPP(){
     printDocument('Situation TVA trimestrielle',`<div class="doc-head"><h1>Pause & Plate</h1><p>Situation TVA trimestrielle</p></div>
       ${detailRowsHTML([['Total TVA collectée',formatMoney(totalCollected)],['Total TVA déductible',formatMoney(totalDeductible)],['Total TVA à payer',formatMoney(totalPayable)],['Crédit TVA à reporter',formatMoney(credit)]])}
       <table><thead><tr><th>Trimestre</th><th>TVA collectée</th><th>TVA déductible</th><th>Crédit reporté</th><th>TVA à payer</th><th>Crédit à reporter</th></tr></thead><tbody>${body}</tbody></table>`);
+}
+
+/* =========================================================
+   SITUATION DES DÉLAIS DE PAIEMENT — LOI MAROCAINE 69-21
+   60 jours sans accord, 120 jours convenus, 180 jours
+   uniquement dans le cadre d'une dérogation sectorielle.
+========================================================= */
+function ppTodayISOPP(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+function ppInvoiceDeadlineInfoPP(inv){
+    const term=ppInvoiceLegalTermPP(inv),dueDate=String(inv.dueDate||ppAddCalendarDaysPP(inv.date,term.days)||'').slice(0,10);
+    const total=Math.max(Number(inv.totalTTC||0),0),events=typeof ppInvoicePaymentEventsTVA==='function'?ppInvoicePaymentEventsTVA(inv):[];
+    let cumulative=0,fullPaymentDate='';
+    events.forEach(event=>{if(fullPaymentDate)return;cumulative+=Math.max(Number(event.amount||0),0);if(cumulative+0.005>=total)fullPaymentDate=String(event.date||'').slice(0,10);});
+    const paid=Math.min(Math.max(Number(inv.paid||0),cumulative),total),remaining=Math.max(total-paid,0),today=ppTodayISOPP();
+    if(remaining<=0.005){
+        const paymentDate=fullPaymentDate||events.at(-1)?.date||inv.paymentDate||inv.date||'';
+        const daysLate=dueDate&&paymentDate&&paymentDate>dueDate?Math.max(ppDaysBetweenISOPP(dueDate,paymentDate),0):0;
+        return {term,dueDate,total,paid,remaining,paymentDate,daysLate,daysRemaining:0,code:daysLate>0?'paid_late':'compliant',label:daysLate>0?`Payée en retard (${daysLate} j)`:'Payée conforme'};
+    }
+    if(dueDate&&today>dueDate){const daysLate=Math.max(ppDaysBetweenISOPP(dueDate,today),0);return {term,dueDate,total,paid,remaining,paymentDate:'',daysLate,daysRemaining:0,code:'overdue',label:`En retard de ${daysLate} j`};}
+    const daysRemaining=dueDate?Math.max(ppDaysBetweenISOPP(today,dueDate),0):0;
+    return {term,dueDate,total,paid,remaining,paymentDate:'',daysLate:0,daysRemaining,code:daysRemaining<=7?'due_soon':'pending',label:daysRemaining<=7?`Échéance dans ${daysRemaining} j`:`À payer — ${daysRemaining} j restants`};
+}
+function ppPaymentDeadlineStatusBadgePP(info){
+    const colors={compliant:['#eaf7ef','#177348'],pending:['#eef4ff','#2457a7'],due_soon:['#fff4d7','#896400'],overdue:['#fdebec','#a83339'],paid_late:['#f9eafe','#7a2d8d']},c=colors[info.code]||colors.pending;
+    return `<span style="display:inline-block;padding:5px 9px;border-radius:999px;background:${c[0]};color:${c[1]};font-size:11px;font-weight:900">${escapeHTML(info.label)}</span>`;
+}
+function ensurePaymentDeadlinesUIPP(){
+    const page=document.getElementById('accountingPage');ensureTVASubmenuPP();if(!page||document.getElementById('ppPaymentDeadlinesModule'))return;
+    const wrap=document.createElement('div');wrap.id='ppPaymentDeadlinesModule';
+    wrap.innerHTML=`
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+        <div><h2 style="margin:0 0 4px">Situation des délais de paiement</h2><p style="margin:0;color:#667085">Suivi des factures fournisseurs conformément aux échéances paramétrées selon la loi marocaine n°69-21.</p></div>
+        <button type="button" class="btn print" onclick="printPaymentDeadlinesPP()">🖨️ Imprimer la situation</button>
+      </div>
+      <div style="padding:13px 15px;border-radius:12px;background:#fff8e7;border:1px solid #ead59c;color:#69541e;margin-bottom:15px;line-height:1.5"><strong>Règle appliquée :</strong> 60 jours à compter de la date d'émission sans accord, jusqu'à 120 jours avec accord entre les parties, et jusqu'à 180 jours uniquement en cas de dérogation sectorielle autorisée. Les anciennes factures sont reprises avec le délai légal de 60 jours.</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:15px">
+        <div><label style="display:block;font-weight:700;margin-bottom:5px">Fournisseur</label><select id="ppDeadlineSupplier" onchange="renderPaymentDeadlinesPP()" style="width:100%;padding:9px"><option value="">Tous</option></select></div>
+        <div><label style="display:block;font-weight:700;margin-bottom:5px">Situation</label><select id="ppDeadlineStatus" onchange="renderPaymentDeadlinesPP()" style="width:100%;padding:9px"><option value="">Toutes</option><option value="overdue">En retard</option><option value="due_soon">Échéance ≤ 7 jours</option><option value="pending">À payer</option><option value="compliant">Payées conformes</option><option value="paid_late">Payées en retard</option></select></div>
+        <div><label style="display:block;font-weight:700;margin-bottom:5px">Recherche</label><input id="ppDeadlineSearch" oninput="renderPaymentDeadlinesPP()" placeholder="Facture, fournisseur..." style="width:100%;padding:9px"></div>
+        <div style="display:flex;align-items:end"><button type="button" class="btn" onclick="resetPaymentDeadlineFiltersPP()" style="width:100%">Réinitialiser</button></div>
+      </div>
+      <div id="ppDeadlineCards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:15px"></div>
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;overflow:auto"><table style="width:100%;min-width:1450px"><thead><tr><th>Date facture</th><th>N° facture</th><th>Fournisseur</th><th>Base du délai</th><th>Échéance</th><th>Total TTC</th><th>Payé</th><th>Reste</th><th>Situation légale</th><th>Action</th></tr></thead><tbody id="ppDeadlineTable"></tbody></table></div>`;
+    page.appendChild(wrap);wrap.style.display=ppActiveTVAModule==='deadlines'?'block':'none';
+}
+function ppRefreshDeadlineSupplierOptionsPP(){
+    const select=document.getElementById('ppDeadlineSupplier');if(!select)return;const current=select.value;
+    select.innerHTML='<option value="">Tous</option>'+suppliers.slice().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'fr')).map(s=>`<option value="${s.id}">${escapeHTML(s.name)}</option>`).join('');select.value=current;
+}
+function filteredPaymentDeadlinesPP(){
+    const supplier=Number(getValue('ppDeadlineSupplier'))||0,status=getValue('ppDeadlineStatus'),q=normalizeText(getValue('ppDeadlineSearch'));
+    return invoices.map(inv=>({inv,info:ppInvoiceDeadlineInfoPP(inv)})).filter(row=>{if(supplier&&Number(row.inv.supplierId)!==supplier)return false;if(status&&row.info.code!==status)return false;if(q&&!normalizeText(`${row.inv.number||''} ${row.inv.supplierName||''}`).includes(q))return false;return true;}).sort((a,b)=>String(a.info.dueDate).localeCompare(String(b.info.dueDate)));
+}
+function renderPaymentDeadlinesPP(){
+    ensurePaymentDeadlinesUIPP();ppRefreshDeadlineSupplierOptionsPP();const table=document.getElementById('ppDeadlineTable');if(!table)return;const rows=filteredPaymentDeadlinesPP();
+    const overdue=rows.filter(r=>r.info.code==='overdue'),soon=rows.filter(r=>r.info.code==='due_soon'),compliant=rows.filter(r=>r.info.code==='compliant'),paidLate=rows.filter(r=>r.info.code==='paid_late');
+    document.getElementById('ppDeadlineCards').innerHTML=[['Factures en retard',String(overdue.length),'#b42318'],['Montant en retard',formatMoney(overdue.reduce((s,r)=>s+r.info.remaining,0)),'#b42318'],['Échéance ≤ 7 jours',String(soon.length),'#896400'],['Payées conformes',String(compliant.length),'#177348'],['Payées en retard',String(paidLate.length),'#7a2d8d']].map(([label,value,color])=>`<div class="stat-card" style="padding:15px"><div style="color:#667085">${label}</div><strong style="display:block;font-size:22px;color:${color};margin-top:5px">${value}</strong></div>`).join('');
+    if(!rows.length){table.innerHTML='<tr><td colspan="10" class="empty">Aucune facture pour les filtres sélectionnés.</td></tr>';return;}
+    table.innerHTML=rows.map(({inv,info})=>`<tr><td>${formatDate(inv.date)}</td><td><strong>${escapeHTML(inv.number||'-')}</strong></td><td>${escapeHTML(inv.supplierName||'-')}</td><td>${escapeHTML(ppInvoiceTermLabelPP(inv))}</td><td><strong>${info.dueDate?formatDate(info.dueDate):'-'}</strong></td><td>${formatMoney(info.total)}</td><td style="color:#177348">${formatMoney(info.paid)}</td><td style="color:#b42318"><strong>${formatMoney(info.remaining)}</strong></td><td>${ppPaymentDeadlineStatusBadgePP(info)}</td><td><button class="btn small view" onclick="viewInvoice(${inv.id})">👁️ Voir facture</button></td></tr>`).join('');
+}
+function resetPaymentDeadlineFiltersPP(){setValue('ppDeadlineSupplier','');setValue('ppDeadlineStatus','');setValue('ppDeadlineSearch','');renderPaymentDeadlinesPP();}
+function printPaymentDeadlinesPP(){
+    const rows=filteredPaymentDeadlinesPP(),body=rows.map(({inv,info})=>`<tr><td>${formatDate(inv.date)}</td><td>${escapeHTML(inv.number||'-')}</td><td>${escapeHTML(inv.supplierName||'-')}</td><td>${escapeHTML(ppInvoiceTermLabelPP(inv))}</td><td>${info.dueDate?formatDate(info.dueDate):'-'}</td><td>${formatMoney(info.total)}</td><td>${formatMoney(info.paid)}</td><td>${formatMoney(info.remaining)}</td><td>${escapeHTML(info.label)}</td></tr>`).join('');
+    printDocument('Situation des délais de paiement',`<div class="doc-head"><h1>Pause & Plate</h1><p>Situation des délais de paiement — Loi n°69-21</p></div><p>60 jours sans accord, 120 jours maximum avec accord, 180 jours uniquement avec dérogation sectorielle.</p><table><thead><tr><th>Date</th><th>Facture</th><th>Fournisseur</th><th>Délai</th><th>Échéance</th><th>TTC</th><th>Payé</th><th>Reste</th><th>Situation</th></tr></thead><tbody>${body||'<tr><td colspan="9">Aucune facture.</td></tr>'}</tbody></table>`);
 }
 
 
@@ -10442,7 +10593,7 @@ function ppSetDataset(key,items){
         case "products": products=safe; break;
         case "movements": movements=safe; break;
         case "suppliers": suppliers=safe; break;
-        case "invoices": invoices=safe; break;
+        case "invoices": invoices=safe.map(ppNormalizeInvoiceDeadlinePP); break;
         case "supplierPayments": supplierPaymentsPP=safe; break;
         case "clients": clientsPP=safe; break;
         case "clientInvoices": clientInvoicesPP=safe; break;
