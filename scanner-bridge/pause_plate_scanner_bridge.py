@@ -37,7 +37,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-VERSION = "2.2.0"
+VERSION = "2.2.1"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 17891
 SCAN_LOCK = threading.Lock()
@@ -207,6 +207,56 @@ def scan_naps2(device_id: str, resolution: int, mode: str) -> tuple[bytes, str, 
     resolution = max(75, min(int(resolution or 300), 600))
     bit_depth = "gray" if str(mode).lower().startswith("gray") else "color"
     flags = 0x08000000 if platform.system().lower() == "windows" else 0
+
+    # Older Windows Network TWAIN drivers (notably KONICA MINOLTA bizhub)
+    # may reject NAPS2's automatic DAT_CAPS negotiation. Run them through an
+    # isolated native-UI profile with the old DSM instead. This opens the
+    # manufacturer's own window without touching the user's NAPS2 profiles.
+    if driver == "twain" and platform.system().lower() == "windows":
+        with tempfile.TemporaryDirectory(prefix="pause-plate-naps2-native-") as temp_dir:
+            root = Path(temp_dir)
+            app_data = root / "AppData"
+            profile_dir = app_data / "NAPS2"
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            profile_name = "Pause Plate — TWAIN compatible"
+            safe_name = html.escape(name, quote=True)
+            safe_profile = html.escape(profile_name, quote=True)
+            profile_xml = f"""<?xml version="1.0" encoding="utf-8"?>
+<ArrayOfScanProfile xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <ScanProfile>
+    <Device><ID>{safe_name}</ID><Name>{safe_name}</Name></Device>
+    <DriverName>twain</DriverName>
+    <DisplayName>{safe_profile}</DisplayName>
+    <IconID>0</IconID><MaxQuality>true</MaxQuality><IsDefault>true</IsDefault><Version>2</Version>
+    <UseNativeUI>true</UseNativeUI><AfterScanScale>OneToOne</AfterScanScale>
+    <Brightness>0</Brightness><Contrast>0</Contrast><BitDepth>C24Bit</BitDepth>
+    <PageAlign>Left</PageAlign><PageSize>A4</PageSize><Resolution>Dpi300</Resolution>
+    <PaperSource>Glass</PaperSource><EnableAutoSave>false</EnableAutoSave><Quality>100</Quality>
+    <AutoDeskew>false</AutoDeskew><BrightnessContrastAfterScan>false</BrightnessContrastAfterScan>
+    <ForcePageSize>false</ForcePageSize><ForcePageSizeCrop>false</ForcePageSizeCrop>
+    <TwainImpl>Old</TwainImpl><ExcludeBlankPages>false</ExcludeBlankPages>
+    <FlipDuplexedPages>false</FlipDuplexedPages>
+  </ScanProfile>
+</ArrayOfScanProfile>
+"""
+            (profile_dir / "profiles.xml").write_text(profile_xml, encoding="utf-8")
+            output_path = root / "scan.png"
+            env = os.environ.copy()
+            env["APPDATA"] = str(app_data)
+            process = subprocess.run(
+                prefix + ["--profile", profile_name, "--force", "--output", str(output_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                timeout=300,
+                creationflags=flags,
+                check=False,
+            )
+            if process.returncode == 0 and output_path.is_file() and output_path.stat().st_size > 0:
+                return output_path.read_bytes(), "image/png", f"scan-{int(time.time() * 1000)}.png"
+            detail = decode_process_output(process.stderr) or decode_process_output(process.stdout)
+            raise RuntimeError(detail or "Le pilote TWAIN a annulé la numérisation.")
+
     errors: list[str] = []
     # Start with full A4 flatbed settings, then progressively let an older
     # vendor TWAIN driver choose unsupported capabilities itself.
