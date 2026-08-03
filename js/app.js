@@ -1757,9 +1757,29 @@ function updateInvoiceTotals(){
    SAVE INVOICE
 ========================================================= */
 
+function ppInvoiceIdentityPP(value){
+    return normalizeText(String(value||""))
+        .replace(/[^a-z0-9]/g,"");
+}
+
+function ppFindDuplicateSupplierInvoicePP(supplierId,number,excludedInvoiceId=null){
+    const identity=ppInvoiceIdentityPP(number);
+    if(!identity)return null;
+    return invoices.find(invoice=>
+        Number(invoice.supplierId)===Number(supplierId)
+        && ppInvoiceIdentityPP(invoice.number)===identity
+        && (excludedInvoiceId===null || Number(invoice.id)!==Number(excludedInvoiceId))
+    )||null;
+}
+
 function saveInvoice(){
     const supplierId=Number(getValue("invoiceSupplier")); const supplier=suppliers.find(x=>Number(x.id)===supplierId); if(!supplier){alert("Veuillez sélectionner un fournisseur.");return;}
     const number=getValue("invoiceNumber").trim(); if(!number){alert("Veuillez saisir le numéro de facture.");return;}
+    const duplicateInvoice=ppFindDuplicateSupplierInvoicePP(supplier.id,number,editingInvoiceId);
+    if(duplicateInvoice){
+        alert(`Cette facture existe déjà pour ${supplier.name}.\n\nN° facture : ${duplicateInvoice.number}\nDate : ${formatDate(duplicateInvoice.date)}\nMontant TTC : ${formatMoney(duplicateInvoice.totalTTC)}`);
+        return;
+    }
     const paymentTerm=ppInvoiceTermFromFormPP();if(!paymentTerm)return;
     const lines=[]; document.querySelectorAll("#invoiceLines .invoice-line").forEach(line=>{const productId=Number(line.querySelector(".invoice-product")?.value);const existing=products.find(p=>Number(p.id)===productId);const typed=(line.querySelector(".invoice-new-product")?.value||"").trim();const name=existing?existing.name:typed;const quantity=parseNumber(line.querySelector(".invoice-quantity")?.value);const price=parseNumber(line.querySelector(".invoice-price")?.value);const vatRate=parseNumber(line.querySelector(".invoice-vat")?.value);if(!name||quantity<=0)return;const totalHT=quantity*price,vatAmount=totalHT*vatRate/100;lines.push({productId:existing?existing.id:null,name,category:line.querySelector(".invoice-category")?.value||"Autre",unit:line.querySelector(".invoice-unit")?.value||"pièce",quantity,price,vatRate,vatKnown:line.dataset.vatKnown==="1",vatSource:line.dataset.vatSource||"",vatAmount,totalHT,totalTTC:totalHT+vatAmount});});
     if(!lines.length){alert("Ajoutez au moins un produit.");return;}
@@ -11579,7 +11599,7 @@ function saveAccountingEntryPP(){
 
 function deleteAccountingEntryPP(id){if(!confirm('Supprimer cette écriture manuelle ?'))return;accountingEntriesPP=accountingEntriesPP.filter(e=>String(e.id)!==String(id));saveData();renderAccountingPP();}
 function openAccountingSettingsPP(){ensureAccountingModalsPP();const s=ppAccountingSettingsPP();setValue('ppAccFiscalStart',s.fiscalYearStart);setValue('ppAccOpeningDate',s.openingDate);setValue('ppAccOpeningCash',s.openingCash);setValue('ppAccOpeningBank',s.openingBank);openModal('ppAccountingSettingsModal');}
-function saveAccountingSettingsPP(){accountingSettingsPP=[{fiscalYearStart:getValue('ppAccFiscalStart'),openingDate:getValue('ppAccOpeningDate'),openingCash:Number(getValue('ppAccOpeningCash')||0),openingBank:Number(getValue('ppAccOpeningBank')||0),updatedAt:new Date().toISOString()}];saveData();closeModal('ppAccountingSettingsModal');renderAccountingPP();}
+function saveAccountingSettingsPP(){accountingSettingsPP=[{id:'accounting-settings',fiscalYearStart:getValue('ppAccFiscalStart'),openingDate:getValue('ppAccOpeningDate'),openingCash:Number(getValue('ppAccOpeningCash')||0),openingBank:Number(getValue('ppAccOpeningBank')||0),updatedAt:new Date().toISOString()}];saveData();closeModal('ppAccountingSettingsModal');renderAccountingPP();}
 function printAccountingPP(){const content=document.getElementById('ppAccountingContent');if(!content)return;const labels={summary:'Synthèse comptable',result:'Compte de résultat',treasury:'Trésorerie',journal:ppAccountingJournalInfoPP(ppAccountingJournalFilterPP).label,ledger:'Grand livre',balance:'Balance'};const range=ppAccountingRangePP();printDocument(labels[ppActiveAccountingTab]||'Comptabilité',`<div class="doc-head"><h1>Pause & Plate</h1><p>${escapeHTML(labels[ppActiveAccountingTab]||'Comptabilité')}</p></div><p><strong>Période :</strong> ${formatDate(range.from)} → ${formatDate(range.to)}</p>${content.innerHTML}`);}
 
 
@@ -11610,6 +11630,10 @@ let ppCloudSaveTimer = null;
 let ppCloudSaving = false;
 let ppCloudListeners = [];
 let ppApplyingCloudState = false;
+let ppCloudDirty = false;
+let ppCloudSaveAgain = false;
+let ppCloudChangeVersion = 0;
+let ppCloudBaseState = {};
 
 const PP_CLOUD_DATASETS = {
     products: () => products,
@@ -11790,8 +11814,82 @@ function ppStateSnapshot(){
     return out;
 }
 
+function ppCloudClonePP(value){
+    return JSON.parse(JSON.stringify(value??null));
+}
+
+function ppCloudCanonicalPP(value){
+    if(Array.isArray(value))return `[${value.map(ppCloudCanonicalPP).join(",")}]`;
+    if(value&&typeof value==="object"){
+        return `{${Object.keys(value).sort().map(key=>`${JSON.stringify(key)}:${ppCloudCanonicalPP(value[key])}`).join(",")}}`;
+    }
+    return JSON.stringify(value);
+}
+
+function ppCloudHashPP(value){
+    const text=ppCloudCanonicalPP(value);let hash=2166136261;
+    for(let index=0;index<text.length;index++){
+        hash^=text.charCodeAt(index);
+        hash=Math.imul(hash,16777619);
+    }
+    return (hash>>>0).toString(36);
+}
+
+function ppCloudEnsureRecordIdsPP(key,items){
+    return (Array.isArray(items)?items:[]).map((item,index)=>{
+        if(!item||typeof item!=="object")return item;
+        if(item.id!==undefined&&item.id!==null&&String(item.id)!=="")return item;
+        if(key==="accountingSettings")return {...item,id:"accounting-settings"};
+        return {...item,id:`legacy-${key}-${ppCloudHashPP(item)}-${index}`};
+    });
+}
+
+function ppCloudRecordKeyPP(key,item,index=0){
+    if(item&&typeof item==="object"&&item.id!==undefined&&item.id!==null&&String(item.id)!=="")return `id:${String(item.id)}`;
+    if(key==="accountingSettings")return "singleton:accounting-settings";
+    return `legacy:${index}:${ppCloudCanonicalPP(item)}`;
+}
+
+function ppCloudDatasetDeltaPP(key,baseItems,localItems){
+    const base=ppCloudEnsureRecordIdsPP(key,baseItems);
+    const local=ppCloudEnsureRecordIdsPP(key,localItems);
+    const baseMap=new Map(base.map((item,index)=>[ppCloudRecordKeyPP(key,item,index),item]));
+    const localMap=new Map(local.map((item,index)=>[ppCloudRecordKeyPP(key,item,index),item]));
+    const upserts=[];
+    localMap.forEach((item,recordKey)=>{
+        const previous=baseMap.get(recordKey);
+        if(previous===undefined||ppCloudCanonicalPP(previous)!==ppCloudCanonicalPP(item))upserts.push({recordKey,item});
+    });
+    const deletes=[];
+    baseMap.forEach((_,recordKey)=>{if(!localMap.has(recordKey))deletes.push(recordKey);});
+    return {local,upserts,deletes};
+}
+
+function ppCloudMergeDatasetPP(key,remoteItems,delta){
+    const remote=ppCloudEnsureRecordIdsPP(key,remoteItems);
+    const mergedMap=new Map(remote.map((item,index)=>[ppCloudRecordKeyPP(key,item,index),item]));
+    delta.deletes.forEach(recordKey=>mergedMap.delete(recordKey));
+    delta.upserts.forEach(({recordKey,item})=>mergedMap.set(recordKey,item));
+
+    const ordered=[],seen=new Set();
+    delta.local.forEach((item,index)=>{
+        const recordKey=ppCloudRecordKeyPP(key,item,index);
+        if(mergedMap.has(recordKey)&&!seen.has(recordKey)){
+            ordered.push(mergedMap.get(recordKey));seen.add(recordKey);
+        }
+    });
+    remote.forEach((item,index)=>{
+        const recordKey=ppCloudRecordKeyPP(key,item,index);
+        if(mergedMap.has(recordKey)&&!seen.has(recordKey)){
+            ordered.push(mergedMap.get(recordKey));seen.add(recordKey);
+        }
+    });
+    mergedMap.forEach((item,recordKey)=>{if(!seen.has(recordKey))ordered.push(item);});
+    return ordered;
+}
+
 function ppSetDataset(key,items){
-    const safe=Array.isArray(items)?items:[];
+    const safe=ppCloudEnsureRecordIdsPP(key,items);
     switch(key){
         case "products": products=safe; break;
         case "movements": movements=safe; break;
@@ -11839,6 +11937,7 @@ async function ppCloudHasData(){
 }
 
 async function ppUploadAllLocalToCloud(){
+    Object.keys(PP_CLOUD_DATASETS).forEach(key=>ppSetDataset(key,PP_CLOUD_DATASETS[key]()));
     const state=ppStateSnapshot();
     const batch=ppDb.batch();
     Object.entries(state).forEach(([key,items])=>{
@@ -11851,6 +11950,8 @@ async function ppUploadAllLocalToCloud(){
         schemaVersion:1
     },{merge:true});
     await batch.commit();
+    ppCloudBaseState=ppCloudClonePP(state);
+    ppCloudDirty=false;
 }
 
 async function ppLoadAllCloud(){
@@ -11861,6 +11962,8 @@ async function ppLoadAllCloud(){
             if(snap.exists)ppSetDataset(key,snap.data()?.items||[]);
         }
         ppSaveLocalOnly();
+        ppCloudBaseState=ppCloudClonePP(ppStateSnapshot());
+        ppCloudDirty=false;
     }finally{ppApplyingCloudState=false;}
 }
 
@@ -11873,13 +11976,14 @@ function ppStartCloudListeners(){
     ppStopCloudListeners();
     Object.keys(PP_CLOUD_DATASETS).forEach(key=>{
         const unsub=ppDataDoc(key).onSnapshot(snap=>{
-            if(!ppCloudReady||ppCloudSaving||!snap.exists)return;
+            if(!ppCloudReady||ppCloudSaving||ppCloudDirty||!snap.exists)return;
             const remote=snap.data()?.items;
             if(!Array.isArray(remote))return;
             ppApplyingCloudState=true;
             try{
                 ppSetDataset(key,remote);
                 ppSaveLocalOnly();
+                ppCloudBaseState[key]=ppCloudClonePP(PP_CLOUD_DATASETS[key]());
                 renderAll();
             }finally{ppApplyingCloudState=false;}
         },err=>console.error("Firestore listener",key,err));
@@ -11888,28 +11992,73 @@ function ppStartCloudListeners(){
 }
 
 async function ppSaveCloudNow(){
-    if(!ppCloudReady||!ppCurrentUser||ppApplyingCloudState||ppCloudSaving)return;
+    if(!ppCloudReady||!ppCurrentUser||ppApplyingCloudState)return;
+    if(ppCloudSaving){ppCloudSaveAgain=true;return;}
+    if(!ppCloudDirty)return;
     ppCloudSaving=true;
+    ppCloudSaveAgain=false;
+    clearTimeout(ppCloudSaveTimer);
+    ppCloudSaveTimer=null;
+    const saveVersion=ppCloudChangeVersion;
+    const localState=ppCloudClonePP(ppStateSnapshot());
+    const baseState=ppCloudClonePP(ppCloudBaseState||{});
+    let mergedState={};
     const status=document.getElementById("ppCloudStatus");
     if(status)status.textContent="☁️ Synchronisation...";
     try{
-        const state=ppStateSnapshot();
-        const batch=ppDb.batch();
-        Object.entries(state).forEach(([key,items])=>batch.set(ppDataDoc(key),{
-            items,
-            updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
-            updatedBy:ppCurrentUser.uid
-        }));
-        await batch.commit();
+        const keys=Object.keys(PP_CLOUD_DATASETS);
+        const refs=keys.map(key=>ppDataDoc(key));
+        await ppDb.runTransaction(async transaction=>{
+            const snapshots=await Promise.all(refs.map(ref=>transaction.get(ref)));
+            const nextState={};
+            keys.forEach((key,index)=>{
+                const remote=snapshots[index].exists?snapshots[index].data()?.items||[]:[];
+                const delta=ppCloudDatasetDeltaPP(key,baseState[key]||[],localState[key]||[]);
+                const merged=ppCloudMergeDatasetPP(key,remote,delta);
+                nextState[key]=merged;
+                transaction.set(refs[index],{
+                    items:merged,
+                    updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+                    updatedBy:ppCurrentUser.uid
+                },{merge:true});
+            });
+            mergedState=nextState;
+        });
+
+        ppCloudBaseState=ppCloudClonePP(mergedState);
+        if(ppCloudChangeVersion===saveVersion){
+            ppApplyingCloudState=true;
+            try{
+                Object.entries(mergedState).forEach(([key,items])=>ppSetDataset(key,items));
+                ppSaveLocalOnly();
+                ppCloudBaseState=ppCloudClonePP(ppStateSnapshot());
+                ppCloudDirty=false;
+                renderAll();
+            }finally{ppApplyingCloudState=false;}
+        }else{
+            ppCloudDirty=true;
+            ppCloudSaveAgain=true;
+        }
         if(status)status.textContent="✅ Synchronisé";
     }catch(err){
         console.error("Cloud save failed",err);
+        ppCloudDirty=true;
         if(status)status.textContent="⚠️ Hors ligne — sauvegarde locale";
-    }finally{ppCloudSaving=false;}
+    }finally{
+        ppCloudSaving=false;
+        if(ppCloudSaveAgain||ppCloudChangeVersion!==saveVersion){
+            ppCloudSaveAgain=false;
+            clearTimeout(ppCloudSaveTimer);
+            ppCloudSaveTimer=setTimeout(ppSaveCloudNow,250);
+        }
+    }
 }
 
 function ppScheduleCloudSave(){
     if(!ppCloudReady||ppApplyingCloudState)return;
+    ppCloudDirty=true;
+    ppCloudChangeVersion++;
+    if(ppCloudSaving){ppCloudSaveAgain=true;return;}
     clearTimeout(ppCloudSaveTimer);
     ppCloudSaveTimer=setTimeout(ppSaveCloudNow,500);
 }
