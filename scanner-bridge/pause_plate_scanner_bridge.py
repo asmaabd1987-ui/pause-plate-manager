@@ -38,7 +38,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-VERSION = "2.2.2"
+VERSION = "2.2.3"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 17891
 SCAN_LOCK = threading.Lock()
@@ -245,7 +245,7 @@ def scan_naps2(device_id: str, resolution: int, mode: str) -> tuple[bytes, str, 
                     ("PaperSource", "Glass"), ("EnableAutoSave", "false"), ("Quality", "100"),
                     ("AutoDeskew", "false"), ("BrightnessContrastAfterScan", "false"),
                     ("ForcePageSize", "false"), ("ForcePageSizeCrop", "false"),
-                    ("TwainImpl", "Old"), ("ExcludeBlankPages", "false"),
+                    ("TwainImpl", "OldDsm"), ("ExcludeBlankPages", "false"),
                     ("FlipDuplexedPages", "false"),
                 )
                 for key, value in values:

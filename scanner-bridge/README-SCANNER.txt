@@ -40,7 +40,7 @@ utilisent Network TWAIN. Installez leur pilote TWAIN officiel sur chaque PC;
 le simple pilote imprimante (port IP) ne suffit pas. Une fois le pilote TWAIN
 installé, le Bridge le détecte automatiquement sur le réseau courant.
 
-Depuis la version 2.2.2, les anciens pilotes TWAIN qui refusent DAT_CAPS sont
+Depuis la version 2.2.3, les anciens pilotes TWAIN qui refusent DAT_CAPS sont
 ouverts avec leur interface fabricant et l'ancien DSM. Le profil temporaire est
 ajouté aux profils NAPS2 réels pendant le scan, puis les profils personnels sont
 restaurés exactement comme avant. Choisissez le scanner ou les paramètres dans
