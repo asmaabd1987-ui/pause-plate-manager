@@ -11634,6 +11634,10 @@ let ppCloudDirty = false;
 let ppCloudSaveAgain = false;
 let ppCloudChangeVersion = 0;
 let ppCloudBaseState = {};
+<<<<<<< HEAD
+=======
+let ppCloudProfileSignature = "";
+>>>>>>> 9ab1f10 (Secure Firebase permissions and multi-user sync)
 
 const PP_CLOUD_DATASETS = {
     products: () => products,
@@ -11650,6 +11654,14 @@ const PP_CLOUD_DATASETS = {
     dailySalesScans: () => dailySalesScansPP,
     accountingEntries: () => accountingEntriesPP,
     accountingSettings: () => accountingSettingsPP
+};
+
+// Employees only receive the datasets required by the two modules that can be
+// delegated to them.  Everything else stays admin-only, both in the browser
+// and in Firestore Security Rules.
+const PP_EMPLOYEE_CLOUD_DATASETS = {
+    stock: ["products", "movements"],
+    expenses: ["expenses"]
 };
 
 function ppFirebaseAvailable(){
@@ -11797,8 +11809,9 @@ async function ppEnsureUserProfile(user){
     ppCurrentUserProfile={
         ...profile,
         role:ppCurrentRole,
-        permissions:profile.permissions||{stock:true,expenses:true}
+        permissions:profile.permissions||(ppCurrentRole==="admin"?{stock:true,expenses:true}:{stock:false,expenses:false})
     };
+    ppCloudProfileSignature=ppProfileScopeSignaturePP(ppCurrentUserProfile);
 
     // Keep last login trace.
     try{
@@ -11806,6 +11819,57 @@ async function ppEnsureUserProfile(user){
             lastLoginAt:firebase.firestore.FieldValue.serverTimestamp()
         },{merge:true});
     }catch(_){}
+}
+
+function ppProfileScopeSignaturePP(profile){
+    const value=profile||{};
+    return JSON.stringify({
+        role:String(value.role||"employee"),
+        active:value.active!==false,
+        deleted:value.deleted===true,
+        name:String(value.name||""),
+        username:String(value.username||""),
+        permissions:{
+            stock:value.permissions?.stock===true,
+            expenses:value.permissions?.expenses===true
+        }
+    });
+}
+
+function ppCloudAllowedDatasetKeysPP(){
+    const allKeys=Object.keys(PP_CLOUD_DATASETS);
+    if(ppIsAdmin())return allKeys;
+    const permissions=ppCurrentUserProfile?.permissions||{};
+    const allowed=[];
+    if(permissions.stock===true)allowed.push(...PP_EMPLOYEE_CLOUD_DATASETS.stock);
+    if(permissions.expenses===true)allowed.push(...PP_EMPLOYEE_CLOUD_DATASETS.expenses);
+    return [...new Set(allowed)].filter(key=>allKeys.includes(key));
+}
+
+function ppCloudCanAccessDatasetPP(key){
+    return ppCloudAllowedDatasetKeysPP().includes(String(key||""));
+}
+
+function ppEnforceLocalDatasetScopePP(){
+    if(ppIsAdmin())return;
+    const allowed=new Set(ppCloudAllowedDatasetKeysPP());
+    Object.keys(PP_CLOUD_DATASETS).forEach(key=>{
+        if(!allowed.has(key))ppSetDataset(key,[]);
+    });
+
+    // A shared computer must not expose an administrator's cached audit trail
+    // after an employee signs in. Employees keep only their own authorized log.
+    if(typeof ppAuditTrail!=="undefined"){
+        const uid=String(ppCurrentUser?.uid||"");
+        const allowedModules=new Set([
+            ...(ppCurrentUserProfile?.permissions?.stock===true?["stock"]:[]),
+            ...(ppCurrentUserProfile?.permissions?.expenses===true?["expenses"]:[])
+        ]);
+        ppAuditTrail=(Array.isArray(ppAuditTrail)?ppAuditTrail:[]).filter(entry=>
+            allowedModules.has(String(entry?.module||""))&&String(entry?.user?.uid||"")===uid
+        );
+        localStorage.setItem("pause_plate_audit_trail",JSON.stringify(ppAuditTrail));
+    }
 }
 
 function ppStateSnapshot(){
@@ -11930,6 +11994,9 @@ function ppLocalHasData(){
 }
 
 async function ppCloudHasData(){
+    // Employee accounts are created by the administrator after the company
+    // space is initialized. They must not read the admin-only meta document.
+    if(!ppIsAdmin())return true;
     const meta=await ppMetaDoc().get();
     if(meta.exists&&meta.data()?.initialized)return true;
     const productDoc=await ppDataDoc("products").get();
@@ -11937,6 +12004,10 @@ async function ppCloudHasData(){
 }
 
 async function ppUploadAllLocalToCloud(){
+<<<<<<< HEAD
+=======
+    if(!ppIsAdmin())throw new Error("Initialisation Cloud réservée à l’administrateur.");
+>>>>>>> 9ab1f10 (Secure Firebase permissions and multi-user sync)
     Object.keys(PP_CLOUD_DATASETS).forEach(key=>ppSetDataset(key,PP_CLOUD_DATASETS[key]()));
     const state=ppStateSnapshot();
     const batch=ppDb.batch();
@@ -11957,12 +12028,19 @@ async function ppUploadAllLocalToCloud(){
 async function ppLoadAllCloud(){
     ppApplyingCloudState=true;
     try{
-        for(const key of Object.keys(PP_CLOUD_DATASETS)){
+        ppEnforceLocalDatasetScopePP();
+        const allowedKeys=ppCloudAllowedDatasetKeysPP();
+        ppCloudBaseState={};
+        for(const key of allowedKeys){
             const snap=await ppDataDoc(key).get();
-            if(snap.exists)ppSetDataset(key,snap.data()?.items||[]);
+            ppSetDataset(key,snap.exists?snap.data()?.items||[]:[]);
+            ppCloudBaseState[key]=ppCloudClonePP(PP_CLOUD_DATASETS[key]());
         }
         ppSaveLocalOnly();
+<<<<<<< HEAD
         ppCloudBaseState=ppCloudClonePP(ppStateSnapshot());
+=======
+>>>>>>> 9ab1f10 (Secure Firebase permissions and multi-user sync)
         ppCloudDirty=false;
     }finally{ppApplyingCloudState=false;}
 }
@@ -11974,7 +12052,7 @@ function ppStopCloudListeners(){
 
 function ppStartCloudListeners(){
     ppStopCloudListeners();
-    Object.keys(PP_CLOUD_DATASETS).forEach(key=>{
+    ppCloudAllowedDatasetKeysPP().forEach(key=>{
         const unsub=ppDataDoc(key).onSnapshot(snap=>{
             if(!ppCloudReady||ppCloudSaving||ppCloudDirty||!snap.exists)return;
             const remote=snap.data()?.items;
@@ -11989,6 +12067,35 @@ function ppStartCloudListeners(){
         },err=>console.error("Firestore listener",key,err));
         ppCloudListeners.push(unsub);
     });
+
+    // Permissions and account status are live: an administrator can revoke a
+    // module or disable an account without waiting for the employee to reconnect.
+    if(ppCurrentUser?.uid){
+        const profileUnsub=ppDb.collection("userProfiles").doc(ppCurrentUser.uid).onSnapshot(async snap=>{
+            if(!snap.exists)return;
+            const profile=snap.data()||{};
+            if(profile.active===false||profile.deleted===true){
+                await ppAuth.signOut();
+                return;
+            }
+            const nextSignature=ppProfileScopeSignaturePP(profile);
+            if(nextSignature===ppCloudProfileSignature)return;
+            ppCloudProfileSignature=nextSignature;
+            ppCurrentRole=String(profile.role||"employee");
+            ppCurrentUserProfile={...profile,role:ppCurrentRole,permissions:profile.permissions||{stock:false,expenses:false}};
+            ppCloudReady=false;
+            ppStopCloudListeners();
+            ppEnforceLocalDatasetScopePP();
+            await ppLoadAllCloud();
+            ppCloudReady=true;
+            const userText=document.getElementById("ppCloudUser");
+            if(userText)userText.textContent=(ppCurrentUserProfile?.name||ppCurrentUserProfile?.username||"Utilisateur")+" — "+ppCurrentRole;
+            ppApplyPermissionsUI();
+            renderAll();
+            ppStartCloudListeners();
+        },err=>console.error("Firestore profile listener",err));
+        ppCloudListeners.push(profileUnsub);
+    }
 }
 
 async function ppSaveCloudNow(){
@@ -12006,7 +12113,16 @@ async function ppSaveCloudNow(){
     const status=document.getElementById("ppCloudStatus");
     if(status)status.textContent="☁️ Synchronisation...";
     try{
+<<<<<<< HEAD
         const keys=Object.keys(PP_CLOUD_DATASETS);
+=======
+        const keys=ppCloudAllowedDatasetKeysPP();
+        if(!keys.length){
+            ppCloudDirty=false;
+            if(status)status.textContent="✅ Synchronisé";
+            return;
+        }
+>>>>>>> 9ab1f10 (Secure Firebase permissions and multi-user sync)
         const refs=keys.map(key=>ppDataDoc(key));
         await ppDb.runTransaction(async transaction=>{
             const snapshots=await Promise.all(refs.map(ref=>transaction.get(ref)));
@@ -12014,6 +12130,7 @@ async function ppSaveCloudNow(){
             keys.forEach((key,index)=>{
                 const remote=snapshots[index].exists?snapshots[index].data()?.items||[]:[];
                 const delta=ppCloudDatasetDeltaPP(key,baseState[key]||[],localState[key]||[]);
+<<<<<<< HEAD
                 const merged=ppCloudMergeDatasetPP(key,remote,delta);
                 nextState[key]=merged;
                 transaction.set(refs[index],{
@@ -12021,6 +12138,20 @@ async function ppSaveCloudNow(){
                     updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
                     updatedBy:ppCurrentUser.uid
                 },{merge:true});
+=======
+                const changed=delta.upserts.length>0||delta.deletes.length>0;
+                const merged=changed?ppCloudMergeDatasetPP(key,remote,delta):ppCloudEnsureRecordIdsPP(key,remote);
+                nextState[key]=merged;
+                // Do not rewrite untouched documents: this is required for
+                // least-privilege Firestore rules and reduces overwrite risks.
+                if(changed){
+                    transaction.set(refs[index],{
+                        items:merged,
+                        updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+                        updatedBy:ppCurrentUser.uid
+                    },{merge:true});
+                }
+>>>>>>> 9ab1f10 (Secure Firebase permissions and multi-user sync)
             });
             mergedState=nextState;
         });
@@ -12044,6 +12175,10 @@ async function ppSaveCloudNow(){
         console.error("Cloud save failed",err);
         ppCloudDirty=true;
         if(status)status.textContent="⚠️ Hors ligne — sauvegarde locale";
+<<<<<<< HEAD
+=======
+        if(String(err?.code||"").includes("permission-denied"))ppWriteSecurityEventPP("firestore-denied",err?.message||"Écriture Firebase refusée");
+>>>>>>> 9ab1f10 (Secure Firebase permissions and multi-user sync)
     }finally{
         ppCloudSaving=false;
         if(ppCloudSaveAgain||ppCloudChangeVersion!==saveVersion){
@@ -12066,6 +12201,7 @@ function ppScheduleCloudSave(){
 // Upgrade the existing saveData: local immediately, cloud in background.
 const ppLegacySaveData = saveData;
 saveData = function(){
+    ppEnforceLocalDatasetScopePP();
     ppLegacySaveData();
     ppScheduleCloudSave();
 };
@@ -12073,6 +12209,8 @@ saveData = function(){
 async function ppBootstrapCloud(user){
     ppCurrentUser=user;
     await ppEnsureUserProfile(user);
+    ppEnforceLocalDatasetScopePP();
+    ppSaveLocalOnly();
     const cloudHas=await ppCloudHasData();
     if(!cloudHas){
         if(ppLocalHasData()){
@@ -12086,7 +12224,7 @@ async function ppBootstrapCloud(user){
         await ppLoadAllCloud();
     }
     ppCloudReady=true;
-    importFichesTechniquesPP(false,false);
+    if(ppIsAdmin())importFichesTechniquesPP(false,false);
     ppAddCloudHeader();
     const userText=document.getElementById("ppCloudUser");
     if(userText)userText.textContent=(ppCurrentUserProfile?.name||ppCurrentUserProfile?.username||"Utilisateur")+" — "+ppCurrentRole;
@@ -12208,6 +12346,25 @@ async function ppWriteAudit(module,entityId,action,before,after,label=''){
         console.warn('Audit cloud différé:',e);
     }
     return entry;
+}
+
+async function ppWriteSecurityEventPP(action,details=''){
+    const who=ppUserIdentity();
+    if(!ppDb||who.uid==='local')return;
+    const entry={
+        id:Date.now()+Math.floor(Math.random()*100000),
+        module:'security',
+        entityId:String(who.uid),
+        label:String(details||'Accès refusé').slice(0,500),
+        action:String(action||'denied').slice(0,80),
+        version:1,
+        user:who,
+        at:new Date().toISOString(),
+        before:null,
+        after:null,
+        changes:[]
+    };
+    try{await ppDb.collection('auditLogs').add(entry);}catch(_){ }
 }
 
 function ppAuditCount(module,id){
@@ -12950,6 +13107,7 @@ async function ppOpenGlobalAudit(){
                 <option value="stock">Stock</option>
                 <option value="expenses">Dépenses</option>
                 <option value="users">Utilisateurs</option>
+                <option value="security">Sécurité / accès refusés</option>
               </select>
               <select id="ppAuditAction" onchange="ppRenderGlobalAudit()">
                 <option value="">Toutes les opérations</option>
@@ -13133,6 +13291,7 @@ document.addEventListener("click",function(e){
     if(!ppEmployeeAllowedPages().includes(page)){
         e.preventDefault();
         e.stopImmediatePropagation();
+        ppWriteSecurityEventPP("navigation-denied",`Page refusée : ${page||"inconnue"}`);
         alert("Accès non autorisé.");
     }
 },true);

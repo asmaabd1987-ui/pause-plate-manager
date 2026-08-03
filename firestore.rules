@@ -1,0 +1,122 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isPrincipalAdmin() {
+      return signedIn()
+        && request.auth.token.email == 'asmaabd1987@gmail.com';
+    }
+
+    function profilePath() {
+      return /databases/$(database)/documents/userProfiles/$(request.auth.uid);
+    }
+
+    function hasProfile() {
+      return signedIn() && exists(profilePath());
+    }
+
+    function profile() {
+      return get(profilePath()).data;
+    }
+
+    function hasActiveProfile() {
+      return hasProfile()
+        && (!profile().keys().hasAny(['active']) || profile().active == true)
+        && (!profile().keys().hasAny(['deleted']) || profile().deleted != true);
+    }
+
+    function isAdmin() {
+      return isPrincipalAdmin()
+        || (hasActiveProfile() && profile().role == 'admin');
+    }
+
+    function hasStockPermission() {
+      return hasActiveProfile()
+        && profile().role == 'employee'
+        && profile().keys().hasAll(['permissions'])
+        && profile().permissions.keys().hasAll(['stock'])
+        && profile().permissions.stock == true;
+    }
+
+    function hasExpensesPermission() {
+      return hasActiveProfile()
+        && profile().role == 'employee'
+        && profile().keys().hasAll(['permissions'])
+        && profile().permissions.keys().hasAll(['expenses'])
+        && profile().permissions.expenses == true;
+    }
+
+    function canAccessDataset(dataset) {
+      return isAdmin()
+        || (hasStockPermission() && (dataset == 'products' || dataset == 'movements'))
+        || (hasExpensesPermission() && dataset == 'expenses');
+    }
+
+    function validDatasetWrite() {
+      return request.resource.data.items is list
+        && request.resource.data.updatedBy == request.auth.uid;
+    }
+
+    function isOwnProfile(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isSafeSelfProfileUpdate(uid) {
+      return isOwnProfile(uid)
+        && hasActiveProfile()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['lastLoginAt']);
+    }
+
+    function canCreateAudit() {
+      return hasActiveProfile()
+        && request.resource.data.user.uid == request.auth.uid
+        && (
+          isAdmin()
+          || request.resource.data.module == 'security'
+          || (request.resource.data.module == 'stock' && hasStockPermission())
+          || (request.resource.data.module == 'expenses' && hasExpensesPermission())
+        );
+    }
+
+    match /companies/{companyId}/data/{dataset} {
+      allow read: if companyId == 'pause-plate-manager'
+        && canAccessDataset(dataset);
+      allow create, update: if companyId == 'pause-plate-manager'
+        && canAccessDataset(dataset)
+        && validDatasetWrite();
+      allow delete: if companyId == 'pause-plate-manager' && isAdmin();
+    }
+
+    match /companies/{companyId}/meta/{documentId} {
+      allow read, write: if companyId == 'pause-plate-manager' && isAdmin();
+    }
+
+    match /userProfiles/{uid} {
+      allow get: if isOwnProfile(uid) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin() || isSafeSelfProfileUpdate(uid);
+      allow delete: if isAdmin();
+    }
+
+    match /users/{uid} {
+      allow get: if isOwnProfile(uid) || isAdmin();
+      allow list, create, update, delete: if isAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow get, list: if isAdmin();
+      allow create: if canCreateAudit();
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
