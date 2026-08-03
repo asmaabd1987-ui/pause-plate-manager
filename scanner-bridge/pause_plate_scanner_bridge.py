@@ -32,7 +32,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-VERSION = "2.0.3"
+VERSION = "2.0.4"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 17891
 SCAN_LOCK = threading.Lock()
@@ -225,12 +225,48 @@ $outputDir = [string]$env:PP_SCANNER_OUTPUT_DIR
 $resolution = 300
 if($env:PP_SCANNER_RESOLUTION) { $resolution = [int]$env:PP_SCANNER_RESOLUTION }
 
-function Set-WiaProperty($item, [int]$propertyId, $value) {
+function Get-WiaProperty($item, [int]$propertyId) {
     foreach($property in @($item.Properties)) {
         if([int]$property.PropertyID -eq $propertyId) {
-            try { $property.Value = $value } catch { }
-            return
+            return $property
         }
+    }
+    return $null
+}
+
+function Set-WiaProperty($item, [int]$propertyId, $value) {
+    $property = Get-WiaProperty $item $propertyId
+    if($null -eq $property) { return $false }
+    try {
+        $property.Value = $value
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# WIA keeps the scan rectangle in pixels.  Several flatbed drivers (including
+# Canon MF3010) remember a previous preview/crop rectangle, so a direct
+# Transfer() can otherwise return only the top half of the physical sheet.
+function Set-WiaExtent($item, [int]$propertyId, [int]$requestedValue) {
+    $property = Get-WiaProperty $item $propertyId
+    if($null -eq $property) { return 0 }
+    $candidate = [int]$requestedValue
+    try {
+        $minimum = [int]$property.SubTypeMin
+        $maximum = [int]$property.SubTypeMax
+        $step = [int]$property.SubTypeStep
+        if($maximum -gt 0) { $candidate = [Math]::Min($candidate, $maximum) }
+        $candidate = [Math]::Max($candidate, $minimum)
+        if($step -gt 1) {
+            $candidate = $minimum + ([Math]::Floor(($candidate - $minimum) / $step) * $step)
+        }
+    } catch { }
+    try {
+        $property.Value = [int]$candidate
+        return [int]$property.Value
+    } catch {
+        return 0
     }
 }
 
@@ -249,6 +285,20 @@ $item = $device.Items.Item(1)
 Set-WiaProperty $item 6146 1
 Set-WiaProperty $item 6147 $resolution
 Set-WiaProperty $item 6148 $resolution
+
+# Reset the persisted crop origin and request a complete portrait A4 page.
+# Property IDs: 6149 XPOS, 6150 YPOS, 6151 XEXTENT, 6152 YEXTENT.
+Set-WiaProperty $item 6149 0
+Set-WiaProperty $item 6150 0
+$a4Width = [int][Math]::Round(8.27 * $resolution)
+$a4Height = [int][Math]::Round(11.69 * $resolution)
+$actualWidth = Set-WiaExtent $item 6151 $a4Width
+$actualHeight = Set-WiaExtent $item 6152 $a4Height
+
+# Try the extent once more after both axes have been set; a few WIA drivers
+# recalculate the second property's valid range when the first one changes.
+if($actualWidth -le 0) { $actualWidth = Set-WiaExtent $item 6151 $a4Width }
+if($actualHeight -le 0) { $actualHeight = Set-WiaExtent $item 6152 $a4Height }
 
 $png = '{B96B3CAF-0728-11D3-9D7B-0000F81EF32E}'
 $jpeg = '{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}'

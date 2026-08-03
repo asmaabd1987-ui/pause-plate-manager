@@ -16,6 +16,10 @@ WINDOWS
 Si le pilote refuse le transfert direct, une fenêtre WIA Windows s'ouvre:
 choisissez le Canon, confirmez les réglages puis lancez la numérisation.
 
+La version 2.0.4 remet automatiquement la zone WIA à zéro et numérise la
+surface A4 complète afin d'éviter qu'un ancien cadrage ne coupe le bas de la
+facture.
+
 Le Bridge se lancera automatiquement à chaque ouverture de session Windows.
 
 MAC
