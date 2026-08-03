@@ -37,7 +37,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 17891
 SCAN_LOCK = threading.Lock()
@@ -334,7 +334,14 @@ foreach($info in @($manager.DeviceInfos)) {
     }
     if([string]::IsNullOrWhiteSpace($name)) { $name = "Scanner $index" }
     $networkClues = ([string]$info.DeviceID + " " + $port + " " + $server + " " + $remoteId)
-    $isNetwork = $networkClues -match '(?i)(WSD|WS-Scan|https?://|\\\\|remote|network)'
+    # Do not classify ordinary \\?\usb... WIA device paths as network. A real
+    # Windows network scanner exposes an explicit WSD/WS-Scan clue or a remote
+    # server name different from this computer.
+    $isNetwork = $networkClues -match '(?i)(WSD|WS-Scan|DAFWSDProvider|https?://|AirScan|eSCL)'
+    if(-not $isNetwork -and -not [string]::IsNullOrWhiteSpace($server)) {
+        $localNames = @('.', 'localhost', $env:COMPUTERNAME)
+        $isNetwork = -not ($localNames -contains $server.Trim())
+    }
     $rows += [ordered]@{
         id = [string]$info.DeviceID
         name = $name
