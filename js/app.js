@@ -10542,6 +10542,22 @@ const PP_ACCOUNTING_ACCOUNTS = [
 
 let ppActiveAccountingTab='summary';
 let ppAccountingEntryEditId=null;
+let ppAccountingJournalFilterPP='ALL';
+
+const PP_ACCOUNTING_JOURNALS = [
+    {code:'ALL',label:'Tous les journaux',shortLabel:'Tous',icon:'📚'},
+    {code:'CA',label:'Journal de caisse',shortLabel:'Caisse',icon:'💵'},
+    {code:'AC',label:'Journal des achats',shortLabel:'Achats',icon:'🛒'},
+    {code:'VE',label:'Journal des ventes',shortLabel:'Ventes',icon:'💰'},
+    {code:'BQ',label:'Journal de banque',shortLabel:'Banque',icon:'🏦'},
+    {code:'OD',label:'Opérations diverses',shortLabel:'Opérations diverses',icon:'📝'},
+    {code:'AN',label:'Journal des à-nouveaux',shortLabel:'À-nouveaux',icon:'📂'}
+];
+
+function ppAccountingJournalInfoPP(code){
+    const normalized=String(code||'OD').toUpperCase();
+    return PP_ACCOUNTING_JOURNALS.find(j=>j.code===normalized)||{code:normalized,label:`Journal ${normalized}`,shortLabel:normalized,icon:'📒'};
+}
 
 function ppAccountingAccountPP(code){
     return PP_ACCOUNTING_ACCOUNTS.find(a=>a.code===String(code))||{code:String(code||''),label:'Compte '+String(code||'')};
@@ -10627,7 +10643,7 @@ function ppAccountingGeneratedJournalPP(){
         add({id:`sale-${sale.id}`,date:sale.date,journal:'VE',piece,label:`Vente — ${sale.client||'comptoir'}`,source:'sale',sourceId:sale.id,
             lines:[ppAccountingLinePP('3421',ttc,0),ppAccountingLinePP('7111',0,ht),ppAccountingLinePP('4455',0,vat)]});
         if(sale.paymentDate){
-            add({id:`sale-payment-${sale.id}`,date:sale.paymentDate,journal:'BQ',piece,label:`Encaissement vente ${piece}`,source:'sale-payment',sourceId:sale.id,
+            add({id:`sale-payment-${sale.id}`,date:sale.paymentDate,journal:ppAccountingModeAccountPP(sale.mode)==='5161'?'CA':'BQ',piece,label:`Encaissement vente ${piece}`,source:'sale-payment',sourceId:sale.id,
                 lines:[ppAccountingLinePP(ppAccountingModeAccountPP(sale.mode),ttc,0),ppAccountingLinePP('3421',0,ttc)]});
         }
     });
@@ -10728,6 +10744,18 @@ function ensureAccountingModulePP(){
         #ppAccountingModule .pp-acc-panel{background:#fff;border:1px solid #e4e7ec;border-radius:15px;padding:16px;margin-bottom:16px;overflow:auto}
         #ppAccountingModule table{width:100%;min-width:760px}
         #ppAccountingModule .pp-acc-positive{color:#067647}.pp-acc-negative{color:#b42318}
+        #ppAccountingModule .pp-acc-journals{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:9px;margin-bottom:16px}
+        #ppAccountingModule .pp-acc-journal-btn{display:flex;align-items:center;gap:9px;width:100%;min-height:58px;padding:10px 12px;border:1px solid #dfe5e1;border-radius:12px;background:#fff;color:#34423a;text-align:left}
+        #ppAccountingModule .pp-acc-journal-btn:hover{border-color:#0b6b45;background:#f4faf7}
+        #ppAccountingModule .pp-acc-journal-btn.active{border-color:#075c38;background:#075c38;color:#fff;box-shadow:0 5px 14px rgba(7,92,56,.18)}
+        #ppAccountingModule .pp-acc-journal-btn .pp-acc-journal-icon{font-size:19px}
+        #ppAccountingModule .pp-acc-journal-btn .pp-acc-journal-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
+        #ppAccountingModule .pp-acc-journal-btn .pp-acc-journal-copy strong{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        #ppAccountingModule .pp-acc-journal-btn .pp-acc-journal-copy small{font-size:10px;opacity:.78}
+        #ppAccountingModule .pp-acc-journal-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+        #ppAccountingModule .pp-acc-journal-title{display:flex;align-items:center;gap:9px}
+        #ppAccountingModule .pp-acc-journal-code{display:inline-flex;align-items:center;justify-content:center;min-width:35px;padding:4px 7px;border-radius:7px;background:#eaf3ee;color:#075c38;font-size:11px;font-weight:800}
+        #ppAccountingModule .pp-acc-journal-name{display:block;color:#667085;font-size:10px;margin-top:3px}
         #ppAccountingEntryLines input,#ppAccountingEntryLines select{width:100%;min-width:110px}
         @media(max-width:700px){#ppAccountingModule .pp-acc-cards{grid-template-columns:1fr 1fr}#ppAccountingModule .pp-acc-card strong{font-size:18px}}
         `;document.head.appendChild(style);
@@ -10750,6 +10778,12 @@ function ensureAccountingModulePP(){
 }
 
 function showAccountingTabPP(tab){ppActiveAccountingTab=tab;renderAccountingPP();}
+function ppSetAccountingJournalFilterPP(code){
+    const normalized=String(code||'ALL').toUpperCase();
+    ppAccountingJournalFilterPP=PP_ACCOUNTING_JOURNALS.some(j=>j.code===normalized)?normalized:'ALL';
+    ppActiveAccountingTab='journal';
+    renderAccountingPP();
+}
 function resetAccountingPeriodPP(){const n=new Date();setValue('ppAccFrom',`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-01`);setValue('ppAccTo',n.toISOString().slice(0,10));setValue('ppAccSearch','');renderAccountingPP();}
 
 function ppAccountingCardPP(label,value,tab,icon,accent='#0b6b45',subtitle='Voir le détail'){
@@ -10781,8 +10815,18 @@ function renderAccountingTreasuryPP(stats){
 }
 
 function renderAccountingJournalPP(stats){
-    const rows=stats.entries.flatMap(entry=>entry.lines.map((line,index)=>({...line,entry,index})));
-    return `<div class="pp-acc-panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><h3 style="margin:0">Journal comptable</h3><span class="status success">Débit = Crédit</span></div><table><thead><tr><th>Date</th><th>Journal</th><th>Pièce</th><th>Compte</th><th>Libellé</th><th>Débit</th><th>Crédit</th><th>Source</th><th></th></tr></thead><tbody>${rows.map(({entry,index,...line})=>`<tr><td>${index===0?formatDate(entry.date):''}</td><td>${index===0?escapeHTML(entry.journal):''}</td><td>${index===0?escapeHTML(entry.piece||'-'):''}</td><td><strong>${line.account}</strong><br><small>${escapeHTML(line.accountLabel)}</small></td><td>${escapeHTML(line.label||entry.label)}</td><td>${line.debit?formatMoney(line.debit):'-'}</td><td>${line.credit?formatMoney(line.credit):'-'}</td><td>${escapeHTML(entry.source==='manual'?'Manuelle':'Automatique')}</td><td>${index===0&&entry.source==='manual'?`<div class="action-buttons"><button class="btn small edit" onclick="openAccountingEntryPP('${entry.id}')">✏️</button><button class="btn small danger" onclick="deleteAccountingEntryPP('${entry.id}')">🗑️</button></div>`:''}</td></tr>`).join('')||'<tr><td colspan="9" class="empty">Aucune écriture.</td></tr>'}</tbody></table></div>`;
+    const counts={};
+    PP_ACCOUNTING_JOURNALS.forEach(j=>counts[j.code]=j.code==='ALL'?stats.entries.length:stats.entries.filter(e=>String(e.journal).toUpperCase()===j.code).length);
+    const selectedInfo=ppAccountingJournalInfoPP(ppAccountingJournalFilterPP);
+    const entries=ppAccountingJournalFilterPP==='ALL'
+      ? stats.entries
+      : stats.entries.filter(entry=>String(entry.journal).toUpperCase()===ppAccountingJournalFilterPP);
+    const rows=entries.flatMap(entry=>entry.lines.map((line,index)=>({...line,entry,index})));
+    const totalDebit=entries.reduce((sum,entry)=>sum+entry.lines.reduce((lineSum,line)=>lineSum+Number(line.debit||0),0),0);
+    const totalCredit=entries.reduce((sum,entry)=>sum+entry.lines.reduce((lineSum,line)=>lineSum+Number(line.credit||0),0),0);
+    const journalButtons=PP_ACCOUNTING_JOURNALS.map(j=>`<button type="button" class="pp-acc-journal-btn ${ppAccountingJournalFilterPP===j.code?'active':''}" onclick="ppSetAccountingJournalFilterPP('${j.code}')"><span class="pp-acc-journal-icon">${j.icon}</span><span class="pp-acc-journal-copy"><strong>${escapeHTML(j.shortLabel)}</strong><small>${counts[j.code]} écriture(s)</small></span></button>`).join('');
+    const sourceLabels={manual:'Manuelle',opening:'À-nouveau','supplier-invoice':'Facture fournisseur','supplier-payment':'Règlement fournisseur',expense:'Dépense','expense-payment':'Règlement dépense',sale:'Vente','sale-payment':'Encaissement vente','client-invoice':'Facture client','client-payment':'Encaissement client'};
+    return `<div class="pp-acc-journals">${journalButtons}</div><div class="pp-acc-panel"><div class="pp-acc-journal-head"><div class="pp-acc-journal-title"><span style="font-size:24px">${selectedInfo.icon}</span><div><h3 style="margin:0">${escapeHTML(selectedInfo.label)}</h3><small style="color:#667085">${entries.length} écriture(s) sur la période sélectionnée</small></div></div><span class="status ${Math.abs(totalDebit-totalCredit)<0.02?'success':'danger'}">Débit ${formatMoney(totalDebit)} · Crédit ${formatMoney(totalCredit)}</span></div><table><thead><tr><th>Date</th><th>Journal</th><th>Pièce</th><th>Compte</th><th>Libellé</th><th>Débit</th><th>Crédit</th><th>Source</th><th></th></tr></thead><tbody>${rows.map(({entry,index,...line})=>{const info=ppAccountingJournalInfoPP(entry.journal);return `<tr><td>${index===0?formatDate(entry.date):''}</td><td>${index===0?`<span class="pp-acc-journal-code">${escapeHTML(info.code)}</span><small class="pp-acc-journal-name">${escapeHTML(info.shortLabel)}</small>`:''}</td><td>${index===0?escapeHTML(entry.piece||'-'):''}</td><td><strong>${line.account}</strong><br><small>${escapeHTML(line.accountLabel)}</small></td><td>${escapeHTML(line.label||entry.label)}</td><td>${line.debit?formatMoney(line.debit):'-'}</td><td>${line.credit?formatMoney(line.credit):'-'}</td><td>${escapeHTML(sourceLabels[entry.source]||(entry.source==='manual'?'Manuelle':'Automatique'))}</td><td>${index===0&&entry.source==='manual'?`<div class="action-buttons"><button class="btn small edit" onclick="openAccountingEntryPP('${entry.id}')">✏️</button><button class="btn small danger" onclick="deleteAccountingEntryPP('${entry.id}')">🗑️</button></div>`:''}</td></tr>`;}).join('')||`<tr><td colspan="9" class="empty">Aucune écriture dans ${escapeHTML(selectedInfo.label.toLowerCase())} pour cette période.</td></tr>`}</tbody></table></div>`;
 }
 
 function renderAccountingLedgerPP(stats){
@@ -10814,7 +10858,7 @@ function ppAccountingAccountOptionsPP(selected=''){
 }
 
 function ensureAccountingModalsPP(){
-    if(!document.getElementById('ppAccountingEntryModal')){const modal=document.createElement('div');modal.id='ppAccountingEntryModal';modal.className='modal-overlay';modal.innerHTML=`<div class="modal" style="max-width:1050px"><div class="modal-header"><h2 id="ppAccountingEntryTitle">Écriture manuelle</h2><button onclick="closeModal('ppAccountingEntryModal')">×</button></div><form id="ppAccountingEntryForm"><div class="form-grid"><div><label>Date</label><input id="ppAccountingEntryDate" type="date" required></div><div><label>Journal</label><select id="ppAccountingEntryJournal"><option>OD</option><option>AC</option><option>VE</option><option>BQ</option><option>CA</option></select></div><div><label>N° pièce</label><input id="ppAccountingEntryPiece" required></div><div><label>Libellé</label><input id="ppAccountingEntryLabel" required></div></div><div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px"><strong>Lignes de l’écriture</strong><button type="button" class="btn small" onclick="ppAddAccountingLineRowPP()">➕ Ajouter une ligne</button></div><div style="overflow:auto"><table style="width:100%;min-width:820px"><thead><tr><th>Compte</th><th>Libellé ligne</th><th>Débit</th><th>Crédit</th><th></th></tr></thead><tbody id="ppAccountingEntryLines"></tbody><tfoot><tr><th colspan="2">Totaux</th><th id="ppAccountingEntryDebit">0,00 DH</th><th id="ppAccountingEntryCredit">0,00 DH</th><th id="ppAccountingEntryGap"></th></tr></tfoot></table></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppAccountingEntryModal')">Annuler</button><button type="submit" class="btn primary">Enregistrer l’écriture</button></div></form></div>`;document.body.appendChild(modal);document.getElementById('ppAccountingEntryForm').addEventListener('submit',e=>{e.preventDefault();saveAccountingEntryPP();});}
+    if(!document.getElementById('ppAccountingEntryModal')){const modal=document.createElement('div');modal.id='ppAccountingEntryModal';modal.className='modal-overlay';modal.innerHTML=`<div class="modal" style="max-width:1050px"><div class="modal-header"><h2 id="ppAccountingEntryTitle">Écriture manuelle</h2><button onclick="closeModal('ppAccountingEntryModal')">×</button></div><form id="ppAccountingEntryForm"><div class="form-grid"><div><label>Date</label><input id="ppAccountingEntryDate" type="date" required></div><div><label>Journal</label><select id="ppAccountingEntryJournal"><option value="OD">OD — Opérations diverses</option><option value="AC">AC — Journal des achats</option><option value="VE">VE — Journal des ventes</option><option value="BQ">BQ — Journal de banque</option><option value="CA">CA — Journal de caisse</option></select></div><div><label>N° pièce</label><input id="ppAccountingEntryPiece" required></div><div><label>Libellé</label><input id="ppAccountingEntryLabel" required></div></div><div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px"><strong>Lignes de l’écriture</strong><button type="button" class="btn small" onclick="ppAddAccountingLineRowPP()">➕ Ajouter une ligne</button></div><div style="overflow:auto"><table style="width:100%;min-width:820px"><thead><tr><th>Compte</th><th>Libellé ligne</th><th>Débit</th><th>Crédit</th><th></th></tr></thead><tbody id="ppAccountingEntryLines"></tbody><tfoot><tr><th colspan="2">Totaux</th><th id="ppAccountingEntryDebit">0,00 DH</th><th id="ppAccountingEntryCredit">0,00 DH</th><th id="ppAccountingEntryGap"></th></tr></tfoot></table></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppAccountingEntryModal')">Annuler</button><button type="submit" class="btn primary">Enregistrer l’écriture</button></div></form></div>`;document.body.appendChild(modal);document.getElementById('ppAccountingEntryForm').addEventListener('submit',e=>{e.preventDefault();saveAccountingEntryPP();});}
     if(!document.getElementById('ppAccountingSettingsModal')){const modal=document.createElement('div');modal.id='ppAccountingSettingsModal';modal.className='modal-overlay';modal.innerHTML=`<div class="modal"><div class="modal-header"><h2>⚙️ Soldes d’ouverture</h2><button onclick="closeModal('ppAccountingSettingsModal')">×</button></div><form id="ppAccountingSettingsForm"><div class="form-grid"><div><label>Début exercice</label><input id="ppAccFiscalStart" type="date" required></div><div><label>Date des soldes d’ouverture</label><input id="ppAccOpeningDate" type="date" required></div><div><label>Solde caisse</label><input id="ppAccOpeningCash" type="number" step="0.01"></div><div><label>Solde banque</label><input id="ppAccOpeningBank" type="number" step="0.01"></div></div><p style="color:#667085;font-size:13px">Ces soldes servent uniquement au calcul de la trésorerie actuelle.</p><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppAccountingSettingsModal')">Annuler</button><button class="btn primary">Enregistrer</button></div></form></div>`;document.body.appendChild(modal);document.getElementById('ppAccountingSettingsForm').addEventListener('submit',e=>{e.preventDefault();saveAccountingSettingsPP();});}
 }
 
@@ -10842,7 +10886,7 @@ function saveAccountingEntryPP(){
 function deleteAccountingEntryPP(id){if(!confirm('Supprimer cette écriture manuelle ?'))return;accountingEntriesPP=accountingEntriesPP.filter(e=>String(e.id)!==String(id));saveData();renderAccountingPP();}
 function openAccountingSettingsPP(){ensureAccountingModalsPP();const s=ppAccountingSettingsPP();setValue('ppAccFiscalStart',s.fiscalYearStart);setValue('ppAccOpeningDate',s.openingDate);setValue('ppAccOpeningCash',s.openingCash);setValue('ppAccOpeningBank',s.openingBank);openModal('ppAccountingSettingsModal');}
 function saveAccountingSettingsPP(){accountingSettingsPP=[{fiscalYearStart:getValue('ppAccFiscalStart'),openingDate:getValue('ppAccOpeningDate'),openingCash:Number(getValue('ppAccOpeningCash')||0),openingBank:Number(getValue('ppAccOpeningBank')||0),updatedAt:new Date().toISOString()}];saveData();closeModal('ppAccountingSettingsModal');renderAccountingPP();}
-function printAccountingPP(){const content=document.getElementById('ppAccountingContent');if(!content)return;const labels={summary:'Synthèse comptable',result:'Compte de résultat',treasury:'Trésorerie',journal:'Journal comptable',ledger:'Grand livre',balance:'Balance'};const range=ppAccountingRangePP();printDocument(labels[ppActiveAccountingTab]||'Comptabilité',`<div class="doc-head"><h1>Pause & Plate</h1><p>${escapeHTML(labels[ppActiveAccountingTab]||'Comptabilité')}</p></div><p><strong>Période :</strong> ${formatDate(range.from)} → ${formatDate(range.to)}</p>${content.innerHTML}`);}
+function printAccountingPP(){const content=document.getElementById('ppAccountingContent');if(!content)return;const labels={summary:'Synthèse comptable',result:'Compte de résultat',treasury:'Trésorerie',journal:ppAccountingJournalInfoPP(ppAccountingJournalFilterPP).label,ledger:'Grand livre',balance:'Balance'};const range=ppAccountingRangePP();printDocument(labels[ppActiveAccountingTab]||'Comptabilité',`<div class="doc-head"><h1>Pause & Plate</h1><p>${escapeHTML(labels[ppActiveAccountingTab]||'Comptabilité')}</p></div><p><strong>Période :</strong> ${formatDate(range.from)} → ${formatDate(range.to)}</p>${content.innerHTML}`);}
 
 
 /* =========================================================
