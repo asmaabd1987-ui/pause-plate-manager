@@ -1909,13 +1909,19 @@ async function ppGetAvailableScanners(){
     const data=await response.json().catch(()=>({scanners:[]}));
     const scanners=Array.isArray(data)?data:(Array.isArray(data.scanners)?data.scanners:[]);
     if(!scanners.length){
-        throw new Error(data.message||"Aucun scanner détecté. Vérifiez le câble, l’alimentation et le pilote du scanner.");
+        throw new Error(data.message||"Aucun scanner détecté. Vérifiez le câble USB ou le réseau Wi-Fi/LAN, l’alimentation et le pilote.");
     }
     return scanners.map((scanner,index)=>({
         id:String(scanner.id??scanner.device_id??index),
         name:String(scanner.name??scanner.model??`Scanner ${index+1}`),
         vendor:String(scanner.vendor??scanner.manufacturer??""),
-        backend:String(scanner.backend??data.backend??"")
+        backend:String(scanner.backend??data.backend??""),
+        connection:String(scanner.connection??""),
+        network:Boolean(
+            scanner.network
+            ||String(scanner.connection||"").toLowerCase()==="network"
+            ||/airscan|escl|wsd/i.test(String(scanner.backend||""))
+        )
     }));
 }
 
@@ -1930,7 +1936,7 @@ function ppChooseScanner(scanners,forceChoice=false){
         return scanners[0];
     }
 
-    const choices=scanners.map((scanner,index)=>`${index+1}. ${scanner.name}${scanner.vendor?` — ${scanner.vendor}`:""}`).join("\n");
+    const choices=scanners.map((scanner,index)=>`${index+1}. ${scanner.network?"🌐":"🔌"} ${scanner.name}${scanner.vendor?` — ${scanner.vendor}`:""}`).join("\n");
     const answer=prompt(`Choisissez le scanner :\n\n${choices}`,"1");
     if(answer===null)throw new Error("Sélection du scanner annulée.");
     const index=Math.max(0,Math.min(Number.parseInt(answer,10)-1,scanners.length-1));
@@ -1955,7 +1961,7 @@ async function ppRefreshScannerStatusPP(purpose){
         const savedId=String(localStorage.getItem(PP_SCANNER_SELECTION_KEY)||"");
         const selected=scanners.find(scanner=>scanner.id===savedId)||scanners[0];
         if(status){
-            status.innerHTML=`✅ Bridge ${escapeHTML(health.platform||"Windows / Mac")} actif — <strong>${escapeHTML(selected.name)}</strong> prêt.`;
+            status.innerHTML=`✅ Bridge ${escapeHTML(health.platform||"Windows / Mac")} actif — ${selected.network?"🌐":"🔌"} <strong>${escapeHTML(selected.name)}</strong> prêt.`;
             status.style.color="#067647";
         }
         return {health,scanners};
@@ -1979,13 +1985,13 @@ async function ppSelectScannerPP(purpose){
         const scanners=await ppGetAvailableScanners();
         const scanner=ppChooseScanner(scanners,true);
         if(status){
-            status.innerHTML=`✅ Scanner sélectionné : <strong>${escapeHTML(scanner.name)}</strong>`;
+            status.innerHTML=`✅ Scanner sélectionné : ${scanner.network?"🌐":"🔌"} <strong>${escapeHTML(scanner.name)}</strong>`;
             status.style.color="#067647";
         }
         return scanner;
     }catch(error){
         if(status){
-            status.innerHTML=`❌ ${escapeHTML(error?.message||String(error))}<br><small>Vérifiez le Bridge, le câble et le pilote Windows / Mac.</small>`;
+            status.innerHTML=`❌ ${escapeHTML(error?.message||String(error))}<br><small>Vérifiez le Bridge, le câble USB ou le réseau local, et le pilote Windows / Mac.</small>`;
             status.style.color="#b42318";
         }
         return null;

@@ -28,6 +28,13 @@ if [ -z "$PYTHON_BIN" ]; then
     exit 1
 fi
 
+echo "Installation de la détection réseau AirScan / eSCL…"
+if ! "$PYTHON_BIN" -m pip install --user --disable-pip-version-check --quiet --break-system-packages zeroconf 2>/dev/null; then
+    if ! "$PYTHON_BIN" -m pip install --user --disable-pip-version-check --quiet zeroconf 2>/dev/null; then
+        echo "AVERTISSEMENT: AirScan automatique indisponible; les scanners déjà visibles dans SANE resteront utilisables."
+    fi
+fi
+
 if ! command -v scanimage >/dev/null 2>&1 && [ ! -x /opt/homebrew/bin/scanimage ] && [ ! -x /usr/local/bin/scanimage ]; then
     if command -v brew >/dev/null 2>&1; then
         echo "Installation du pilote universel SANE…"

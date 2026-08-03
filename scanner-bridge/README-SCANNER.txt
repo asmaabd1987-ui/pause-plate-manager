@@ -20,6 +20,19 @@ La version 2.0.4 remet automatiquement la zone WIA à zéro et numérise la
 surface A4 complète afin d'éviter qu'un ancien cadrage ne coupe le bas de la
 facture.
 
+SCANNERS RÉSEAU — VERSION 2.1.0
+-------------------------------
+- Windows: les scanners WIA/WSD ajoutés à Windows sont détectés, ainsi que les
+  scanners AirScan/eSCL annoncés automatiquement sur le réseau local.
+- Mac: les scanners SANE et AirScan/eSCL sont réunis dans la même liste.
+- L'ordinateur et le scanner doivent être sur le même réseau Wi-Fi/LAN.
+- Activez « AirScan/eSCL », « WSD Scan » ou « Scan depuis un ordinateur » dans
+  les paramètres réseau du scanner si le fabricant désactive cette option.
+- Un réseau invité ou l'isolation Wi-Fi peut bloquer la découverte mDNS.
+
+Dans Pause & Plate Manager, cliquez sur « Choisir le scanner »: les appareils
+réseau sont marqués avec l'icône réseau et peuvent être utilisés directement.
+
 Le Bridge se lancera automatiquement à chaque ouverture de session Windows.
 
 MAC

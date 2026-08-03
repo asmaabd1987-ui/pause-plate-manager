@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import email
 import html
 import json
 import logging
@@ -20,23 +21,29 @@ import os
 import platform
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
 
-VERSION = "2.0.4"
+VERSION = "2.1.0"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 17891
 SCAN_LOCK = threading.Lock()
 MOCK_FILE: Path | None = None
+NETWORK_SCANNER_CACHE: tuple[float, list[dict]] = (0.0, [])
+NETWORK_SCANNER_CACHE_LOCK = threading.Lock()
 
 ALLOWED_WEB_ORIGINS = {
     "https://asmaabd1987-ui.github.io",
@@ -103,6 +110,121 @@ def scanimage_path() -> str | None:
         if candidate and Path(candidate).is_file():
             return str(candidate)
     return None
+
+
+def _txt_value(properties: dict, key: str) -> str:
+    """Decode a DNS-SD TXT value without failing on vendor encodings."""
+    raw = properties.get(key.encode("utf-8"), properties.get(key, b""))
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", errors="replace").strip()
+    return str(raw or "").strip()
+
+
+def _network_scanner_name(service_name: str, properties: dict) -> str:
+    for key in ("ty", "product", "note", "usb_MDL"):
+        value = _txt_value(properties, key)
+        if value:
+            return value
+    return re.sub(r"\._us?cans?\._tcp\.local\.?$", "", service_name, flags=re.IGNORECASE).strip()
+
+
+def _escl_base_url(service_type: str, info: object) -> str | None:
+    addresses: list[str] = []
+    try:
+        addresses = list(info.parsed_addresses())  # type: ignore[attr-defined]
+    except Exception:
+        addresses = []
+    if not addresses:
+        server = str(getattr(info, "server", "") or "").rstrip(".")
+        if server:
+            addresses = [server]
+    if not addresses:
+        return None
+    host = next((address for address in addresses if ":" not in address), addresses[0])
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    properties = dict(getattr(info, "properties", {}) or {})
+    resource = _txt_value(properties, "rs") or "eSCL"
+    resource = resource.strip().strip("/") or "eSCL"
+    scheme = "https" if service_type.lower().startswith("_uscans.") else "http"
+    port = int(getattr(info, "port", 0) or (443 if scheme == "https" else 80))
+    return f"{scheme}://{host}:{port}/{resource}"
+
+
+def discover_escl_scanners(force: bool = False) -> list[dict]:
+    """Discover driverless AirScan/eSCL scanners advertised with DNS-SD.
+
+    The dependency is optional so USB/WIA/SANE scanning keeps working even if
+    package installation or multicast discovery is unavailable.
+    """
+    global NETWORK_SCANNER_CACHE
+    now = time.monotonic()
+    with NETWORK_SCANNER_CACHE_LOCK:
+        cached_at, cached_rows = NETWORK_SCANNER_CACHE
+        if not force and cached_at > 0 and now - cached_at < 20:
+            return [dict(row) for row in cached_rows]
+
+    try:
+        from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
+    except Exception:
+        return []
+
+    found: dict[str, dict] = {}
+    found_lock = threading.Lock()
+
+    class Listener(ServiceListener):
+        def add_service(self, zeroconf: object, service_type: str, name: str) -> None:
+            self._remember(zeroconf, service_type, name)
+
+        def update_service(self, zeroconf: object, service_type: str, name: str) -> None:
+            self._remember(zeroconf, service_type, name)
+
+        def remove_service(self, zeroconf: object, service_type: str, name: str) -> None:
+            return
+
+        def _remember(self, zeroconf: object, service_type: str, name: str) -> None:
+            try:
+                info = zeroconf.get_service_info(service_type, name, timeout=1400)  # type: ignore[attr-defined]
+                if not info:
+                    return
+                base_url = _escl_base_url(service_type, info)
+                if not base_url:
+                    return
+                properties = dict(getattr(info, "properties", {}) or {})
+                row = {
+                    "id": f"escl:{base_url}",
+                    "name": _network_scanner_name(name, properties) or "Scanner réseau",
+                    "vendor": _txt_value(properties, "usb_MFG") or _txt_value(properties, "mfg"),
+                    "model": _txt_value(properties, "usb_MDL") or _txt_value(properties, "ty"),
+                    "backend": "AirScan/eSCL",
+                    "connection": "network",
+                    "network": True,
+                    "url": base_url,
+                }
+                with found_lock:
+                    found[base_url.lower()] = row
+            except Exception as error:
+                logging.debug("AirScan service ignored: %s", error)
+
+    zeroconf = Zeroconf()
+    browsers = []
+    listener = Listener()
+    try:
+        for service_type in ("_uscan._tcp.local.", "_uscans._tcp.local."):
+            browsers.append(ServiceBrowser(zeroconf, service_type, listener))
+        time.sleep(2.2)
+    finally:
+        for browser in browsers:
+            try:
+                browser.cancel()
+            except Exception:
+                pass
+        zeroconf.close()
+
+    rows = sorted(found.values(), key=lambda row: str(row.get("name", "")).lower())
+    with NETWORK_SCANNER_CACHE_LOCK:
+        NETWORK_SCANNER_CACHE = (time.monotonic(), [dict(row) for row in rows])
+    return rows
 
 
 def decode_process_output(raw: bytes) -> str:
@@ -200,16 +322,26 @@ foreach($info in @($manager.DeviceInfos)) {
     $index++
     $name = $null
     $vendor = $null
+    $port = $null
+    $server = $null
+    $remoteId = $null
     foreach($prop in @($info.Properties)) {
         if([int]$prop.PropertyID -eq 7) { $name = [string]$prop.Value }
         if([int]$prop.PropertyID -eq 3) { $vendor = [string]$prop.Value }
+        if([int]$prop.PropertyID -eq 6) { $port = [string]$prop.Value }
+        if([int]$prop.PropertyID -eq 8) { $server = [string]$prop.Value }
+        if([int]$prop.PropertyID -eq 9) { $remoteId = [string]$prop.Value }
     }
     if([string]::IsNullOrWhiteSpace($name)) { $name = "Scanner $index" }
+    $networkClues = ([string]$info.DeviceID + " " + $port + " " + $server + " " + $remoteId)
+    $isNetwork = $networkClues -match '(?i)(WSD|WS-Scan|https?://|\\\\|remote|network)'
     $rows += [ordered]@{
         id = [string]$info.DeviceID
         name = $name
         vendor = $vendor
         backend = 'WIA'
+        connection = $(if($isNetwork) { 'network' } else { 'local' })
+        network = [bool]$isNetwork
     }
 }
 [ordered]@{ scanners = $rows } | ConvertTo-Json -Depth 5 -Compress
@@ -394,6 +526,124 @@ def scan_windows(device_id: str, resolution: int) -> tuple[bytes, str, str]:
         return path.read_bytes(), str(data.get("mime") or "image/jpeg"), str(data.get("filename") or path.name)
 
 
+def _local_url_open(request: urllib.request.Request, timeout: int = 20):
+    context = ssl._create_unverified_context() if request.full_url.lower().startswith("https://") else None
+    return urllib.request.urlopen(request, timeout=timeout, context=context)
+
+
+def _escl_ticket(resolution: int, mode: str, image_format: str, source: str) -> bytes:
+    color_mode = "Grayscale8" if str(mode).lower().startswith("gray") else "RGB24"
+    # eSCL ScanRegion dimensions use 1/300 inch units, independently of DPI.
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<scan:ScanSettings xmlns:scan="http://schemas.hp.com/imaging/escl/2011/05/03"
+ xmlns:pwg="http://www.pwg.org/schemas/2010/12/sm">
+  <pwg:Version>2.0</pwg:Version>
+  <pwg:ScanRegions><pwg:ScanRegion>
+    <pwg:Height>3508</pwg:Height><pwg:Width>2480</pwg:Width>
+    <pwg:XOffset>0</pwg:XOffset><pwg:YOffset>0</pwg:YOffset>
+  </pwg:ScanRegion></pwg:ScanRegions>
+  <pwg:InputSource>{source}</pwg:InputSource>
+  <scan:ColorMode>{color_mode}</scan:ColorMode>
+  <scan:XResolution>{resolution}</scan:XResolution>
+  <scan:YResolution>{resolution}</scan:YResolution>
+  <pwg:DocumentFormat>{image_format}</pwg:DocumentFormat>
+  <scan:DocumentFormatExt>{image_format}</scan:DocumentFormatExt>
+</scan:ScanSettings>""".encode("utf-8")
+
+
+def _image_from_escl_response(content: bytes, content_type: str) -> tuple[bytes, str]:
+    media_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    if media_type.startswith("image/") and content:
+        return content, media_type
+    if media_type.startswith("multipart/"):
+        message = email.message_from_bytes(
+            f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("ascii", errors="ignore")
+            + content
+        )
+        for part in message.walk():
+            part_type = str(part.get_content_type() or "").lower()
+            payload = part.get_payload(decode=True)
+            if part_type.startswith("image/") and payload:
+                return payload, part_type
+    if content.startswith(b"\xff\xd8\xff"):
+        return content, "image/jpeg"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return content, "image/png"
+    raise RuntimeError("Le scanner réseau n'a pas retourné une image compatible.")
+
+
+def scan_escl(device_id: str, resolution: int, mode: str) -> tuple[bytes, str, str]:
+    if not str(device_id).startswith("escl:"):
+        raise RuntimeError("Adresse AirScan/eSCL invalide.")
+    base_url = str(device_id)[len("escl:") :].rstrip("/")
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise RuntimeError("Adresse du scanner réseau invalide.")
+    resolution = max(75, min(int(resolution or 300), 600))
+    jobs_url = f"{base_url}/ScanJobs"
+    errors: list[str] = []
+
+    # Platen/JPEG is preferred for invoices. PNG and ADF are compatibility
+    # fallbacks for devices that expose only one format or input source.
+    attempts = [
+        ("Platen", "image/jpeg"),
+        ("Platen", "image/png"),
+        ("Feeder", "image/jpeg"),
+        ("Feeder", "image/png"),
+    ]
+    for source, image_format in attempts:
+        job_url = ""
+        try:
+            request = urllib.request.Request(
+                jobs_url,
+                data=_escl_ticket(resolution, mode, image_format, source),
+                method="POST",
+                headers={
+                    "Content-Type": "text/xml; charset=utf-8",
+                    "Accept": "text/xml, application/xml, */*",
+                    "User-Agent": f"PausePlateScannerBridge/{VERSION}",
+                },
+            )
+            with _local_url_open(request, timeout=35) as response:
+                location = str(response.headers.get("Location") or "").strip()
+                if not location:
+                    raise RuntimeError("Le scanner réseau n'a pas créé de tâche de scan.")
+                job_url = urllib.parse.urljoin(jobs_url + "/", location)
+
+            document_url = job_url.rstrip("/") + "/NextDocument"
+            document_request = urllib.request.Request(
+                document_url,
+                method="GET",
+                headers={
+                    "Accept": "image/jpeg, image/png, multipart/related, */*",
+                    "User-Agent": f"PausePlateScannerBridge/{VERSION}",
+                },
+            )
+            with _local_url_open(document_request, timeout=240) as response:
+                raw = response.read()
+                content, mime = _image_from_escl_response(raw, str(response.headers.get("Content-Type") or ""))
+            extension = "png" if mime == "image/png" else "jpg"
+            return content, mime, f"scan-reseau-{int(time.time() * 1000)}.{extension}"
+        except urllib.error.HTTPError as error:
+            detail = ""
+            try:
+                detail = error.read(300).decode("utf-8", errors="replace").strip()
+            except Exception:
+                pass
+            errors.append(f"{source}/{image_format}: HTTP {error.code} {detail}".strip())
+        except Exception as error:
+            errors.append(f"{source}/{image_format}: {error}")
+        finally:
+            if job_url:
+                try:
+                    delete_request = urllib.request.Request(job_url, method="DELETE")
+                    with _local_url_open(delete_request, timeout=8):
+                        pass
+                except Exception:
+                    pass
+    raise RuntimeError(next((error for error in reversed(errors) if error), "Échec du scan réseau AirScan/eSCL."))
+
+
 def list_sane_scanners() -> list[dict]:
     command = scanimage_path()
     if not command:
@@ -474,9 +724,15 @@ def scan_sane(device_id: str, resolution: int, mode: str) -> tuple[bytes, str, s
 def list_scanners() -> tuple[list[dict], str]:
     if MOCK_FILE:
         return ([{"id": "mock-1", "name": "Scanner de test", "vendor": "Pause & Plate", "backend": "MOCK"}], "MOCK")
+    network_rows = discover_escl_scanners()
     if platform.system().lower() == "windows":
-        return list_windows_scanners(), "WIA"
-    return list_sane_scanners(), "SANE"
+        local_rows = list_windows_scanners()
+        rows = local_rows + [row for row in network_rows if row.get("id") not in {item.get("id") for item in local_rows}]
+        return rows, "WIA + AirScan/eSCL" if network_rows else "WIA"
+    local_rows = list_sane_scanners()
+    local_ids = {str(item.get("id")) for item in local_rows}
+    rows = local_rows + [row for row in network_rows if str(row.get("id")) not in local_ids]
+    return rows, "SANE + AirScan/eSCL" if network_rows else "SANE"
 
 
 def scanner_status() -> dict:
@@ -489,7 +745,7 @@ def scanner_status() -> dict:
                 "platform": platform_label(),
                 "backend": backend,
                 "scanners": [],
-                "message": "Aucun scanner détecté. Vérifiez le câble, l’alimentation et le pilote.",
+                "message": "Aucun scanner détecté. Vérifiez le câble USB ou le réseau local, l’alimentation et le pilote.",
             }
         return {
             "ready": True,
@@ -515,6 +771,8 @@ def scan_file(device_id: str, resolution: int, mode: str) -> tuple[bytes, str, s
             raise RuntimeError("Le fichier de test est introuvable.")
         mime = mimetypes.guess_type(MOCK_FILE.name)[0] or "image/png"
         return MOCK_FILE.read_bytes(), mime, MOCK_FILE.name
+    if str(device_id).startswith("escl:"):
+        return scan_escl(device_id, resolution, mode)
     if platform.system().lower() == "windows":
         return scan_windows(device_id, resolution)
     return scan_sane(device_id, resolution, mode)

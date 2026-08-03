@@ -43,6 +43,25 @@ if (-not (Test-Path $BridgeSource)) {
     throw "Le fichier pause_plate_scanner_bridge.py est absent du dossier de l'installateur."
 }
 
+Write-Host "Activation de la detection des scanners reseau AirScan / eSCL..."
+try {
+    & $PythonExe -m pip install --user --disable-pip-version-check --quiet zeroconf
+    if ($LASTEXITCODE -ne 0) { throw "pip a retourne le code $LASTEXITCODE" }
+    Write-Host "Detection reseau installee." -ForegroundColor Green
+} catch {
+    Write-Host "Le module AirScan n'a pas pu etre installe; les scanners WIA/WSD deja ajoutes a Windows resteront disponibles." -ForegroundColor Yellow
+}
+
+# WIA handles USB scanners and Windows-installed WSD network scanners. Start
+# the discovery services when permitted; lack of administrator rights is not
+# fatal because eSCL discovery remains available through Zeroconf.
+foreach ($ServiceName in @("stisvc", "fdPHost", "FDResPub")) {
+    try {
+        $Service = Get-Service -Name $ServiceName -ErrorAction Stop
+        if ($Service.Status -ne "Running") { Start-Service -Name $ServiceName -ErrorAction Stop }
+    } catch { }
+}
+
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Copy-Item -LiteralPath $BridgeSource -Destination $BridgeTarget -Force
 
