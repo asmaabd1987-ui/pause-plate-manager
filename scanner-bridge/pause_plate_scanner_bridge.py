@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import html
 import json
 import logging
 import mimetypes
@@ -31,7 +32,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 17891
 SCAN_LOCK = threading.Lock()
@@ -137,6 +138,31 @@ def safe_header_filename(value: str) -> str:
     return ascii_name[:160]
 
 
+def clean_powershell_error(value: str) -> str:
+    """Convert PowerShell CLIXML errors into a short user-readable message."""
+    text = str(value or "").strip()
+    if "PP_WIA_ERROR:" in text:
+        return text.split("PP_WIA_ERROR:", 1)[1].splitlines()[0].strip()[:600]
+    fragments = re.findall(r'<S\s+S="Error">(.*?)</S>', text, flags=re.DOTALL | re.IGNORECASE)
+    if fragments:
+        text = "\n".join(html.unescape(fragment) for fragment in fragments)
+    text = html.unescape(text.replace("#< CLIXML", ""))
+    replacements = {
+        "_x000D__x000A_": "\n",
+        "_x000A_": "\n",
+        "_x000D_": "\n",
+        "_x0009_": "\t",
+    }
+    for encoded, decoded in replacements.items():
+        text = text.replace(encoded, decoded)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    meaningful = [
+        line for line in lines
+        if not line.startswith(("Au caractère Ligne:", "At line:", "+", "CategoryInfo", "FullyQualifiedErrorId"))
+    ]
+    return (meaningful[0] if meaningful else (lines[0] if lines else "Erreur WIA inconnue."))[:600]
+
+
 def powershell_path() -> str:
     return shutil.which("powershell.exe") or shutil.which("powershell") or "powershell.exe"
 
@@ -148,7 +174,7 @@ def run_powershell(script: str, *, extra_env: dict[str, str] | None = None, time
         env.update(extra_env)
     flags = 0x08000000 if platform.system().lower() == "windows" else 0
     process = subprocess.run(
-        [powershell_path(), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+        [powershell_path(), "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
@@ -159,7 +185,7 @@ def run_powershell(script: str, *, extra_env: dict[str, str] | None = None, time
     stdout = decode_process_output(process.stdout)
     stderr = decode_process_output(process.stderr)
     if process.returncode != 0:
-        raise RuntimeError(stderr or stdout or "Erreur WIA inconnue.")
+        raise RuntimeError(clean_powershell_error(stderr or stdout))
     return stdout
 
 
@@ -193,6 +219,7 @@ foreach($info in @($manager.DeviceInfos)) {
 WINDOWS_SCAN_SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+try {
 $selectedId = [string]$env:PP_SCANNER_DEVICE_ID
 $outputDir = [string]$env:PP_SCANNER_OUTPUT_DIR
 $resolution = 300
@@ -227,15 +254,33 @@ $png = '{B96B3CAF-0728-11D3-9D7B-0000F81EF32E}'
 $jpeg = '{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}'
 $bmp = '{B96B3CAB-0728-11D3-9D7B-0000F81EF32E}'
 $image = $null
-$requested = $png
-try { $image = $item.Transfer($png) } catch {
-    $requested = $jpeg
-    try { $image = $item.Transfer($jpeg) } catch {
-        $dialog = New-Object -ComObject WIA.CommonDialog
-        $image = $dialog.ShowTransfer($item, $jpeg, $true)
+$errors = New-Object System.Collections.Generic.List[string]
+
+# Most WIA drivers support direct JPEG transfer. Some Canon drivers prefer PNG.
+try { $image = $item.Transfer($jpeg) } catch { $errors.Add($_.Exception.Message) }
+if(-not $image) {
+    try { $image = $item.Transfer($png) } catch { $errors.Add($_.Exception.Message) }
+}
+
+# Driver-specific fallback: first transfer the selected item with the WIA
+# progress dialog, then show the full Windows acquisition UI if necessary.
+if(-not $image) {
+    $dialog = New-Object -ComObject WIA.CommonDialog
+    try { $image = $dialog.ShowTransfer($item, $jpeg, $false) } catch { $errors.Add($_.Exception.Message) }
+}
+if(-not $image) {
+    if(-not $dialog) { $dialog = New-Object -ComObject WIA.CommonDialog }
+    try {
+        $image = $dialog.ShowAcquireImage(1, 1, 131072, $jpeg, $true, $true, $false)
+    } catch {
+        $errors.Add($_.Exception.Message)
     }
 }
-if(-not $image) { throw 'La numérisation a été annulée ou aucune image n’a été reçue.' }
+if(-not $image) {
+    $details = ($errors | Where-Object { $_ } | Select-Object -Unique) -join ' | '
+    if($details) { throw ("Le scanner n'a retourné aucune image. " + $details) }
+    throw "Le scanner n'a retourné aucune image. Vérifiez le document et confirmez la fenêtre WIA."
+}
 
 $actual = [string]$image.FormatID
 if($actual -ne $png -and $actual -ne $jpeg -and $actual -ne $bmp) {
@@ -258,6 +303,10 @@ $image.SaveFile($outputPath)
 if(-not (Test-Path $outputPath)) { throw 'Le fichier scanné n’a pas été créé.' }
 
 [ordered]@{ path = $outputPath; mime = $mime; filename = ("scan-" + [DateTimeOffset]::Now.ToUnixTimeMilliseconds() + "." + $extension) } | ConvertTo-Json -Compress
+} catch {
+    [Console]::Error.WriteLine("PP_WIA_ERROR: " + $_.Exception.Message)
+    exit 1
+}
 """
 
 

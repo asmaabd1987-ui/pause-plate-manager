@@ -13,6 +13,9 @@ WINDOWS
 4. Rechargez Pause & Plate Manager.
 5. Ouvrez Scanner une facture ou Scan ventes journalières.
 
+Si le pilote refuse le transfert direct, une fenêtre WIA Windows s'ouvre:
+choisissez le Canon, confirmez les réglages puis lancez la numérisation.
+
 Le Bridge se lancera automatiquement à chaque ouverture de session Windows.
 
 MAC

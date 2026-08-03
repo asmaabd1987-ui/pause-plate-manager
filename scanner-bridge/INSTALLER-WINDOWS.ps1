@@ -64,9 +64,13 @@ $Shortcut.Save()
 $existing = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
     $_.CommandLine -and $_.CommandLine.Contains("pause_plate_scanner_bridge.py")
 }
-if (-not $existing) {
-    Start-Process -FilePath $PythonwExe -ArgumentList ('"' + $BridgeTarget + '"') -WorkingDirectory $InstallDir -WindowStyle Hidden
+if ($existing) {
+    $existing | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 1
 }
+Start-Process -FilePath $PythonwExe -ArgumentList ('"' + $BridgeTarget + '"') -WorkingDirectory $InstallDir -WindowStyle Hidden
 
 Start-Sleep -Seconds 3
 try {
