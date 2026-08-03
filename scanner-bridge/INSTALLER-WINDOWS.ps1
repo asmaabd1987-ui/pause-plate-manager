@@ -66,7 +66,16 @@ $existing = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-
 }
 if ($existing) {
     $existing | ForEach-Object {
-        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        $BridgeProcessId = $_.ProcessId
+        try {
+            Stop-Process -Id $BridgeProcessId -Force -ErrorAction Stop
+        } catch {
+            Write-Host "Le Bridge actif demande une autorisation administrateur pour etre remplace." -ForegroundColor Yellow
+            $ElevatedStop = Start-Process -FilePath "taskkill.exe" -Verb RunAs -ArgumentList @("/PID", [string]$BridgeProcessId, "/F") -Wait -PassThru
+            if ($ElevatedStop.ExitCode -ne 0) {
+                throw "Impossible d'arreter l'ancienne version du Scanner Bridge."
+            }
+        }
     }
     Start-Sleep -Seconds 1
 }
@@ -75,6 +84,11 @@ Start-Process -FilePath $PythonwExe -ArgumentList ('"' + $BridgeTarget + '"') -W
 Start-Sleep -Seconds 3
 try {
     $Health = Invoke-RestMethod -Uri "http://127.0.0.1:17891/health" -Method Get -TimeoutSec 8
+    $VersionLine = Get-Content -LiteralPath $BridgeTarget | Where-Object { $_ -match '^VERSION\s*=' } | Select-Object -First 1
+    $ExpectedVersion = [regex]::Match([string]$VersionLine, '"([^"]+)"').Groups[1].Value
+    if ($ExpectedVersion -and [string]$Health.version -ne $ExpectedVersion) {
+        throw ("L'ancienne version " + $Health.version + " est encore active au lieu de " + $ExpectedVersion + ".")
+    }
     Write-Host ""
     Write-Host "Scanner Bridge installe et lance avec succes." -ForegroundColor Green
     Write-Host ("Systeme: " + $Health.platform + " | Backend: " + $Health.backend)

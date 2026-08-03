@@ -32,7 +32,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-VERSION = "2.0.2"
+VERSION = "2.0.3"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 17891
 SCAN_LOCK = threading.Lock()
@@ -300,7 +300,7 @@ elseif($actual -eq $bmp) { $extension = 'bmp'; $mime = 'image/bmp' }
 $outputPath = Join-Path $outputDir ("scan." + $extension)
 if(Test-Path $outputPath) { Remove-Item -LiteralPath $outputPath -Force }
 $image.SaveFile($outputPath)
-if(-not (Test-Path $outputPath)) { throw 'Le fichier scanné n’a pas été créé.' }
+if(-not (Test-Path $outputPath)) { throw "Le fichier scanne n'a pas ete cree." }
 
 [ordered]@{ path = $outputPath; mime = $mime; filename = ("scan-" + [DateTimeOffset]::Now.ToUnixTimeMilliseconds() + "." + $extension) } | ConvertTo-Json -Compress
 } catch {
