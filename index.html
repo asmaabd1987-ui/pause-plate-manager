@@ -2172,17 +2172,25 @@
             </h3>
 
             <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:14px 0">
-                <button type="button" class="btn primary" onclick="ppScanInvoiceFromPC()">
-                    🖨️ Scan en temps réel
+                <button type="button" id="ppInvoiceScanFirstBtn" class="btn primary" onclick="ppScanInvoiceFromPC()">
+                    🖨️ Scanner la première page
+                </button>
+                <button type="button" id="ppInvoiceScanNextBtn" class="btn primary" style="display:none" onclick="ppScanInvoiceFromPC()">
+                    ➕ Scanner la page suivante
                 </button>
                 <button type="button" class="btn" onclick="ppSelectScannerPP('invoice')">
                     ⚙️ Choisir le scanner
+                </button>
+                <button type="button" id="ppInvoiceScanRestartBtn" class="btn" style="display:none" onclick="ppRestartInvoiceLiveScanPP()">
+                    ↻ Recommencer
                 </button>
             </div>
 
             <div id="ppInvoiceScannerStatus" class="scan-note" style="margin-bottom:12px">
                 Recherche du scanner sur Windows / Mac…
             </div>
+
+            <div id="ppInvoicePagesStatus" class="pp-invoice-pages-status" style="display:none"></div>
 
             <p>
                 Ou choisissez une image JPG, PNG, WEBP ou un fichier PDF.
@@ -2193,6 +2201,7 @@
                 type="file"
                 id="invoiceFile"
                 accept="image/*,application/pdf,.pdf"
+                multiple
                 onchange="handleInvoiceFile(event)"
             >
 

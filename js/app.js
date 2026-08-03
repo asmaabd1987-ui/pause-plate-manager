@@ -69,6 +69,14 @@ let scannedInvoiceData =
 let scannedPDFPages =
     [];
 
+// Pages acquired one by one from the local Windows/macOS scanner.
+// Each page keeps its OCR text and a local preview until the scan modal closes.
+let ppInvoiceLiveScanPages = [];
+let ppInvoiceScanBusy = false;
+let ppOCRWorkerPP = null;
+let ppOCRWorkerPromisePP = null;
+let ppOCRProgressLabelPP = "OCR";
+
 let editingProductId = null;
 let editingSupplierId = null;
 let editingMovementId = null;
@@ -1811,6 +1819,8 @@ function openScanModal(){
     scannedPDFPages =
         [];
 
+    ppResetInvoiceLiveScanPP();
+
 
     const input =
         document.getElementById(
@@ -1988,10 +1998,125 @@ function ppBase64ToFile(base64,mime,name){
     return new File([bytes],name||"scan.jpg",{type:mime||"image/jpeg"});
 }
 
+function ppResetInvoiceLiveScanPP(){
+    ppInvoiceLiveScanPages.forEach(page=>{
+        if(page.previewUrl)URL.revokeObjectURL(page.previewUrl);
+    });
+    ppInvoiceLiveScanPages=[];
+    ppInvoiceScanBusy=false;
+
+    const first=document.getElementById("ppInvoiceScanFirstBtn");
+    const next=document.getElementById("ppInvoiceScanNextBtn");
+    const restart=document.getElementById("ppInvoiceScanRestartBtn");
+    const pages=document.getElementById("ppInvoicePagesStatus");
+    if(first){first.style.display="";first.disabled=false;}
+    if(next){next.style.display="none";next.disabled=false;}
+    if(restart)restart.style.display="none";
+    if(pages){pages.style.display="none";pages.innerHTML="";}
+}
+
+function ppRestartInvoiceLiveScanPP(){
+    scannedInvoiceText="";
+    scannedInvoiceData=null;
+    scannedPDFPages=[];
+    ppResetInvoiceLiveScanPP();
+    const preview=document.getElementById("scanPreview");
+    if(preview)preview.innerHTML="";
+    const status=document.getElementById("ppInvoiceScannerStatus");
+    if(status){
+        status.textContent="Prêt à scanner la première page.";
+        status.style.color="#667085";
+    }
+}
+
+function ppRenderInvoiceLivePagesPP(){
+    const count=ppInvoiceLiveScanPages.length;
+    const first=document.getElementById("ppInvoiceScanFirstBtn");
+    const next=document.getElementById("ppInvoiceScanNextBtn");
+    const restart=document.getElementById("ppInvoiceScanRestartBtn");
+    const pages=document.getElementById("ppInvoicePagesStatus");
+    if(first)first.style.display=count?"none":"";
+    if(next){next.style.display=count?"":"none";next.disabled=ppInvoiceScanBusy;}
+    if(restart)restart.style.display=count?"":"none";
+    if(!pages)return;
+    if(!count){pages.style.display="none";pages.innerHTML="";return;}
+
+    pages.style.display="block";
+    pages.innerHTML=`
+        <div class="pp-invoice-pages-head">
+            <strong>📚 ${count} page(s) scannée(s)</strong>
+            <span>Ajoutez toutes les pages avant d'utiliser les informations.</span>
+        </div>
+        <div class="pp-invoice-pages-list">
+            ${ppInvoiceLiveScanPages.map((page,index)=>`
+                <div class="pp-invoice-page-chip">
+                    <a href="${page.previewUrl}" target="_blank" rel="noopener" title="Ouvrir l'image scannée">
+                        <img src="${page.previewUrl}" alt="Page ${index+1}">
+                    </a>
+                    <div>
+                        <strong>Page ${index+1}</strong>
+                        <small>${page.textLength} caractères OCR</small>
+                        <small>${page.qualityLabel}</small>
+                    </div>
+                    <button type="button" title="Supprimer cette page" onclick="ppRemoveInvoiceLivePagePP(${index})">×</button>
+                </div>
+            `).join("")}
+        </div>`;
+}
+
+function ppCombineInvoiceLiveTextPP(){
+    return ppInvoiceLiveScanPages.map((page,index)=>
+        `\n===== PAGE ${index+1} =====\n${page.text||""}\n`
+    ).join("\n");
+}
+
+function ppRemoveInvoiceLivePagePP(index){
+    const page=ppInvoiceLiveScanPages[index];
+    if(!page)return;
+    if(page.previewUrl)URL.revokeObjectURL(page.previewUrl);
+    ppInvoiceLiveScanPages.splice(index,1);
+    scannedInvoiceText=ppCombineInvoiceLiveTextPP();
+    scannedPDFPages=[];
+    ppRenderInvoiceLivePagesPP();
+    if(ppInvoiceLiveScanPages.length){
+        finishScan();
+    }else{
+        scannedInvoiceData=null;
+        const preview=document.getElementById("scanPreview");
+        if(preview)preview.innerHTML="";
+    }
+}
+
+async function ppAddInvoiceLivePagePP(file){
+    const pageNumber=ppInvoiceLiveScanPages.length+1;
+    const text=await ppRecognizeInvoiceImagePP(file,`Page ${pageNumber}`);
+    const score=ppScoreOCRTextPP(text);
+    const previewUrl=URL.createObjectURL(file);
+    ppInvoiceLiveScanPages.push({
+        text:String(text||""),
+        textLength:String(text||"").trim().length,
+        qualityScore:score,
+        qualityLabel:score>=55?"OCR bon":score>=25?"OCR partiel":"OCR faible — vérifiez l'aperçu",
+        previewUrl,
+        fileName:file.name||`scan-page-${pageNumber}.jpg`
+    });
+    scannedInvoiceText=ppCombineInvoiceLiveTextPP();
+    scannedPDFPages=[];
+    finishScan();
+    ppRenderInvoiceLivePagesPP();
+    return ppInvoiceLiveScanPages[ppInvoiceLiveScanPages.length-1];
+}
+
 async function ppScanFromPCScanner(purpose){
     const status=ppScannerStatusElementPP(purpose);
+    if(purpose==="invoice"&&ppInvoiceScanBusy)return;
+    if(purpose==="invoice"){
+        ppInvoiceScanBusy=true;
+        ppRenderInvoiceLivePagesPP();
+    }
     if(status){
-        status.textContent="Connexion au scanner...";
+        const pageNumber=purpose==="invoice"?ppInvoiceLiveScanPages.length+1:"";
+        status.textContent=purpose==="invoice"?`Connexion au scanner — page ${pageNumber}...`:"Connexion au scanner...";
         status.style.color="#667085";
     }
 
@@ -2002,7 +2127,8 @@ async function ppScanFromPCScanner(purpose){
         const scanner=ppChooseScanner(scanners);
 
         if(status){
-            status.textContent=`Scanner sélectionné : ${scanner.name||scanner.id} — numérisation en cours...`;
+            const pageLabel=purpose==="invoice"?`page ${ppInvoiceLiveScanPages.length+1} — `:"";
+            status.textContent=`Scanner sélectionné : ${scanner.name||scanner.id} — ${pageLabel}numérisation en cours...`;
         }
 
         const response=await ppScannerFetch("/scan-file",{
@@ -2042,8 +2168,13 @@ async function ppScanFromPCScanner(purpose){
         if(status)status.textContent="Scan reçu — analyse OCR...";
 
         if(purpose==="invoice"){
-            await scanImageImproved(file);
-            if(status)status.textContent="✅ Facture scannée et analysée.";
+            const page=await ppAddInvoiceLivePagePP(file);
+            if(status){
+                status.innerHTML=page.qualityScore>=25
+                    ?`✅ Page ${ppInvoiceLiveScanPages.length} scannée et analysée. Ajoutez la page suivante si nécessaire.`
+                    :`⚠️ Page ${ppInvoiceLiveScanPages.length} reçue, mais l'OCR reste faible. Vérifiez l'aperçu puis rescanner si l'image est pâle ou inclinée.`;
+                status.style.color=page.qualityScore>=25?"#067647":"#b54708";
+            }
         }else{
             ppDailyScanText=await extractDailySalesTextPP(file);
             ppDailyScanMatches=parseDailySalesTextPP(ppDailyScanText);
@@ -2060,6 +2191,11 @@ async function ppScanFromPCScanner(purpose){
                 "<br><small>Vérifiez que Pause & Plate Scanner Bridge est lancé et que le scanner est connecté sur Windows / Mac.</small>";
             status.style.color="#b42318";
         }
+    }finally{
+        if(purpose==="invoice"){
+            ppInvoiceScanBusy=false;
+            ppRenderInvoiceLivePagesPP();
+        }
     }
 }
 
@@ -2067,88 +2203,38 @@ function ppScanInvoiceFromPC(){ return ppScanFromPCScanner("invoice"); }
 function ppScanDailySalesFromPC(){ return ppScanFromPCScanner("daily-sales"); }
 
 async function handleInvoiceFile(event){
-
-    const file =
-        event.target.files?.[0];
-
-
-    if(!file){
-
-        return;
-
-    }
-
+    const files=Array.from(event.target.files||[]);
+    if(!files.length)return;
 
     try{
-
-        if(
-            file.type ===
-            "application/pdf"
-
-            ||
-
-            file.name
-                .toLowerCase()
-                .endsWith(
-                    ".pdf"
-                )
-        ){
-
-            await scanPDFSmart(
-                file
-            );
-
+        const pdfFiles=files.filter(file=>file.type==="application/pdf"||file.name.toLowerCase().endsWith(".pdf"));
+        const imageFiles=files.filter(file=>String(file.type||"").startsWith("image/"));
+        if(pdfFiles.length){
+            if(files.length!==1)throw new Error("Choisissez soit un seul PDF multipage, soit plusieurs images.");
+            ppResetInvoiceLiveScanPP();
+            await scanPDFSmart(pdfFiles[0]);
             return;
-
         }
+        if(imageFiles.length!==files.length)throw new Error("Format non supporté.");
 
-
-        if(
-            file.type
-                .startsWith(
-                    "image/"
-                )
-        ){
-
-            await scanImageImproved(
-                file
-            );
-
-            return;
-
+        ppResetInvoiceLiveScanPP();
+        scannedInvoiceText="";
+        scannedInvoiceData=null;
+        scannedPDFPages=[];
+        for(let index=0;index<imageFiles.length;index++){
+            showPDFTextProgress(`OCR de l'image ${index+1}/${imageFiles.length}...`,Math.max(5,Math.round(index/imageFiles.length*90)));
+            await ppAddInvoiceLivePagePP(imageFiles[index]);
         }
-
-
-        throw new Error(
-            "Format non supporté."
-        );
-
+        const status=document.getElementById("ppInvoiceScannerStatus");
+        if(status){
+            status.textContent=`✅ ${imageFiles.length} image(s) importée(s) et analysée(s).`;
+            status.style.color="#067647";
+        }
+    }catch(error){
+        console.error(error);
+        const preview=document.getElementById("scanPreview");
+        if(preview)preview.innerHTML=`<div class="scan-note">❌ Erreur pendant l'analyse.<br><br>${escapeHTML(error.message)}</div>`;
     }
-    catch(error){
-
-        console.error(
-            error
-        );
-
-
-        document.getElementById(
-            "scanPreview"
-        ).innerHTML = `
-
-            <div class="scan-note">
-
-                ❌ Erreur pendant l'analyse.
-
-                <br><br>
-
-                ${escapeHTML(error.message)}
-
-            </div>
-
-        `;
-
-    }
-
 }
 
 
@@ -2732,74 +2818,43 @@ async function scanPDFWithOCRFallback(pdf){
 ========================================================= */
 
 async function scanImageImproved(file){
-
-    const imageBitmap =
-        await createImageBitmap(
-            file
-        );
-
-
-    const canvas =
-        document.createElement(
-            "canvas"
-        );
-
-
-    canvas.width =
-        Math.round(
-            imageBitmap.width *
-            2.5
-        );
-
-
-    canvas.height =
-        Math.round(
-            imageBitmap.height *
-            2.5
-        );
-
-
-    const context =
-        canvas.getContext(
-            "2d"
-        );
-
-
-    context.drawImage(
-
-        imageBitmap,
-
-        0,
-
-        0,
-
-        canvas.width,
-
-        canvas.height
-
-    );
-
-
-    scannedInvoiceText =
-        await runDualOCR(
-
-            canvas,
-
-            preprocessCanvas(
-                canvas
-            ),
-
-            "Image"
-
-        );
-
-
-    scannedPDFPages =
-        [];
-
-
+    scannedInvoiceText=await ppRecognizeInvoiceImagePP(file,"Image");
+    scannedPDFPages=[];
     finishScan();
+}
 
+async function ppRecognizeInvoiceImagePP(file,label="Image"){
+    if(typeof Tesseract==="undefined")throw new Error("Tesseract OCR n'est pas chargé.");
+    const imageBitmap=await createImageBitmap(file);
+    try{
+        const canvas=ppPrepareOCRCanvasPP(imageBitmap);
+        return await runDualOCR(canvas,preprocessCanvas(canvas,false),label);
+    }finally{
+        if(typeof imageBitmap.close==="function")imageBitmap.close();
+    }
+}
+
+function ppPrepareOCRCanvasPP(imageSource){
+    const sourceWidth=Math.max(1,Number(imageSource.width||1));
+    const sourceHeight=Math.max(1,Number(imageSource.height||1));
+    const longest=Math.max(sourceWidth,sourceHeight);
+    let scale=1;
+    if(longest>3800)scale=3800/longest;
+    else if(longest<1900)scale=1900/longest;
+    const maxPixels=12000000;
+    if(sourceWidth*sourceHeight*scale*scale>maxPixels){
+        scale=Math.sqrt(maxPixels/(sourceWidth*sourceHeight));
+    }
+    const canvas=document.createElement("canvas");
+    canvas.width=Math.max(1,Math.round(sourceWidth*scale));
+    canvas.height=Math.max(1,Math.round(sourceHeight*scale));
+    const context=canvas.getContext("2d",{willReadFrequently:true});
+    context.fillStyle="#fff";
+    context.fillRect(0,0,canvas.width,canvas.height);
+    context.imageSmoothingEnabled=true;
+    context.imageSmoothingQuality="high";
+    context.drawImage(imageSource,0,0,canvas.width,canvas.height);
+    return canvas;
 }
 
 
@@ -2812,53 +2867,105 @@ async function runDualOCR(
     processedCanvas,
     label
 ){
+    const worker=await ppGetOCRWorkerPP();
+    const autoPSM=Tesseract.PSM?.AUTO||"3";
+    const sparsePSM=Tesseract.PSM?.SPARSE_TEXT||"11";
+    const candidates=[];
 
-    const originalBlob =
-        await canvasToBlob(
-            originalCanvas
-        );
+    async function recognize(canvas,name,psm){
+        ppOCRProgressLabelPP=`${label} — ${name}`;
+        if(worker.setParameters){
+            await worker.setParameters({
+                tessedit_pageseg_mode:psm,
+                preserve_interword_spaces:"1",
+                user_defined_dpi:"300"
+            });
+        }
+        const blob=await canvasToBlob(canvas);
+        const result=await worker.recognize(blob);
+        const text=String(result?.data?.text||"").trim();
+        const confidence=Number(result?.data?.confidence||0);
+        const score=ppScoreOCRTextPP(text)+Math.max(0,confidence)*0.15;
+        candidates.push({text,score,confidence,name});
+    }
 
+    await recognize(originalCanvas,"lecture naturelle",autoPSM);
+    await recognize(processedCanvas,"contraste renforcé",autoPSM);
 
-    const processedBlob =
-        await canvasToBlob(
-            processedCanvas
-        );
+    let best=ppBestOCRCandidatePP(candidates);
+    if(!best||best.score<45){
+        await recognize(preprocessCanvas(originalCanvas,true),"noir et blanc",sparsePSM);
+        best=ppBestOCRCandidatePP(candidates);
+    }
 
+    if(!best||best.score<35){
+        const rotation=originalCanvas.width>originalCanvas.height?90:180;
+        const rotated=ppRotateCanvasPP(processedCanvas,rotation);
+        await recognize(rotated,`rotation ${rotation}°`,autoPSM);
+        best=ppBestOCRCandidatePP(candidates);
+        if(rotation===90&&(!best||best.score<35)){
+            await recognize(ppRotateCanvasPP(processedCanvas,270),"rotation 270°",autoPSM);
+            best=ppBestOCRCandidatePP(candidates);
+        }
+    }
 
-    const original =
-        await Tesseract.recognize(
+    return best?.text||"";
+}
 
-            originalBlob,
+async function ppGetOCRWorkerPP(){
+    if(ppOCRWorkerPP)return ppOCRWorkerPP;
+    if(ppOCRWorkerPromisePP)return ppOCRWorkerPromisePP;
+    if(typeof Tesseract==="undefined"||typeof Tesseract.createWorker!=="function"){
+        throw new Error("Le moteur OCR Tesseract est indisponible.");
+    }
+    ppOCRWorkerPromisePP=(async()=>{
+        const worker=await Tesseract.createWorker("fra+eng",1,{
+            logger(message){
+                if(message?.status==="recognizing text"){
+                    const percent=Math.max(1,Math.min(99,Math.round(Number(message.progress||0)*100)));
+                    showPDFTextProgress(`${ppOCRProgressLabelPP}...`,percent);
+                }
+            }
+        });
+        ppOCRWorkerPP=worker;
+        return worker;
+    })();
+    try{return await ppOCRWorkerPromisePP;}
+    catch(error){ppOCRWorkerPromisePP=null;ppOCRWorkerPP=null;throw error;}
+}
 
-            "fra+eng"
+function ppScoreOCRTextPP(text){
+    const value=String(text||"").trim();
+    if(!value)return 0;
+    const letters=(value.match(/[A-Za-zÀ-ÿ]/g)||[]).length;
+    const numbers=(value.match(/\d/g)||[]).length;
+    const words=(value.match(/[A-Za-zÀ-ÿ]{3,}/g)||[]).length;
+    const normalized=normalizeText(value);
+    let score=Math.min(45,letters/8)+Math.min(25,numbers/2)+Math.min(20,words/2);
+    ["facture","designation","article","quantite","prix","total","tva","ttc","ice"].forEach(keyword=>{
+        if(normalized.includes(keyword))score+=8;
+    });
+    const replacementChars=(value.match(/[�]/g)||[]).length;
+    score-=replacementChars*5;
+    return Math.max(0,score);
+}
 
-        );
+function ppBestOCRCandidatePP(candidates){
+    return [...(candidates||[])].sort((a,b)=>b.score-a.score||b.text.length-a.text.length)[0]||null;
+}
 
-
-    const processed =
-        await Tesseract.recognize(
-
-            processedBlob,
-
-            "fra+eng"
-
-        );
-
-
-    return String(
-        processed.data.text ||
-        ""
-    ).length
-    >
-    String(
-        original.data.text ||
-        ""
-    ).length
-    ?
-    processed.data.text
-    :
-    original.data.text;
-
+function ppRotateCanvasPP(sourceCanvas,degrees){
+    const swap=Math.abs(degrees)%180===90;
+    const canvas=document.createElement("canvas");
+    canvas.width=swap?sourceCanvas.height:sourceCanvas.width;
+    canvas.height=swap?sourceCanvas.width:sourceCanvas.height;
+    const ctx=canvas.getContext("2d");
+    ctx.fillStyle="#fff";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.translate(canvas.width/2,canvas.height/2);
+    ctx.rotate(degrees*Math.PI/180);
+    ctx.drawImage(sourceCanvas,-sourceCanvas.width/2,-sourceCanvas.height/2);
+    return canvas;
 }
 
 
@@ -2866,41 +2973,54 @@ async function runDualOCR(
    PREPROCESS
 ========================================================= */
 
-function preprocessCanvas(sourceCanvas){
-
-    const canvas =
-        document.createElement(
-            "canvas"
-        );
-
-
-    canvas.width =
-        sourceCanvas.width;
-
-
-    canvas.height =
-        sourceCanvas.height;
-
-
-    const ctx =
-        canvas.getContext(
-            "2d"
-        );
-
-
-    ctx.drawImage(
-
-        sourceCanvas,
-
-        0,
-
-        0
-
-    );
-
-
+function preprocessCanvas(sourceCanvas,binary=false){
+    const canvas=document.createElement("canvas");
+    canvas.width=sourceCanvas.width;
+    canvas.height=sourceCanvas.height;
+    const ctx=canvas.getContext("2d",{willReadFrequently:true});
+    ctx.drawImage(sourceCanvas,0,0);
+    const imageData=ctx.getImageData(0,0,canvas.width,canvas.height);
+    const data=imageData.data;
+    const histogram=new Uint32Array(256);
+    for(let index=0;index<data.length;index+=4){
+        const gray=Math.max(0,Math.min(255,Math.round(data[index]*0.299+data[index+1]*0.587+data[index+2]*0.114)));
+        histogram[gray]++;
+    }
+    const pixels=Math.max(1,data.length/4);
+    let low=0,high=255,total=0;
+    const lowTarget=pixels*0.01,highTarget=pixels*0.99;
+    for(let i=0;i<256;i++){total+=histogram[i];if(total<=lowTarget)low=i;if(total<highTarget)high=i;}
+    if(high-low<45){low=Math.max(0,low-25);high=Math.min(255,high+25);}
+    const threshold=ppOtsuThresholdPP(histogram,pixels);
+    const span=Math.max(1,high-low);
+    for(let index=0;index<data.length;index+=4){
+        let gray=data[index]*0.299+data[index+1]*0.587+data[index+2]*0.114;
+        gray=Math.max(0,Math.min(255,(gray-low)*255/span));
+        gray=Math.round(255*Math.pow(gray/255,0.88));
+        if(binary)gray=gray<Math.max(115,Math.min(220,threshold))?0:255;
+        data[index]=data[index+1]=data[index+2]=gray;
+        data[index+3]=255;
+    }
+    ctx.putImageData(imageData,0,0);
     return canvas;
+}
 
+function ppOtsuThresholdPP(histogram,totalPixels){
+    let sum=0;
+    for(let i=0;i<256;i++)sum+=i*histogram[i];
+    let backgroundWeight=0,backgroundSum=0,maxVariance=0,threshold=180;
+    for(let i=0;i<256;i++){
+        backgroundWeight+=histogram[i];
+        if(!backgroundWeight)continue;
+        const foregroundWeight=totalPixels-backgroundWeight;
+        if(!foregroundWeight)break;
+        backgroundSum+=i*histogram[i];
+        const meanBackground=backgroundSum/backgroundWeight;
+        const meanForeground=(sum-backgroundSum)/foregroundWeight;
+        const variance=backgroundWeight*foregroundWeight*Math.pow(meanBackground-meanForeground,2);
+        if(variance>maxVariance){maxVariance=variance;threshold=i;}
+    }
+    return threshold;
 }
 
 
@@ -3795,30 +3915,11 @@ function extractProductsFromStructuredPDF(pages){
 
 
 function isTableHeader(normalized){
-
-    return (
-
-        normalized.includes(
-            "designation"
-        )
-
-        &&
-
-        (
-            normalized.includes(
-                "quantite"
-            )
-            ||
-            normalized.includes(
-                "prix"
-            )
-            ||
-            normalized.includes(
-                "p.u"
-            )
-        )
-
-    );
+    const value=normalizeText(normalized);
+    const hasName=/(designation|description|article|produit|libelle)/.test(value);
+    const hasQuantity=/(quantite|qte|qty)/.test(value);
+    const hasPrice=/(prix|p\s*[.]?\s*u|unitaire|montant)/.test(value);
+    return hasName&&(hasQuantity||hasPrice);
 
 }
 
@@ -4207,6 +4308,17 @@ function parseStructuredPDFRow(columns){
 
 function extractProductsFromTextTable(text){
 
+    const pageChunks=String(text||"")
+        .split(/^\s*=+\s*PAGE\s+\d+\s*=+\s*$/gmi)
+        .map(chunk=>chunk.trim())
+        .filter(Boolean);
+
+    if(pageChunks.length>1){
+        return deduplicateScannedProducts(
+            pageChunks.flatMap(chunk=>extractProductsFromTextTable(chunk))
+        );
+    }
+
     const lines =
         getCleanLines(
             text
@@ -4245,11 +4357,9 @@ function extractProductsFromTextTable(text){
     }
 
 
-    if(start === -1){
-
-        return [];
-
-    }
+    // OCR can deform a table header even when product rows remain readable.
+    // In that case analyse all plausible rows instead of returning nothing.
+    if(start === -1)start=0;
 
 
     for(
@@ -4305,6 +4415,10 @@ function parseTextProductLine(line){
         isAdministrativeText(
             normalized
         )
+        ||
+        looksLikeAddressLine(
+            normalized
+        )
     ){
 
         return null;
@@ -4348,16 +4462,29 @@ function parseTextProductLine(line){
 
         });
 
+    const business=values.filter(value=>!String(value.raw).includes("%"));
+    if(business.length<2)return null;
 
-    const name =
-        cleanProductName(
+    let quantityItem=business[business.length-2];
+    let priceItem=business[business.length-1];
+    let detectedLineTotal=0;
+    if(business.length>=3){
+        const possibleQuantity=business[business.length-3];
+        const possiblePrice=business[business.length-2];
+        const possibleTotal=business[business.length-1];
+        const calculated=Number(possibleQuantity.value)*Number(possiblePrice.value);
+        const tolerance=Math.max(0.08,Math.abs(Number(possibleTotal.value))*0.04);
+        if(calculated>0&&Math.abs(calculated-Number(possibleTotal.value))<=tolerance){
+            quantityItem=possibleQuantity;
+            priceItem=possiblePrice;
+            detectedLineTotal=Number(possibleTotal.value);
+        }
+    }
 
-            line.substring(
-                0,
-                values[0].index
-            )
-
-        );
+    const name = cleanProductName(
+        line.substring(0,quantityItem.index)
+            .replace(/^\s*(?:[A-Z]{1,4}[-/.]?)?\d{3,}[A-Z0-9\-/.]*\s+/i,"")
+    );
 
 
     if(
@@ -4391,17 +4518,10 @@ function parseTextProductLine(line){
     }
 
 
-    const quantity =
-        values[0].value;
-
-
-    const price =
-        values[1].value;
-
-
-    const totalHT =
-        quantity *
-        price;
+    const quantity=Number(quantityItem.value);
+    const price=Number(priceItem.value);
+    if(quantity<=0||quantity>1000000||price<0||price>10000000)return null;
+    const totalHT=detectedLineTotal||quantity*price;
 
 
     const vatAmount =
@@ -4610,6 +4730,12 @@ function extractSupplierName(text){
 
                 &&
 
+                !/(facture|invoice|avoir|bon de livraison)/.test(
+                    normalized
+                )
+
+                &&
+
                 !looksLikeAddressLine(
                     normalized
                 )
@@ -4663,6 +4789,12 @@ function extractSupplierName(text){
 ========================================================= */
 
 function extractInvoiceNumber(text){
+
+    const direct=String(text||"").match(
+        /(?:facture|invoice)\s*(?:n(?:[°ºo]|umero)?|no|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9/_.-]{2,})/i
+    );
+
+    if(direct&&/\d/.test(direct[1]))return direct[1];
 
     const lines =
         getCleanLines(
@@ -4905,6 +5037,13 @@ function renderScanResult(){
 
     }
 
+    const livePageCount=ppInvoiceLiveScanPages.length;
+    const rawOCRText=String(scannedInvoiceText||"").trim();
+    const hasUsefulData=Boolean(
+        scannedInvoiceData.products.length||scannedInvoiceData.number||scannedInvoiceData.date||
+        scannedInvoiceData.totalHT||scannedInvoiceData.tvaAmount||scannedInvoiceData.totalTTC
+    );
+
 
     const supplierName =
         scannedInvoiceData.supplier
@@ -4947,6 +5086,20 @@ function renderScanResult(){
             <h3>
                 ✅ Facture analysée
             </h3>
+
+            ${livePageCount?`
+                <div class="pp-ocr-pages-guidance">
+                    <strong>${livePageCount} page(s) intégrée(s).</strong>
+                    Si la facture continue, cliquez sur « Scanner la page suivante » avant d'utiliser les informations.
+                </div>
+            `:""}
+
+            ${!hasUsefulData?`
+                <div class="pp-ocr-warning">
+                    ⚠️ L'OCR a lu ${rawOCRText.length} caractère(s), mais aucune donnée fiable n'a été reconnue.
+                    Vérifiez l'aperçu de la page, le sens du document et le réglage 300 DPI.
+                </div>
+            `:""}
 
 
             <div class="ocr-summary">
@@ -5038,7 +5191,8 @@ function renderScanResult(){
                 <div class="ocr-products-list">
 
                     ${
-                        scannedInvoiceData.products
+                        scannedInvoiceData.products.length
+                        ? scannedInvoiceData.products
                         .map(function(product){
 
                             return `
@@ -5077,11 +5231,17 @@ function renderScanResult(){
 
                         })
                         .join("")
+                        : `<div class="ocr-product-item">Aucun article détecté sur les pages analysées.</div>`
                     }
 
                 </div>
 
             </div>
+
+            <details class="pp-ocr-details">
+                <summary>Afficher le texte réellement lu par l'OCR (${rawOCRText.length} caractères)</summary>
+                <div class="ocr-raw-text">${escapeHTML(rawOCRText||"Aucun texte lu.")}</div>
+            </details>
 
 
             <button
@@ -5089,6 +5249,7 @@ function renderScanResult(){
                 class="btn primary"
                 style="margin-top:18px;"
                 onclick="useScannedInvoiceData()"
+                ${hasUsefulData?"":"disabled"}
             >
 
                 ➕ Utiliser ces informations
@@ -5753,7 +5914,7 @@ function deduplicateScannedProducts(items){
 
 
 function isAdministrativeText(normalized){
-
+    const value=normalizeText(normalized).replace(/^[^a-z0-9]+/i,"");
     return [
 
         "total",
@@ -5774,11 +5935,11 @@ function isAdministrativeText(normalized){
         "references bancaires"
 
     ]
-    .some(function(value){
+    .some(function(prefix){
 
-        return normalized.startsWith(
+        return value.startsWith(
             normalizeText(
-                value
+                prefix
             )
         );
 

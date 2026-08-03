@@ -1487,6 +1487,102 @@ tr:hover td{
 
 }
 
+.pp-invoice-pages-status{
+    margin:12px 0 16px;
+    padding:12px;
+    text-align:left;
+    border:1px solid #b8d8c7;
+    border-radius:12px;
+    background:#f3fbf6;
+}
+
+.pp-invoice-pages-head{
+    display:flex;
+    gap:6px;
+    flex-direction:column;
+    margin-bottom:10px;
+    color:var(--green);
+}
+
+.pp-invoice-pages-head span{
+    color:var(--muted);
+    font-size:12px;
+}
+
+.pp-invoice-pages-list{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(175px,1fr));
+    gap:8px;
+}
+
+.pp-invoice-page-chip{
+    display:grid;
+    grid-template-columns:48px 1fr 26px;
+    gap:9px;
+    align-items:center;
+    padding:8px;
+    background:#fff;
+    border:1px solid var(--border);
+    border-radius:9px;
+}
+
+.pp-invoice-page-chip img{
+    width:48px;
+    height:62px;
+    object-fit:contain;
+    background:#f4f4f4;
+    border-radius:5px;
+}
+
+.pp-invoice-page-chip small{
+    display:block;
+    margin-top:2px;
+    color:var(--muted);
+    font-size:10px;
+}
+
+.pp-invoice-page-chip button{
+    width:24px;
+    height:24px;
+    padding:0;
+    border:0;
+    border-radius:50%;
+    color:#b42318;
+    background:#fee4e2;
+    cursor:pointer;
+}
+
+.pp-ocr-pages-guidance,
+.pp-ocr-warning{
+    margin-top:12px;
+    padding:11px 12px;
+    text-align:left;
+    border-radius:9px;
+    font-size:12px;
+    line-height:1.5;
+}
+
+.pp-ocr-pages-guidance{
+    color:#075b35;
+    background:#eaf7ef;
+}
+
+.pp-ocr-warning{
+    color:#8a3b12;
+    background:#fff2df;
+    border:1px solid #f5c98b;
+}
+
+.pp-ocr-details{
+    margin-top:14px;
+}
+
+.pp-ocr-details summary{
+    cursor:pointer;
+    color:var(--green);
+    font-weight:700;
+}
+
 
 /* =========================================
    OCR LOADING
