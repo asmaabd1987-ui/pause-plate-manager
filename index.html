@@ -173,6 +173,20 @@
 
         <button
             class="nav-item"
+            data-page="cash"
+        >
+
+            💳
+
+            <span>
+                Caisse & Clôture
+            </span>
+
+        </button>
+
+
+        <button
+            class="nav-item"
             data-page="tva"
         >
 
@@ -236,6 +250,15 @@
             >
                 🕘
                 <span>Journal d'activité</span>
+            </button>
+
+            <button
+                class="nav-item"
+                type="button"
+                data-page="exports"
+            >
+                💾
+                <span>Sauvegarde & Exports</span>
             </button>
         </div>
 
@@ -1167,6 +1190,53 @@
             </div>
 
 
+            <!-- CASH CLOSING -->
+
+            <div
+                id="cashPage"
+                class="page"
+            >
+
+                <div class="page-actions">
+
+                    <div>
+
+                        <h2>
+                            💳 Caisse & Clôture
+                        </h2>
+
+                        <p>
+                            Contrôlez les encaissements et clôturez chaque journée.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div class="section">
+
+                    <div class="empty-state">
+
+                        <div>
+                            💳
+                        </div>
+
+                        <h3>
+                            Caisse journalière
+                        </h3>
+
+                        <p>
+                            Chargement de la situation de caisse…
+                        </p>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
             <!-- TVA -->
 
             <div
@@ -1299,6 +1369,53 @@
 
                         <p>
                             Cette section sera bientôt disponible.
+                        </p>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- BACKUPS & EXPORTS -->
+
+            <div
+                id="exportsPage"
+                class="page"
+            >
+
+                <div class="page-actions">
+
+                    <div>
+
+                        <h2>
+                            💾 Sauvegarde & Exports
+                        </h2>
+
+                        <p>
+                            Sauvegardez, restaurez et exportez les données du Manager.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div class="section">
+
+                    <div class="empty-state">
+
+                        <div>
+                            💾
+                        </div>
+
+                        <h3>
+                            Centre d’exports
+                        </h3>
+
+                        <p>
+                            Chargement des outils d’export…
                         </p>
 
                     </div>
@@ -2091,6 +2208,13 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 
+<!-- EXPORT PDF DIRECT -->
+<script src="https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@5.0.8/dist/jspdf.plugin.autotable.min.js"></script>
+
+<!-- EXPORT EXCEL DIRECT -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
 <!-- PAUSE & PLATE APP -->
 
 <script src="js/fiches-techniques-data.js"></script>
@@ -2101,6 +2225,10 @@
 
 <script 
     src="js/reports.js"
+></script>
+
+<script
+    src="js/cash-exports.js"
 ></script>
 
 </body>
