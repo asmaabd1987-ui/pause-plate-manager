@@ -35,6 +35,15 @@ if ! "$PYTHON_BIN" -m pip install --user --disable-pip-version-check --quiet --b
     fi
 fi
 
+if [ ! -x "/Applications/NAPS2.app/Contents/MacOS/NAPS2" ] && [ ! -x "$HOME/Applications/NAPS2.app/Contents/MacOS/NAPS2" ]; then
+    if command -v brew >/dev/null 2>&1; then
+        echo "Installation du moteur universel Apple / AirScan…"
+        brew install --cask naps2 || echo "AVERTISSEMENT: NAPS2 indisponible; SANE et AirScan natif resteront actifs."
+    else
+        echo "AVERTISSEMENT: NAPS2 non installé; SANE et AirScan natif resteront actifs."
+    fi
+fi
+
 if ! command -v scanimage >/dev/null 2>&1 && [ ! -x /opt/homebrew/bin/scanimage ] && [ ! -x /usr/local/bin/scanimage ]; then
     if command -v brew >/dev/null 2>&1; then
         echo "Installation du pilote universel SANE…"

@@ -8,7 +8,8 @@ reste uniquement sur votre ordinateur (127.0.0.1) et transmet l'image scannée
 WINDOWS
 -------
 1. Connectez et allumez le scanner.
-2. Installez le pilote officiel du fabricant avec prise en charge WIA.
+2. Installez le pilote scanner officiel du fabricant (WIA ou TWAIN). Le pilote
+   d'impression seul ne permet pas de numériser.
 3. Double-cliquez sur INSTALLER-WINDOWS.bat.
 4. Rechargez Pause & Plate Manager.
 5. Ouvrez Scanner une facture ou Scan ventes journalières.
@@ -20,11 +21,12 @@ La version 2.0.4 remet automatiquement la zone WIA à zéro et numérise la
 surface A4 complète afin d'éviter qu'un ancien cadrage ne coupe le bas de la
 facture.
 
-SCANNERS RÉSEAU — VERSION 2.1.0
+SCANNERS RÉSEAU — VERSION 2.2.0
 -------------------------------
-- Windows: les scanners WIA/WSD ajoutés à Windows sont détectés, ainsi que les
-  scanners AirScan/eSCL annoncés automatiquement sur le réseau local.
-- Mac: les scanners SANE et AirScan/eSCL sont réunis dans la même liste.
+- Windows: les scanners WIA, Network TWAIN et AirScan/eSCL sont réunis dans la
+  même liste. L'installateur ajoute automatiquement le moteur NAPS2.
+- Mac: les scanners SANE, Apple Image Capture et AirScan/eSCL sont réunis dans
+  la même liste.
 - L'ordinateur et le scanner doivent être sur le même réseau Wi-Fi/LAN.
 - Activez « AirScan/eSCL », « WSD Scan » ou « Scan depuis un ordinateur » dans
   les paramètres réseau du scanner si le fabricant désactive cette option.
@@ -32,6 +34,15 @@ SCANNERS RÉSEAU — VERSION 2.1.0
 
 Dans Pause & Plate Manager, cliquez sur « Choisir le scanner »: les appareils
 réseau sont marqués avec l'icône réseau et peuvent être utilisés directement.
+
+Les anciens multifonctions réseau, par exemple KONICA MINOLTA bizhub 225i,
+utilisent Network TWAIN. Installez leur pilote TWAIN officiel sur chaque PC;
+le simple pilote imprimante (port IP) ne suffit pas. Une fois le pilote TWAIN
+installé, le Bridge le détecte automatiquement sur le réseau courant.
+
+La découverte fonctionne dans n'importe quel établissement, mais uniquement
+pour les scanners accessibles sur le réseau local actuel. Les scanners situés
+sur un autre réseau nécessitent un VPN ou un service de partage sécurisé.
 
 Le Bridge se lancera automatiquement à chaque ouverture de session Windows.
 
@@ -58,7 +69,7 @@ SI AUCUN SCANNER N'EST DÉTECTÉ
 ------------------------------
 - Vérifiez le câble USB / réseau et l'alimentation.
 - Fermez les autres logiciels qui utilisent le scanner.
-- Windows: installez ou mettez à jour le pilote WIA du fabricant.
+- Windows: installez ou mettez à jour le pilote scanner WIA/TWAIN du fabricant.
 - Mac: vérifiez que scanimage -L affiche le scanner.
 - Rechargez ensuite la page Pause & Plate Manager.
 

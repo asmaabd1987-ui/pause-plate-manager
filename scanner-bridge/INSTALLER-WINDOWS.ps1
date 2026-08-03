@@ -24,6 +24,14 @@ function Find-PythonExecutable {
     return $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 }
 
+function Find-Naps2Console {
+    $Candidates = @(
+        (Join-Path $env:ProgramFiles "NAPS2\NAPS2.Console.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\NAPS2\NAPS2.Console.exe")
+    )
+    return $Candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+}
+
 $PythonExe = Find-PythonExecutable
 if (-not $PythonExe) {
     $Winget = Get-Command winget.exe -ErrorAction SilentlyContinue
@@ -37,6 +45,31 @@ if (-not $PythonExe) {
 
 if (-not $PythonExe) {
     throw "Python 3 est introuvable. Installez-le depuis https://www.python.org/downloads/windows/ puis relancez l'installateur."
+}
+
+Write-Host "Activation des scanners universels WIA / TWAIN / AirScan..."
+$Naps2Console = Find-Naps2Console
+if (-not $Naps2Console) {
+    $Winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if ($Winget) {
+        try {
+            & winget.exe install --id Cyanfish.NAPS2 --exact --silent --accept-package-agreements --accept-source-agreements
+            $Naps2Console = Find-Naps2Console
+        } catch { }
+    }
+}
+if ($Naps2Console) {
+    Write-Host "Moteur universel NAPS2 installe." -ForegroundColor Green
+    try {
+        $TwainDevices = @(& $Naps2Console --listdevices --driver twain 2>$null | Where-Object { $_ -and $_.Trim() })
+        if ($TwainDevices.Count -gt 0) {
+            Write-Host ("Scanners TWAIN detectes: " + $TwainDevices.Count) -ForegroundColor Green
+        } else {
+            Write-Host "Aucun scanner TWAIN detecte. Installez le pilote scanner officiel du fabricant si necessaire." -ForegroundColor Yellow
+        }
+    } catch { }
+} else {
+    Write-Host "NAPS2 n'a pas pu etre installe. WIA et AirScan resteront disponibles, mais TWAIN peut manquer." -ForegroundColor Yellow
 }
 
 if (-not (Test-Path $BridgeSource)) {
@@ -102,7 +135,7 @@ Start-Process -FilePath $PythonwExe -ArgumentList ('"' + $BridgeTarget + '"') -W
 
 Start-Sleep -Seconds 3
 try {
-    $Health = Invoke-RestMethod -Uri "http://127.0.0.1:17891/health" -Method Get -TimeoutSec 8
+    $Health = Invoke-RestMethod -Uri "http://127.0.0.1:17891/health" -Method Get -TimeoutSec 30
     $VersionLine = Get-Content -LiteralPath $BridgeTarget | Where-Object { $_ -match '^VERSION\s*=' } | Select-Object -First 1
     $ExpectedVersion = [regex]::Match([string]$VersionLine, '"([^"]+)"').Groups[1].Value
     if ($ExpectedVersion -and [string]$Health.version -ne $ExpectedVersion) {

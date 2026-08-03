@@ -1893,7 +1893,7 @@ async function ppScannerFetch(path,options={},timeoutMs=10000){
 }
 
 async function ppScannerBridgeHealth(){
-    const r=await ppScannerFetch("/health",{},7000);
+    const r=await ppScannerFetch("/health",{},30000);
     if(!r.ok)throw new Error("Bridge scanner indisponible.");
     const data=await r.json().catch(()=>({}));
     if(data.ready===false&&data.message)throw new Error(data.message);
@@ -1901,7 +1901,7 @@ async function ppScannerBridgeHealth(){
 }
 
 async function ppGetAvailableScanners(){
-    const response=await ppScannerFetch("/scanners",{},12000);
+    const response=await ppScannerFetch("/scanners",{},30000);
     if(!response.ok){
         const data=await response.json().catch(()=>({}));
         throw new Error(data.error||data.message||"Impossible de détecter les scanners.");

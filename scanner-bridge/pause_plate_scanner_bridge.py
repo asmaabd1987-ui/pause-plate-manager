@@ -37,13 +37,15 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-VERSION = "2.1.1"
+VERSION = "2.2.0"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 17891
 SCAN_LOCK = threading.Lock()
 MOCK_FILE: Path | None = None
 NETWORK_SCANNER_CACHE: tuple[float, list[dict]] = (0.0, [])
 NETWORK_SCANNER_CACHE_LOCK = threading.Lock()
+NAPS2_DEVICE_CACHE: dict[str, tuple[float, list[str]]] = {}
+NAPS2_DEVICE_CACHE_LOCK = threading.Lock()
 
 ALLOWED_WEB_ORIGINS = {
     "https://asmaabd1987-ui.github.io",
@@ -110,6 +112,142 @@ def scanimage_path() -> str | None:
         if candidate and Path(candidate).is_file():
             return str(candidate)
     return None
+
+
+def naps2_command_prefix() -> list[str] | None:
+    """Return the NAPS2 CLI command prefix for the current platform."""
+    system = platform.system().lower()
+    if system == "windows":
+        candidates = [
+            shutil.which("NAPS2.Console.exe"),
+            str(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "NAPS2" / "NAPS2.Console.exe"),
+            str(Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs" / "NAPS2" / "NAPS2.Console.exe"),
+        ]
+        for candidate in candidates:
+            if candidate and Path(candidate).is_file():
+                return [str(candidate)]
+        return None
+    if system == "darwin":
+        candidates = [
+            "/Applications/NAPS2.app/Contents/MacOS/NAPS2",
+            str(Path.home() / "Applications" / "NAPS2.app" / "Contents" / "MacOS" / "NAPS2"),
+            shutil.which("naps2"),
+        ]
+        for candidate in candidates:
+            if candidate and Path(candidate).is_file():
+                return [str(candidate), "console"]
+    return None
+
+
+def _naps2_device_id(driver: str, name: str) -> str:
+    encoded = base64.urlsafe_b64encode(name.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"naps2:{driver}:{encoded}"
+
+
+def _decode_naps2_device_id(device_id: str) -> tuple[str, str]:
+    parts = str(device_id).split(":", 2)
+    if len(parts) != 3 or parts[0] != "naps2" or parts[1] not in {"wia", "twain", "escl", "apple"}:
+        raise RuntimeError("Identifiant NAPS2 invalide.")
+    token = parts[2]
+    token += "=" * (-len(token) % 4)
+    try:
+        name = base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8")
+    except Exception as error:
+        raise RuntimeError("Nom du scanner NAPS2 invalide.") from error
+    return parts[1], name
+
+
+def _naps2_output_lines(raw: bytes) -> list[str]:
+    lines: list[str] = []
+    for raw_line in decode_process_output(raw).splitlines():
+        line = re.sub(r"^[\s>*-]+", "", raw_line).strip()
+        if not line or re.search(r"(?i)^(naps2|devices?|scanners?|driver|warning|error)\s*[:=]", line):
+            continue
+        if line not in lines:
+            lines.append(line)
+    return lines
+
+
+def list_naps2_devices(driver: str, force: bool = False) -> list[str]:
+    now = time.monotonic()
+    with NAPS2_DEVICE_CACHE_LOCK:
+        cached_at, cached_names = NAPS2_DEVICE_CACHE.get(driver, (0.0, []))
+        if not force and cached_at > 0 and now - cached_at < 20:
+            return list(cached_names)
+    prefix = naps2_command_prefix()
+    if not prefix:
+        return []
+    flags = 0x08000000 if platform.system().lower() == "windows" else 0
+    try:
+        process = subprocess.run(
+            prefix + ["--listdevices", "--driver", driver],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=12,
+            creationflags=flags,
+            check=False,
+        )
+    except Exception as error:
+        logging.debug("NAPS2 %s discovery failed: %s", driver, error)
+        return []
+    if process.returncode != 0:
+        logging.debug("NAPS2 %s discovery: %s", driver, decode_process_output(process.stderr))
+        return []
+    names = _naps2_output_lines(process.stdout)
+    with NAPS2_DEVICE_CACHE_LOCK:
+        NAPS2_DEVICE_CACHE[driver] = (time.monotonic(), list(names))
+    return names
+
+
+def scan_naps2(device_id: str, resolution: int, mode: str) -> tuple[bytes, str, str]:
+    prefix = naps2_command_prefix()
+    if not prefix:
+        raise RuntimeError("NAPS2 est introuvable. Relancez l’installateur du Scanner Bridge.")
+    driver, name = _decode_naps2_device_id(device_id)
+    resolution = max(75, min(int(resolution or 300), 600))
+    bit_depth = "gray" if str(mode).lower().startswith("gray") else "color"
+    flags = 0x08000000 if platform.system().lower() == "windows" else 0
+    errors: list[str] = []
+    # Start with full A4 flatbed settings, then progressively let an older
+    # vendor TWAIN driver choose unsupported capabilities itself.
+    attempts = (
+        ["--pagesize", "a4", "--deskew", "--source", "glass"],
+        ["--pagesize", "a4"],
+        [],
+    )
+    for compatibility_args in attempts:
+        with tempfile.NamedTemporaryFile(prefix="pause-plate-naps2-", suffix=".png", delete=False) as output_file:
+            output_path = Path(output_file.name)
+        output_path.unlink(missing_ok=True)
+        args = prefix + [
+            "--noprofile",
+            "--driver",
+            driver,
+            "--device",
+            name,
+            "--dpi",
+            str(resolution),
+            "--bitdepth",
+            bit_depth,
+            "--force",
+            "--output",
+            str(output_path),
+        ] + compatibility_args
+        try:
+            process = subprocess.run(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=240,
+                creationflags=flags,
+                check=False,
+            )
+            if process.returncode == 0 and output_path.is_file() and output_path.stat().st_size > 0:
+                return output_path.read_bytes(), "image/png", f"scan-{int(time.time() * 1000)}.png"
+            errors.append(decode_process_output(process.stderr) or decode_process_output(process.stdout))
+        finally:
+            output_path.unlink(missing_ok=True)
+    raise RuntimeError(next((error for error in reversed(errors) if error), "Échec du scan NAPS2."))
 
 
 def _txt_value(properties: dict, key: str) -> str:
@@ -334,14 +472,12 @@ foreach($info in @($manager.DeviceInfos)) {
     }
     if([string]::IsNullOrWhiteSpace($name)) { $name = "Scanner $index" }
     $networkClues = ([string]$info.DeviceID + " " + $port + " " + $server + " " + $remoteId)
-    # Do not classify ordinary \\?\usb... WIA device paths as network. A real
-    # Windows network scanner exposes an explicit WSD/WS-Scan clue or a remote
-    # server name different from this computer.
+    # Do not classify ordinary \\?\usb... WIA device paths as network. Some
+    # USB drivers fill WIA's "server" property with a non-host value, so that
+    # property alone is not reliable. A WIA network scanner must expose an
+    # explicit WSD/WS-Scan/AirScan/eSCL clue; AirScan discovery is handled
+    # separately below.
     $isNetwork = $networkClues -match '(?i)(WSD|WS-Scan|DAFWSDProvider|https?://|AirScan|eSCL)'
-    if(-not $isNetwork -and -not [string]::IsNullOrWhiteSpace($server)) {
-        $localNames = @('.', 'localhost', $env:COMPUTERNAME)
-        $isNetwork = -not ($localNames -contains $server.Trim())
-    }
     $rows += [ordered]@{
         id = [string]$info.DeviceID
         name = $name
@@ -352,6 +488,31 @@ foreach($info in @($manager.DeviceInfos)) {
     }
 }
 [ordered]@{ scanners = $rows } | ConvertTo-Json -Depth 5 -Compress
+"""
+
+
+WINDOWS_NETWORK_PRINTERS_SCRIPT = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$ports = @{}
+foreach($port in @(Get-PrinterPort)) {
+    $ports[[string]$port.Name] = $port
+}
+$rows = @()
+foreach($printer in @(Get-Printer)) {
+    $portName = [string]$printer.PortName
+    $port = $ports[$portName]
+    $address = if($port) { [string]$port.PrinterHostAddress } else { '' }
+    $isNetwork = -not [string]::IsNullOrWhiteSpace($address) -or $portName -match '(?i)^(IP_|WSD-|https?://|\\\\)'
+    if(-not $isNetwork) { continue }
+    $rows += [ordered]@{
+        name = [string]$printer.Name
+        driver = [string]$printer.DriverName
+        port = $portName
+        address = $address
+    }
+}
+[ordered]@{ printers = $rows } | ConvertTo-Json -Depth 5 -Compress
 """
 
 
@@ -513,6 +674,96 @@ def list_windows_scanners() -> list[dict]:
     if isinstance(rows, dict):
         rows = [rows]
     return rows if isinstance(rows, list) else []
+
+
+def list_windows_network_printers() -> list[dict]:
+    try:
+        data = parse_json_output(run_powershell(WINDOWS_NETWORK_PRINTERS_SCRIPT, timeout=25))
+    except Exception as error:
+        logging.debug("Windows network printer inventory failed: %s", error)
+        return []
+    rows = data.get("printers", [])
+    if isinstance(rows, dict):
+        rows = [rows]
+    return rows if isinstance(rows, list) else []
+
+
+def _device_tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode().lower())
+        if token not in {"scanner", "printer", "series", "driver", "twain", "wia", "airscan", "escl", "bizhub"}
+    }
+
+
+def _same_physical_device(first: str, second: str) -> bool:
+    left = _device_tokens(first)
+    right = _device_tokens(second)
+    if not left or not right:
+        return False
+    if left == right or left.issubset(right) or right.issubset(left):
+        return True
+    shared = left & right
+    model_match = any(any(char.isdigit() for char in token) for token in shared)
+    return model_match and len(shared) >= 2
+
+
+def _matching_network_printer(device_name: str, printers: list[dict]) -> dict | None:
+    for printer in printers:
+        candidates = [str(printer.get("name") or ""), str(printer.get("driver") or "")]
+        if any(_same_physical_device(device_name, candidate) for candidate in candidates if candidate):
+            return printer
+    return None
+
+
+def list_naps2_scanners(drivers: tuple[str, ...], network_printers: list[dict] | None = None) -> list[dict]:
+    rows: list[dict] = []
+    network_printers = network_printers or []
+    discovered: dict[str, list[str]] = {}
+    threads = [
+        threading.Thread(
+            target=lambda selected_driver=driver: discovered.__setitem__(selected_driver, list_naps2_devices(selected_driver)),
+            daemon=True,
+        )
+        for driver in drivers
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=13)
+    for driver in drivers:
+        for name in discovered.get(driver, []):
+            matched_printer = _matching_network_printer(name, network_printers)
+            is_network = driver == "escl" or matched_printer is not None
+            address = str((matched_printer or {}).get("address") or "")
+            rows.append(
+                {
+                    "id": _naps2_device_id(driver, name),
+                    "name": name,
+                    "vendor": "",
+                    "backend": f"NAPS2 {driver.upper()}",
+                    "connection": "network" if is_network else "local",
+                    "network": is_network,
+                    **({"address": address} if address else {}),
+                }
+            )
+    return rows
+
+
+def _merge_scanner_rows(*groups: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    for group in groups:
+        for row in group:
+            row_id = str(row.get("id") or "")
+            row_name = str(row.get("name") or row_id)
+            if any(
+                row_id == str(existing.get("id") or "")
+                or _same_physical_device(row_name, str(existing.get("name") or existing.get("id") or ""))
+                for existing in merged
+            ):
+                continue
+            merged.append(row)
+    return merged
 
 
 def scan_windows(device_id: str, resolution: int) -> tuple[bytes, str, str]:
@@ -733,13 +984,33 @@ def list_scanners() -> tuple[list[dict], str]:
         return ([{"id": "mock-1", "name": "Scanner de test", "vendor": "Pause & Plate", "backend": "MOCK"}], "MOCK")
     network_rows = discover_escl_scanners()
     if platform.system().lower() == "windows":
-        local_rows = list_windows_scanners()
-        rows = local_rows + [row for row in network_rows if row.get("id") not in {item.get("id") for item in local_rows}]
-        return rows, "WIA + AirScan/eSCL" if network_rows else "WIA"
-    local_rows = list_sane_scanners()
-    local_ids = {str(item.get("id")) for item in local_rows}
-    rows = local_rows + [row for row in network_rows if str(row.get("id")) not in local_ids]
-    return rows, "SANE + AirScan/eSCL" if network_rows else "SANE"
+        try:
+            local_rows = list_windows_scanners()
+        except Exception as error:
+            logging.warning("WIA discovery failed: %s", error)
+            local_rows = []
+        printer_rows = list_windows_network_printers()
+        universal_rows = list_naps2_scanners(("twain", "escl"), printer_rows)
+        rows = _merge_scanner_rows(local_rows, network_rows, universal_rows)
+        backends = ["WIA"]
+        if network_rows:
+            backends.append("AirScan/eSCL")
+        if universal_rows:
+            backends.append("NAPS2 TWAIN/eSCL")
+        return rows, " + ".join(backends)
+    try:
+        local_rows = list_sane_scanners()
+    except Exception as error:
+        logging.warning("SANE discovery failed: %s", error)
+        local_rows = []
+    universal_rows = list_naps2_scanners(("apple", "escl")) if platform.system().lower() == "darwin" else []
+    rows = _merge_scanner_rows(local_rows, network_rows, universal_rows)
+    backends = ["SANE"]
+    if network_rows:
+        backends.append("AirScan/eSCL")
+    if universal_rows:
+        backends.append("NAPS2 Apple/eSCL")
+    return rows, " + ".join(backends)
 
 
 def scanner_status() -> dict:
@@ -778,6 +1049,8 @@ def scan_file(device_id: str, resolution: int, mode: str) -> tuple[bytes, str, s
             raise RuntimeError("Le fichier de test est introuvable.")
         mime = mimetypes.guess_type(MOCK_FILE.name)[0] or "image/png"
         return MOCK_FILE.read_bytes(), mime, MOCK_FILE.name
+    if str(device_id).startswith("naps2:"):
+        return scan_naps2(device_id, resolution, mode)
     if str(device_id).startswith("escl:"):
         return scan_escl(device_id, resolution, mode)
     if platform.system().lower() == "windows":
