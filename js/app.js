@@ -1844,6 +1844,8 @@ function openScanModal(){
         "scanModal"
     );
 
+    ppRefreshScannerStatusPP("invoice");
+
 }
 
 
@@ -1854,16 +1856,129 @@ function openScanModal(){
 
 
 /* =========================================================
-   SCANNER PC LOCAL BRIDGE
-   The website stays on GitHub Pages; Windows bridge exposes
-   a local HTTP endpoint on 127.0.0.1 only.
+   SCANNER LOCAL BRIDGE — WINDOWS + MAC
+   GitHub Pages communicates only with 127.0.0.1.
 ========================================================= */
 const PP_SCANNER_BRIDGE_URL = "http://127.0.0.1:17891";
+const PP_SCANNER_SELECTION_KEY = "pause_plate_selected_scanner";
+
+async function ppScannerFetch(path,options={},timeoutMs=10000){
+    const controller=typeof AbortController!=="undefined"?new AbortController():null;
+    const timer=controller?setTimeout(()=>controller.abort(),timeoutMs):null;
+    try{
+        return await fetch(PP_SCANNER_BRIDGE_URL+path,{
+            cache:"no-store",
+            mode:"cors",
+            credentials:"omit",
+            ...options,
+            ...(controller?{signal:controller.signal}:{})
+        });
+    }catch(error){
+        if(error?.name==="AbortError")throw new Error("Le Scanner Bridge ne répond pas.");
+        throw new Error("Scanner Bridge introuvable sur cet ordinateur.");
+    }finally{
+        if(timer)clearTimeout(timer);
+    }
+}
 
 async function ppScannerBridgeHealth(){
-    const r=await fetch(PP_SCANNER_BRIDGE_URL+"/health",{cache:"no-store"});
+    const r=await ppScannerFetch("/health",{},7000);
     if(!r.ok)throw new Error("Bridge scanner indisponible.");
-    return await r.json();
+    const data=await r.json().catch(()=>({}));
+    if(data.ready===false&&data.message)throw new Error(data.message);
+    return data;
+}
+
+async function ppGetAvailableScanners(){
+    const response=await ppScannerFetch("/scanners",{},12000);
+    if(!response.ok){
+        const data=await response.json().catch(()=>({}));
+        throw new Error(data.error||data.message||"Impossible de détecter les scanners.");
+    }
+    const data=await response.json().catch(()=>({scanners:[]}));
+    const scanners=Array.isArray(data)?data:(Array.isArray(data.scanners)?data.scanners:[]);
+    if(!scanners.length){
+        throw new Error(data.message||"Aucun scanner détecté. Vérifiez le câble, l’alimentation et le pilote du scanner.");
+    }
+    return scanners.map((scanner,index)=>({
+        id:String(scanner.id??scanner.device_id??index),
+        name:String(scanner.name??scanner.model??`Scanner ${index+1}`),
+        vendor:String(scanner.vendor??scanner.manufacturer??""),
+        backend:String(scanner.backend??data.backend??"")
+    }));
+}
+
+function ppChooseScanner(scanners,forceChoice=false){
+    if(!Array.isArray(scanners)||!scanners.length)throw new Error("Aucun scanner détecté.");
+    const savedId=forceChoice?"":String(localStorage.getItem(PP_SCANNER_SELECTION_KEY)||"");
+    const saved=scanners.find(scanner=>scanner.id===savedId);
+    if(saved)return saved;
+
+    if(scanners.length===1){
+        localStorage.setItem(PP_SCANNER_SELECTION_KEY,scanners[0].id);
+        return scanners[0];
+    }
+
+    const choices=scanners.map((scanner,index)=>`${index+1}. ${scanner.name}${scanner.vendor?` — ${scanner.vendor}`:""}`).join("\n");
+    const answer=prompt(`Choisissez le scanner :\n\n${choices}`,"1");
+    if(answer===null)throw new Error("Sélection du scanner annulée.");
+    const index=Math.max(0,Math.min(Number.parseInt(answer,10)-1,scanners.length-1));
+    const selected=scanners[Number.isFinite(index)?index:0];
+    localStorage.setItem(PP_SCANNER_SELECTION_KEY,selected.id);
+    return selected;
+}
+
+function ppScannerStatusElementPP(purpose){
+    return document.getElementById(purpose==="invoice"?"ppInvoiceScannerStatus":"ppDailyScannerStatus");
+}
+
+async function ppRefreshScannerStatusPP(purpose){
+    const status=ppScannerStatusElementPP(purpose);
+    if(status){
+        status.textContent="Recherche du Scanner Bridge et des appareils…";
+        status.style.color="#667085";
+    }
+    try{
+        const health=await ppScannerBridgeHealth();
+        const scanners=await ppGetAvailableScanners();
+        const savedId=String(localStorage.getItem(PP_SCANNER_SELECTION_KEY)||"");
+        const selected=scanners.find(scanner=>scanner.id===savedId)||scanners[0];
+        if(status){
+            status.innerHTML=`✅ Bridge ${escapeHTML(health.platform||"Windows / Mac")} actif — <strong>${escapeHTML(selected.name)}</strong> prêt.`;
+            status.style.color="#067647";
+        }
+        return {health,scanners};
+    }catch(error){
+        if(status){
+            status.innerHTML=`❌ ${escapeHTML(error?.message||String(error))}<br><small>Lancez ou installez Pause & Plate Scanner Bridge sur Windows / Mac.</small>`;
+            status.style.color="#b42318";
+        }
+        return null;
+    }
+}
+
+async function ppSelectScannerPP(purpose){
+    const status=ppScannerStatusElementPP(purpose);
+    if(status){
+        status.textContent="Recherche des scanners disponibles…";
+        status.style.color="#667085";
+    }
+    try{
+        await ppScannerBridgeHealth();
+        const scanners=await ppGetAvailableScanners();
+        const scanner=ppChooseScanner(scanners,true);
+        if(status){
+            status.innerHTML=`✅ Scanner sélectionné : <strong>${escapeHTML(scanner.name)}</strong>`;
+            status.style.color="#067647";
+        }
+        return scanner;
+    }catch(error){
+        if(status){
+            status.innerHTML=`❌ ${escapeHTML(error?.message||String(error))}<br><small>Vérifiez le Bridge, le câble et le pilote Windows / Mac.</small>`;
+            status.style.color="#b42318";
+        }
+        return null;
+    }
 }
 
 function ppBase64ToFile(base64,mime,name){
@@ -1874,9 +1989,11 @@ function ppBase64ToFile(base64,mime,name){
 }
 
 async function ppScanFromPCScanner(purpose){
-    const statusId=purpose==="invoice"?"ppInvoiceScannerStatus":"ppDailyScannerStatus";
-    const status=document.getElementById(statusId);
-    if(status)status.textContent="Connexion au scanner...";
+    const status=ppScannerStatusElementPP(purpose);
+    if(status){
+        status.textContent="Connexion au scanner...";
+        status.style.color="#667085";
+    }
 
     try{
         await ppScannerBridgeHealth();
@@ -1888,15 +2005,17 @@ async function ppScanFromPCScanner(purpose){
             status.textContent=`Scanner sélectionné : ${scanner.name||scanner.id} — numérisation en cours...`;
         }
 
-        const response=await fetch(PP_SCANNER_BRIDGE_URL+"/scan-file",{
+        const response=await ppScannerFetch("/scan-file",{
             method:"POST",
             headers:{"Content-Type":"application/json"},
             body:JSON.stringify({
                 purpose,
                 device_id:scanner.id,
-                scanner_id:scanner.id
+                scanner_id:scanner.id,
+                resolution:300,
+                mode:"Color"
             })
-        });
+        },240000);
 
         if(!response.ok){
             const ct=response.headers.get("content-type")||"";
@@ -1938,7 +2057,8 @@ async function ppScanFromPCScanner(purpose){
         console.error(err);
         if(status){
             status.innerHTML="❌ "+escapeHTML(err?.message||String(err))+
-                "<br><small>Vérifiez que Pause & Plate Scanner Bridge est lancé sur cet ordinateur (Windows).</small>";
+                "<br><small>Vérifiez que Pause & Plate Scanner Bridge est lancé et que le scanner est connecté sur Windows / Mac.</small>";
+            status.style.color="#b42318";
         }
     }
 }
@@ -9228,10 +9348,11 @@ function ensureDailySalesScanModalPP(){
 
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">
         <button type="button" class="btn primary" onclick="ppScanDailySalesFromPC()">🖨️ Scan en temps réel</button>
+        <button type="button" class="btn" onclick="ppSelectScannerPP('daily-sales')">⚙️ Choisir le scanner</button>
       </div>
 
       <div id="ppDailyScannerStatus" style="margin:8px 0;color:#667085;font-size:13px">
-        Scanner: prêt si Pause & Plate Scanner Bridge est lancé sur cet ordinateur.
+        Recherche du scanner sur Windows / Mac…
       </div>
 
       <div id="ppDailyScanStatus" style="margin:12px 0;padding:12px;border-radius:10px;background:#f8fafc">Choisissez un fichier ou utilisez le scanner PC.</div>
@@ -9251,6 +9372,7 @@ function openDailySalesScanPP(){
     document.getElementById('ppDailyScanReview').innerHTML='';
     document.getElementById('ppDailyScanSaveBtn').disabled=true;
     openModal('ppDailyScanModal');
+    ppRefreshScannerStatusPP('daily-sales');
 }
 
 async function extractDailySalesTextPP(file){
