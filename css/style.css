@@ -2131,6 +2131,151 @@ details summary{
     border-bottom:0;
 }
 
+/* ===== STOCK ALERTS FOR STOCK USERS ===== */
+.stock-alerts-section{
+    border-top:4px solid var(--danger);
+}
+
+.stock-alerts-header p{
+    color:var(--muted);
+    font-size:13px;
+    margin-top:6px;
+}
+
+.stock-alert-summary{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+}
+
+.stock-alert-summary-item{
+    border-radius:999px;
+    padding:8px 12px;
+    font-size:12px;
+    font-weight:700;
+}
+
+.stock-alert-summary-item.danger{
+    background:var(--danger-light);
+    color:var(--danger);
+}
+
+.stock-alert-summary-item.warning{
+    background:var(--warning-light);
+    color:var(--warning);
+}
+
+.stock-alert-grid{
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:12px;
+}
+
+.stock-alert-card{
+    width:100%;
+    display:grid;
+    grid-template-columns:auto minmax(0,1fr) auto auto;
+    align-items:center;
+    gap:12px;
+    border:1px solid var(--border);
+    border-left:5px solid var(--warning);
+    border-radius:13px;
+    padding:15px;
+    background:#fff;
+    color:var(--text);
+    text-align:left;
+    transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;
+}
+
+.stock-alert-card.is-rupture{
+    border-left-color:var(--danger);
+    background:linear-gradient(90deg,var(--danger-light),#fff 35%);
+}
+
+.stock-alert-card.is-low{
+    background:linear-gradient(90deg,var(--warning-light),#fff 35%);
+}
+
+.stock-alert-card:hover{
+    transform:translateY(-2px);
+    box-shadow:0 8px 22px rgba(0,0,0,.08);
+    border-color:#c9d3cc;
+}
+
+.stock-alert-icon{
+    font-size:20px;
+}
+
+.stock-alert-content{
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+    min-width:0;
+}
+
+.stock-alert-content strong,
+.stock-alert-content small,
+.stock-alert-content span{
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+}
+
+.stock-alert-content small,
+.stock-alert-content span{
+    color:var(--muted);
+    font-size:11px;
+}
+
+.stock-alert-open{
+    color:var(--green);
+    font-size:25px;
+    font-weight:700;
+}
+
+.stock-alert-empty{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:12px;
+    min-height:100px;
+    padding:20px;
+    border:1px dashed #b9c9bf;
+    border-radius:13px;
+    background:var(--success-light);
+    color:var(--green);
+}
+
+.stock-alert-empty > span{
+    font-size:25px;
+}
+
+.stock-alert-empty p{
+    color:var(--muted);
+    font-size:12px;
+    margin-top:4px;
+}
+
+@media(max-width:900px){
+    .stock-alert-grid{
+        grid-template-columns:1fr;
+    }
+}
+
+@media(max-width:600px){
+    .stock-alerts-header{
+        align-items:flex-start;
+    }
+    .stock-alert-card{
+        grid-template-columns:auto minmax(0,1fr) auto;
+    }
+    .stock-alert-card .status{
+        grid-column:2;
+        width:max-content;
+    }
+}
+
 @media(max-width:550px){
     .details-grid{
         grid-template-columns:1fr;

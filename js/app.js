@@ -711,8 +711,14 @@ function renderProducts(){
     const filtered=products.filter(p=>normalizeText(p.name).includes(search)&&(!category||p.category===category));
     if(!filtered.length){ table.innerHTML='<tr><td colspan="7" class="empty">Aucun produit enregistré.</td></tr>'; return; }
     table.innerHTML=filtered.map(product=>{
-        const value=Number(product.stock)*Number(product.price); const min=Number(product.minStock||0); const low=min>0 && Number(product.stock)<=min;
-        return `<tr><td><strong>${escapeHTML(product.name)}</strong></td><td>${escapeHTML(product.category)}</td><td>${formatNumber(product.stock)} ${escapeHTML(product.unit)}</td><td>${formatMoney(product.price)}</td><td>${formatMoney(value)}</td><td><span class="status ${low?'danger':'success'}">${low?'Stock faible':'Normal'}</span></td><td><div class="action-buttons"><button class="btn small view" onclick="viewProduct(${product.id})" title="Voir">👁️</button><button class="btn small edit" onclick="openProductModal(${product.id})" title="Modifier">✏️</button><button class="btn small print" onclick="printProduct(${product.id})" title="Imprimer">🖨️</button><button class="btn small danger" onclick="deleteProduct(${product.id})" title="Supprimer">🗑️</button></div></td></tr>`;
+        const stock=Number(product.stock||0);
+        const value=stock*Number(product.price);
+        const min=Number(product.minStock||0);
+        const rupture=stock<=0;
+        const low=!rupture && min>0 && stock<=min;
+        const statusClass=rupture?'danger':(low?'warning':'success');
+        const statusLabel=rupture?'Rupture':(low?'Stock faible':'Normal');
+        return `<tr><td><strong>${escapeHTML(product.name)}</strong></td><td>${escapeHTML(product.category)}</td><td>${formatNumber(product.stock)} ${escapeHTML(product.unit)}</td><td>${formatMoney(product.price)}</td><td>${formatMoney(value)}</td><td><span class="status ${statusClass}">${statusLabel}</span></td><td><div class="action-buttons"><button class="btn small view" onclick="viewProduct(${product.id})" title="Voir">👁️</button><button class="btn small edit" onclick="openProductModal(${product.id})" title="Modifier">✏️</button><button class="btn small print" onclick="printProduct(${product.id})" title="Imprimer">🖨️</button><button class="btn small danger" onclick="deleteProduct(${product.id})" title="Supprimer">🗑️</button></div></td></tr>`;
     }).join("");
 }
 
@@ -5966,12 +5972,15 @@ function updateDashboard(){
 
 function updateStockStats(){
     const value=products.reduce((total,p)=>total+Number(p.stock||0)*Number(p.price||0),0);
+    const ruptureProducts=products.filter(p=>Number(p.stock||0)<=0);
     const lowProducts=products.filter(p=>{
+        const stock=Number(p.stock||0);
         const min=Number(p.minStock||0);
-        return min>0 && Number(p.stock||0)<=min;
+        return stock>0 && min>0 && stock<=min;
     });
     setText("stockProductsCount",products.length);
     setText("stockTotalValue",formatMoney(value));
+    setText("stockRuptureCount",ruptureProducts.length);
     setText("lowStockCount",lowProducts.length);
 }
 
@@ -6704,8 +6713,9 @@ function renderStockAlertsPP(){
     const box=document.getElementById("alertList");
     if(!box)return;
     const alerts=products.filter(p=>{
+        const stock=Number(p.stock||0);
         const min=Number(p.minStock||0);
-        return min>0 && Number(p.stock||0)<=min;
+        return stock<=0 || (min>0 && stock<=min);
     }).sort((a,b)=>Number(a.stock||0)-Number(b.stock||0));
 
     if(!alerts.length){
@@ -6722,6 +6732,46 @@ function renderStockAlertsPP(){
         </div>`;
     }).join("");
 }
+
+function renderStockPageAlertsPP(){
+    const box=document.getElementById("stockPageAlerts");
+    if(!box)return;
+
+    const ruptureProducts=products.filter(p=>Number(p.stock||0)<=0);
+    const lowProducts=products.filter(p=>{
+        const stock=Number(p.stock||0);
+        const min=Number(p.minStock||0);
+        return stock>0 && min>0 && stock<=min;
+    });
+    const alerts=[...ruptureProducts,...lowProducts].sort((a,b)=>{
+        const aRupture=Number(a.stock||0)<=0 ? 0 : 1;
+        const bRupture=Number(b.stock||0)<=0 ? 0 : 1;
+        return aRupture-bRupture || Number(a.stock||0)-Number(b.stock||0);
+    });
+
+    setText("stockRuptureSummary",ruptureProducts.length);
+    setText("stockLowSummary",lowProducts.length);
+
+    if(!alerts.length){
+        box.innerHTML='<div class="stock-alert-empty"><span>✅</span><div><strong>Stock sous contrôle</strong><p>Aucun article en rupture ou sous le seuil minimum.</p></div></div>';
+        return;
+    }
+
+    box.innerHTML=alerts.map(p=>{
+        const stock=Number(p.stock||0);
+        const rupture=stock<=0;
+        return `<button type="button" class="stock-alert-card ${rupture?'is-rupture':'is-low'}" onclick="viewProduct(${Number(p.id)})" title="Voir la fiche de ${escapeHTML(p.name)}">
+            <span class="stock-alert-icon">${rupture?'🔴':'⚠️'}</span>
+            <span class="stock-alert-content">
+                <strong>${escapeHTML(p.name)}</strong>
+                <small>${escapeHTML(p.category||'Sans catégorie')}</small>
+                <span>Stock : <b>${formatNumber(stock)} ${escapeHTML(p.unit||'')}</b> · Minimum : ${formatNumber(p.minStock||0)} ${escapeHTML(p.unit||'')}</span>
+            </span>
+            <span class="status ${rupture?'danger':'warning'}">${rupture?'Rupture':'Stock faible'}</span>
+            <span class="stock-alert-open" aria-hidden="true">›</span>
+        </button>`;
+    }).join("");
+}
 function renderAll(){
     ensurePPExtraUI();
     renderProducts();
@@ -6736,6 +6786,7 @@ function renderAll(){
     updateDashboard();
     updateStockStats();
     renderStockAlertsPP();
+    renderStockPageAlertsPP();
     updateSupplierStats();
     updateInvoiceStats();
     renderTVAAchatsPP();
