@@ -31,13 +31,14 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
 
-VERSION = "2.2.1"
+VERSION = "2.2.2"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 17891
 SCAN_LOCK = threading.Lock()
@@ -46,6 +47,7 @@ NETWORK_SCANNER_CACHE: tuple[float, list[dict]] = (0.0, [])
 NETWORK_SCANNER_CACHE_LOCK = threading.Lock()
 NAPS2_DEVICE_CACHE: dict[str, tuple[float, list[str]]] = {}
 NAPS2_DEVICE_CACHE_LOCK = threading.Lock()
+NAPS2_PROFILE_LOCK = threading.Lock()
 
 ALLOWED_WEB_ORIGINS = {
     "https://asmaabd1987-ui.github.io",
@@ -210,52 +212,64 @@ def scan_naps2(device_id: str, resolution: int, mode: str) -> tuple[bytes, str, 
 
     # Older Windows Network TWAIN drivers (notably KONICA MINOLTA bizhub)
     # may reject NAPS2's automatic DAT_CAPS negotiation. Run them through an
-    # isolated native-UI profile with the old DSM instead. This opens the
-    # manufacturer's own window without touching the user's NAPS2 profiles.
+    # temporary native-UI profile with the old DSM instead. This opens the
+    # manufacturer's own window, then restores the user's NAPS2 profiles.
     if driver == "twain" and platform.system().lower() == "windows":
-        with tempfile.TemporaryDirectory(prefix="pause-plate-naps2-native-") as temp_dir:
+        with NAPS2_PROFILE_LOCK, tempfile.TemporaryDirectory(prefix="pause-plate-naps2-native-") as temp_dir:
             root = Path(temp_dir)
-            app_data = root / "AppData"
-            profile_dir = app_data / "NAPS2"
+            profile_dir = Path(os.environ.get("APPDATA", Path.home())) / "NAPS2"
             profile_dir.mkdir(parents=True, exist_ok=True)
-            profile_name = "Pause Plate — TWAIN compatible"
-            safe_name = html.escape(name, quote=True)
-            safe_profile = html.escape(profile_name, quote=True)
-            profile_xml = f"""<?xml version="1.0" encoding="utf-8"?>
-<ArrayOfScanProfile xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-  <ScanProfile>
-    <Device><ID>{safe_name}</ID><Name>{safe_name}</Name></Device>
-    <DriverName>twain</DriverName>
-    <DisplayName>{safe_profile}</DisplayName>
-    <IconID>0</IconID><MaxQuality>true</MaxQuality><IsDefault>true</IsDefault><Version>2</Version>
-    <UseNativeUI>true</UseNativeUI><AfterScanScale>OneToOne</AfterScanScale>
-    <Brightness>0</Brightness><Contrast>0</Contrast><BitDepth>C24Bit</BitDepth>
-    <PageAlign>Left</PageAlign><PageSize>A4</PageSize><Resolution>Dpi300</Resolution>
-    <PaperSource>Glass</PaperSource><EnableAutoSave>false</EnableAutoSave><Quality>100</Quality>
-    <AutoDeskew>false</AutoDeskew><BrightnessContrastAfterScan>false</BrightnessContrastAfterScan>
-    <ForcePageSize>false</ForcePageSize><ForcePageSizeCrop>false</ForcePageSizeCrop>
-    <TwainImpl>Old</TwainImpl><ExcludeBlankPages>false</ExcludeBlankPages>
-    <FlipDuplexedPages>false</FlipDuplexedPages>
-  </ScanProfile>
-</ArrayOfScanProfile>
-"""
-            (profile_dir / "profiles.xml").write_text(profile_xml, encoding="utf-8")
-            output_path = root / "scan.png"
-            env = os.environ.copy()
-            env["APPDATA"] = str(app_data)
-            process = subprocess.run(
-                prefix + ["--profile", profile_name, "--force", "--output", str(output_path)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                timeout=300,
-                creationflags=flags,
-                check=False,
-            )
-            if process.returncode == 0 and output_path.is_file() and output_path.stat().st_size > 0:
-                return output_path.read_bytes(), "image/png", f"scan-{int(time.time() * 1000)}.png"
-            detail = decode_process_output(process.stderr) or decode_process_output(process.stdout)
-            raise RuntimeError(detail or "Le pilote TWAIN a annulé la numérisation.")
+            profile_path = profile_dir / "profiles.xml"
+            original_profiles = profile_path.read_bytes() if profile_path.is_file() else None
+            profile_name = f"Pause Plate TWAIN {os.getpid()} {int(time.time() * 1000)}"
+
+            try:
+                if original_profiles:
+                    try:
+                        profiles_root = ET.fromstring(original_profiles)
+                    except ET.ParseError:
+                        profiles_root = ET.Element("ArrayOfScanProfile")
+                else:
+                    profiles_root = ET.Element("ArrayOfScanProfile")
+
+                profile = ET.SubElement(profiles_root, "ScanProfile")
+                device = ET.SubElement(profile, "Device")
+                ET.SubElement(device, "ID").text = name
+                ET.SubElement(device, "Name").text = name
+                values = (
+                    ("DriverName", "twain"), ("DisplayName", profile_name), ("IconID", "0"),
+                    ("MaxQuality", "true"), ("IsDefault", "false"), ("Version", "2"),
+                    ("UseNativeUI", "true"), ("AfterScanScale", "OneToOne"),
+                    ("Brightness", "0"), ("Contrast", "0"), ("BitDepth", "C24Bit"),
+                    ("PageAlign", "Left"), ("PageSize", "A4"), ("Resolution", "Dpi300"),
+                    ("PaperSource", "Glass"), ("EnableAutoSave", "false"), ("Quality", "100"),
+                    ("AutoDeskew", "false"), ("BrightnessContrastAfterScan", "false"),
+                    ("ForcePageSize", "false"), ("ForcePageSizeCrop", "false"),
+                    ("TwainImpl", "Old"), ("ExcludeBlankPages", "false"),
+                    ("FlipDuplexedPages", "false"),
+                )
+                for key, value in values:
+                    ET.SubElement(profile, key).text = value
+                ET.ElementTree(profiles_root).write(profile_path, encoding="utf-8", xml_declaration=True)
+
+                output_path = root / "scan.png"
+                process = subprocess.run(
+                    prefix + ["--profile", profile_name, "--force", "--output", str(output_path)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=300,
+                    creationflags=flags,
+                    check=False,
+                )
+                if process.returncode == 0 and output_path.is_file() and output_path.stat().st_size > 0:
+                    return output_path.read_bytes(), "image/png", f"scan-{int(time.time() * 1000)}.png"
+                detail = decode_process_output(process.stderr) or decode_process_output(process.stdout)
+                raise RuntimeError(detail or "Le pilote TWAIN a annulé la numérisation.")
+            finally:
+                if original_profiles is None:
+                    profile_path.unlink(missing_ok=True)
+                else:
+                    profile_path.write_bytes(original_profiles)
 
     errors: list[str] = []
     # Start with full A4 flatbed settings, then progressively let an older
