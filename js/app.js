@@ -2089,11 +2089,13 @@ function ppRemoveInvoiceLivePagePP(index){
 
 async function ppAddInvoiceLivePagePP(file){
     const pageNumber=ppInvoiceLiveScanPages.length+1;
-    const text=await ppRecognizeInvoiceImagePP(file,`Page ${pageNumber}`);
+    const ocr=await ppRecognizeInvoiceImagePP(file,`Page ${pageNumber}`);
+    const text=String(ocr?.text||"");
     const score=ppScoreOCRTextPP(text);
     const previewUrl=URL.createObjectURL(file);
     ppInvoiceLiveScanPages.push({
-        text:String(text||""),
+        text,
+        rows:Array.isArray(ocr?.rows)?ocr.rows:[],
         textLength:String(text||"").trim().length,
         qualityScore:score,
         qualityLabel:score>=55?"OCR bon":score>=25?"OCR partiel":"OCR faible — vérifiez l'aperçu",
@@ -2818,7 +2820,17 @@ async function scanPDFWithOCRFallback(pdf){
 ========================================================= */
 
 async function scanImageImproved(file){
-    scannedInvoiceText=await ppRecognizeInvoiceImagePP(file,"Image");
+    const ocr=await ppRecognizeInvoiceImagePP(file,"Image");
+    scannedInvoiceText=String(ocr?.text||"");
+    ppInvoiceLiveScanPages=[{
+        text:scannedInvoiceText,
+        rows:Array.isArray(ocr?.rows)?ocr.rows:[],
+        textLength:scannedInvoiceText.trim().length,
+        qualityScore:ppScoreOCRTextPP(scannedInvoiceText),
+        qualityLabel:"OCR",
+        previewUrl:"",
+        fileName:file?.name||"image"
+    }];
     scannedPDFPages=[];
     finishScan();
 }
@@ -2828,7 +2840,7 @@ async function ppRecognizeInvoiceImagePP(file,label="Image"){
     const imageBitmap=await createImageBitmap(file);
     try{
         const canvas=ppPrepareOCRCanvasPP(imageBitmap);
-        return await runDualOCR(canvas,preprocessCanvas(canvas,false),label);
+        return await runDualOCR(canvas,preprocessCanvas(canvas,false),label,true);
     }finally{
         if(typeof imageBitmap.close==="function")imageBitmap.close();
     }
@@ -2865,7 +2877,8 @@ function ppPrepareOCRCanvasPP(imageSource){
 async function runDualOCR(
     originalCanvas,
     processedCanvas,
-    label
+    label,
+    returnDetailed=false
 ){
     const worker=await ppGetOCRWorkerPP();
     const autoPSM=Tesseract.PSM?.AUTO||"3";
@@ -2882,11 +2895,16 @@ async function runDualOCR(
             });
         }
         const blob=await canvasToBlob(canvas);
-        const result=await worker.recognize(blob);
+        const result=await worker.recognize(
+            blob,
+            {},
+            {text:true,blocks:true,tsv:true}
+        );
         const text=String(result?.data?.text||"").trim();
+        const rows=ppOCRBlocksToRowsPP(result?.data?.blocks);
         const confidence=Number(result?.data?.confidence||0);
         const score=ppScoreOCRTextPP(text)+Math.max(0,confidence)*0.15;
-        candidates.push({text,score,confidence,name});
+        candidates.push({text,rows,score,confidence,name});
     }
 
     await recognize(originalCanvas,"lecture naturelle",autoPSM);
@@ -2909,7 +2927,74 @@ async function runDualOCR(
         }
     }
 
+    if(returnDetailed){
+        return best||{text:"",rows:[],score:0,confidence:0,name:""};
+    }
     return best?.text||"";
+}
+
+// Tesseract may split one visual table row into several text blocks.  Flatten
+// every word and group it again by its vertical position so invoice columns
+// (designation, quantity, unit price and amount) remain aligned.
+function ppOCRBlocksToRowsPP(blocks){
+    const words=[];
+    (Array.isArray(blocks)?blocks:[]).forEach(block=>{
+        (block?.paragraphs||[]).forEach(paragraph=>{
+            (paragraph?.lines||[]).forEach(line=>{
+                (line?.words||[]).forEach(word=>{
+                    const box=word?.bbox||{};
+                    const text=String(word?.text||"").trim();
+                    const x0=Number(box.x0),x1=Number(box.x1);
+                    const y0=Number(box.y0),y1=Number(box.y1);
+                    if(!text||![x0,x1,y0,y1].every(Number.isFinite))return;
+                    words.push({
+                        text,
+                        confidence:Number(word?.confidence||0),
+                        x0,x1,y0,y1,
+                        x:(x0+x1)/2,
+                        y:(y0+y1)/2,
+                        height:Math.max(1,y1-y0)
+                    });
+                });
+            });
+        });
+    });
+    if(!words.length)return [];
+
+    const heights=words.map(word=>word.height).sort((a,b)=>a-b);
+    const medianHeight=heights[Math.floor(heights.length/2)]||18;
+    const tolerance=Math.max(6,medianHeight*0.55);
+    const rows=[];
+    words.sort((a,b)=>a.y-b.y||a.x0-b.x0).forEach(word=>{
+        let row=null;
+        let distance=Infinity;
+        rows.forEach(candidate=>{
+            const current=Math.abs(candidate.y-word.y);
+            if(current<=tolerance&&current<distance){row=candidate;distance=current;}
+        });
+        if(!row){
+            row={words:[],y:word.y,x0:word.x0,x1:word.x1};
+            rows.push(row);
+        }
+        row.words.push(word);
+        row.y=row.words.reduce((sum,item)=>sum+item.y,0)/row.words.length;
+        row.x0=Math.min(row.x0,word.x0);
+        row.x1=Math.max(row.x1,word.x1);
+    });
+
+    return rows
+        .sort((a,b)=>a.y-b.y)
+        .map(row=>{
+            row.words.sort((a,b)=>a.x0-b.x0);
+            return {
+                text:row.words.map(word=>word.text).join(" ").replace(/\s+/g," ").trim(),
+                words:row.words,
+                y:row.y,
+                x0:row.x0,
+                x1:row.x1
+            };
+        })
+        .filter(row=>row.text);
 }
 
 async function ppGetOCRWorkerPP(){
@@ -3144,6 +3229,18 @@ function extractInvoiceData(text){
         vatSummary =
             extractStructuredVatSummary(
                 scannedPDFPages
+            );
+
+    }
+
+
+    if(
+        !detectedProducts.length
+    ){
+
+        detectedProducts =
+            extractProductsFromPositionedOCR(
+                ppInvoiceLiveScanPages
             );
 
     }
@@ -4306,6 +4403,202 @@ function parseStructuredPDFRow(columns){
    TEXT TABLE FALLBACK
 ========================================================= */
 
+// Parse scanned invoices from the actual word positions returned by
+// Tesseract.  This is more reliable than flattened OCR text because numbers
+// keep their original quantity / unit-price / amount columns.
+function extractProductsFromPositionedOCR(pages){
+    const result=[];
+    (Array.isArray(pages)?pages:[]).forEach(page=>{
+        const rows=Array.isArray(page?.rows)?page.rows:[];
+        if(!rows.length)return;
+
+        let columns=null;
+        let tableActive=false;
+        let pendingName="";
+
+        rows.forEach((row,rowIndex)=>{
+            const normalized=normalizeText(row?.text||"");
+            const nextRow=rows[rowIndex+1];
+            const combinedHeaderRow=nextRow?{
+                text:`${row?.text||""} ${nextRow?.text||""}`,
+                words:[...(row?.words||[]),...(nextRow?.words||[])]
+            }:row;
+            const detectedColumns=
+                ppDetectOCRTableColumnsPP(row)
+                ||
+                ppDetectOCRTableColumnsPP(combinedHeaderRow);
+            if(detectedColumns){
+                columns=detectedColumns;
+                tableActive=true;
+                pendingName="";
+                return;
+            }
+            if(!tableActive||!columns)return;
+            const partialHeaderRoles=(row?.words||[])
+                .map(word=>ppOCRHeaderRolePP(word.text))
+                .filter(Boolean);
+            if(new Set(partialHeaderRoles).size>=2)return;
+            if(isProductTableEnd(normalized)){
+                tableActive=false;
+                pendingName="";
+                return;
+            }
+            if(ppLooksLikeNonProductDocumentRowPP(row?.text||"")){
+                pendingName="";
+                return;
+            }
+
+            let product=ppParsePositionedProductRowPP(row,columns);
+            if(product){
+                if(pendingName){
+                    product.name=cleanProductName(`${pendingName} ${product.name}`);
+                    product.category=guessCategory(product.name);
+                }
+                pendingName="";
+                result.push(product);
+                return;
+            }
+
+            const line=String(row?.text||"");
+            const possibleName=cleanProductName(line);
+            const letterCount=(possibleName.match(/[A-Za-zÀ-ÿ]/g)||[]).length;
+            if(!/\d/.test(line)&&letterCount>=3&&isValidProductName(possibleName)){
+                pendingName=possibleName;
+            }
+        });
+    });
+    return deduplicateScannedProducts(result);
+}
+
+function ppOCRHeaderRolePP(value){
+    const normalized=normalizeText(value).replace(/[^a-z0-9]+/g,"");
+    if(/(design|descript|articl|produ|libell)/.test(normalized))return "name";
+    if(/^(q|qte|ate|qty|quant|quantite)$/.test(normalized)||normalized.startsWith("quant"))return "quantity";
+    if(/^(prix|prlx|pu|puht|prixht|unitaire|prixunitaire)$/.test(normalized)||normalized.startsWith("unitair"))return "price";
+    if(/^(montant|montantht|total|totalht|valeur)$/.test(normalized)||/^(montan|totai)/.test(normalized))return "amount";
+    if(/^(tva|taxe|taux)$/.test(normalized))return "vat";
+    if(/^(unite|unit|u|conditionnement)$/.test(normalized))return "unit";
+    return "";
+}
+
+function ppDetectOCRTableColumnsPP(row){
+    if(!row||!Array.isArray(row.words))return null;
+    const rolePoints={};
+    row.words.forEach(word=>{
+        const role=ppOCRHeaderRolePP(word.text);
+        if(!role)return;
+        if(!rolePoints[role])rolePoints[role]=[];
+        rolePoints[role].push(Number(word.x));
+    });
+    const anchors=Object.entries(rolePoints)
+        .map(([role,points])=>({
+            role,
+            x:points.reduce((sum,value)=>sum+value,0)/points.length
+        }))
+        .filter(anchor=>Number.isFinite(anchor.x))
+        .sort((a,b)=>a.x-b.x);
+    const roles=new Set(anchors.map(anchor=>anchor.role));
+    const numericRoleCount=["quantity","price","amount"].filter(role=>roles.has(role)).length;
+    if(!roles.has("name")||numericRoleCount<2||(!roles.has("price")&&!roles.has("amount")))return null;
+    return anchors;
+}
+
+function ppCellsFromOCRRowPP(row,columns){
+    const cells={name:[],quantity:[],unit:[],price:[],vat:[],amount:[]};
+    const anchors=[...(columns||[])].sort((a,b)=>a.x-b.x);
+    if(!anchors.length)return cells;
+    (row?.words||[]).forEach(word=>{
+        const center=Number(word.x);
+        let selected=anchors[0];
+        for(let index=0;index<anchors.length-1;index++){
+            const boundary=(anchors[index].x+anchors[index+1].x)/2;
+            if(center<=boundary){selected=anchors[index];break;}
+            selected=anchors[index+1];
+        }
+        if(cells[selected.role])cells[selected.role].push(word.text);
+    });
+    Object.keys(cells).forEach(key=>{cells[key]=cells[key].join(" ").trim();});
+    return cells;
+}
+
+function ppCellNumbersPP(value){
+    const text=String(value||"")
+        .replace(/(\d)\s+([.,])\s*(\d)/g,"$1$2$3")
+        .replace(/(\d)\s+(?=\d{3}(?:\D|$))/g,"$1");
+    return [...text.matchAll(/-?\d+(?:[.,]\d+)?/g)]
+        .map(match=>parseNumber(match[0]))
+        .filter(number=>Number.isFinite(number));
+}
+
+function ppParsePositionedProductRowPP(row,columns){
+    const fullLine=String(row?.text||"");
+    if(ppLooksLikeNonProductDocumentRowPP(fullLine))return null;
+    const cells=ppCellsFromOCRRowPP(row,columns);
+    let name=cleanProductName(
+        String(cells.name||"")
+            .replace(/^\s*(?:[A-Z]{1,5}[-/.]?)?\d{3,}[A-Z0-9\-/.]*\s+/i,"")
+    );
+    if(!isValidProductName(name)||ppLooksLikeDocumentReferencePP(name,fullLine))return null;
+
+    const quantities=ppCellNumbersPP(cells.quantity);
+    const prices=ppCellNumbersPP(cells.price);
+    const amounts=ppCellNumbersPP(cells.amount);
+    let quantity=Number(quantities[0]||0);
+    let price=Number(prices[0]||0);
+    const explicitTotal=Number(amounts[amounts.length-1]||0);
+    if(quantity<=0&&price>0&&explicitTotal>0)quantity=explicitTotal/price;
+    if(price<=0&&quantity>0&&explicitTotal>0)price=explicitTotal/quantity;
+    if(quantity<=0||quantity>1000000||price<0||price>10000000)return null;
+
+    if(explicitTotal>0&&price>0){
+        const calculated=quantity*price;
+        const tolerance=Math.max(0.1,explicitTotal*0.06);
+        if(Math.abs(calculated-explicitTotal)>tolerance){
+            price=explicitTotal/quantity;
+        }
+    }
+
+    const vatText=String(cells.vat||"");
+    const vatMatch=vatText.match(/\b(0|7|10|14|20)(?:[.,]00)?\s*%?/);
+    const vatRate=vatMatch?Number(vatMatch[1]):0;
+    const totalHT=explicitTotal||quantity*price;
+    const vatAmount=totalHT*vatRate/100;
+    return {
+        name,
+        quantity,
+        unit:detectUnitFromText(cells.unit||fullLine),
+        price,
+        vatRate,
+        vatDetected:Boolean(vatMatch),
+        vatAmount,
+        totalHT,
+        totalTTC:totalHT+vatAmount,
+        category:guessCategory(name)
+    };
+}
+
+function ppLooksLikeDocumentReferencePP(name,line){
+    const value=String(name||"").trim();
+    const compact=normalizeText(value).replace(/\s+/g,"");
+    if(/^(?:fa|fac|fact|facture|bl|bc|devis|bon)[/#.\-]?\d/.test(compact))return true;
+    if(/\b\d{1,2}[/.\-]\d{1,2}[/.\-](?:19|20)?\d{2}\b/.test(String(line||"")))return true;
+    const letters=(value.match(/[A-Za-zÀ-ÿ]/g)||[]).length;
+    const digits=(value.match(/\d/g)||[]).length;
+    const separators=(value.match(/[/.#\-]/g)||[]).length;
+    return separators>=2&&digits>=4&&letters<5;
+}
+
+function ppLooksLikeNonProductDocumentRowPP(line){
+    const value=String(line||"").trim();
+    const normalized=normalizeText(value).replace(/^[^a-z0-9]+/,"");
+    if(!normalized)return true;
+    if(isAdministrativeText(normalized)||looksLikeAddressLine(normalized))return true;
+    if(/^(?:fa|fac|fact|facture|bl|bc|devis|bon)[\s:/#.\-]*(?:n|no|numero)?[°ºo\s:/#.\-]*\d/i.test(value))return true;
+    if(/\b(?:date|echeance|numero|facture|client|fournisseur|ice|if|rc)\b/.test(normalized))return true;
+    if(/\b\d{1,2}[/.\-]\d{1,2}[/.\-](?:19|20)?\d{2}\b/.test(value))return true;
+    return false;
+}
+
 function extractProductsFromTextTable(text){
 
     const pageChunks=String(text||"")
@@ -4419,6 +4712,10 @@ function parseTextProductLine(line){
         looksLikeAddressLine(
             normalized
         )
+        ||
+        ppLooksLikeNonProductDocumentRowPP(
+            line
+        )
     ){
 
         return null;
@@ -4490,6 +4787,11 @@ function parseTextProductLine(line){
     if(
         !isValidProductName(
             name
+        )
+        ||
+        ppLooksLikeDocumentReferencePP(
+            name,
+            line
         )
     ){
 
