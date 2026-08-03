@@ -1,0 +1,8 @@
+node_modules/
+Pause-Plate-Manager-Samsung.apk
+android/local.properties
+android/.gradle/
+android/app/build/
+ios/DerivedData/
+*.xcuserstate
+.DS_Store

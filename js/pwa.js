@@ -6,6 +6,56 @@
   let deferredInstallPrompt = null;
   let refreshing = false;
 
+  function isNativeMobileApp() {
+    try {
+      return window.Capacitor?.isNativePlatform?.() === true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function enableNativeMobileMode() {
+    document.documentElement.classList.add('pp-native-mobile');
+
+    if (!document.getElementById('ppNativeMobileStyles')) {
+      const style = document.createElement('style');
+      style.id = 'ppNativeMobileStyles';
+      style.textContent = `
+        .pp-native-mobile #ppPwaInstallButton,
+        .pp-native-mobile button[onclick*="ppScanInvoiceFromPC"],
+        .pp-native-mobile button[onclick*="ppSelectScannerPP"],
+        .pp-native-mobile button[onclick*="ppScanDailySalesFromPC"]{display:none!important}
+        .pp-native-mobile #ppInvoiceScannerStatus{display:none!important}
+        .pp-native-mobile body{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+      `;
+      document.head.appendChild(style);
+    }
+
+    const adaptMobileUI = () => {
+      const title = document.querySelector('#scanModal .scan-area h3');
+      if (title && title.textContent.trim() !== 'Photographier ou importer votre facture') {
+        title.textContent = 'Photographier ou importer votre facture';
+      }
+      const input = document.getElementById('invoiceFile');
+      if (input) input.setAttribute('accept', 'image/*,application/pdf,.pdf');
+    };
+
+    adaptMobileUI();
+    if (document.body) {
+      const observer = new MutationObserver(adaptMobileUI);
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+  }
+
+  if (isNativeMobileApp()) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', enableNativeMobileMode, { once: true });
+    } else {
+      enableNativeMobileMode();
+    }
+    return;
+  }
+
   function isStandalone() {
     return window.matchMedia('(display-mode: standalone)').matches ||
       window.navigator.standalone === true;

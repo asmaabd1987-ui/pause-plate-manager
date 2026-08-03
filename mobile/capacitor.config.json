@@ -1,0 +1,32 @@
+{
+  "appId": "ma.pauseplate.manager",
+  "appName": "Pause & Plate",
+  "webDir": "www",
+  "backgroundColor": "#F7F1E5",
+  "loggingBehavior": "none",
+  "zoomEnabled": false,
+  "server": {
+    "url": "https://asmaabd1987-ui.github.io/pause-plate-manager/",
+    "cleartext": false,
+    "errorPath": "offline.html"
+  },
+  "ios": {
+    "backgroundColor": "#F7F1E5",
+    "contentInset": "automatic",
+    "preferredContentMode": "mobile",
+    "allowsLinkPreview": false,
+    "scrollEnabled": true
+  },
+  "android": {
+    "backgroundColor": "#F7F1E5",
+    "allowMixedContent": false,
+    "minWebViewVersion": 60,
+    "resolveServiceWorkerRequests": true
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css",
+      "style": "DARK"
+    }
+  }
+}
