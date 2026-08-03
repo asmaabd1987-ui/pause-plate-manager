@@ -31,7 +31,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 17891
 SCAN_LOCK = threading.Lock()
@@ -332,14 +332,12 @@ def list_sane_scanners() -> list[dict]:
         [command, "-L"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20, check=False
     )
     fallback_text = decode_process_output(fallback.stdout)
-    for index, line in enumerate(fallback_text.splitlines(), start=1):
+    for line in fallback_text.splitlines():
         match = re.search(r"device [`']([^`']+)[`'] is a (.+)", line, re.IGNORECASE)
         if match:
             scanners.append(
                 {"id": match.group(1), "name": match.group(2).strip(), "vendor": "", "backend": "SANE"}
             )
-        elif line.strip():
-            scanners.append({"id": line.strip(), "name": f"Scanner {index}", "vendor": "", "backend": "SANE"})
     return scanners
 
 

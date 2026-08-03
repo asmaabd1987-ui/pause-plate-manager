@@ -31,6 +31,8 @@ Ouvrez cette adresse dans Safari, Chrome ou Edge:
 http://127.0.0.1:17891/health
 
 Vous devez voir "ready": true et le nom du scanner dans "scanners".
+Si vous voyez "ready": false, le Bridge fonctionne mais SANE ne reconnaît
+pas encore le scanner physique.
 
 SI AUCUN SCANNER N'EST DÉTECTÉ
 ------------------------------

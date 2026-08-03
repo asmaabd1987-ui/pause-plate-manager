@@ -82,9 +82,16 @@ launchctl kickstart -k "gui/$(id -u)/com.pauseplate.scannerbridge"
 
 sleep 2
 echo ""
-if curl -fsS "http://127.0.0.1:17891/health" >/dev/null 2>&1; then
-    echo "✅ Scanner Bridge installé et lancé avec succès."
-    echo "Rechargez Pause & Plate Manager puis cliquez sur Scan en temps réel."
+HEALTH_JSON="$(curl -fsS "http://127.0.0.1:17891/health" 2>/dev/null || true)"
+if [ -n "$HEALTH_JSON" ]; then
+    if printf '%s' "$HEALTH_JSON" | "$PYTHON_BIN" -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin).get("ready") else 1)'; then
+        echo "✅ Scanner Bridge installé et scanner détecté avec succès."
+        echo "Rechargez Pause & Plate Manager puis cliquez sur Scan en temps réel."
+    else
+        echo "⚠️ Scanner Bridge installé, mais aucun vrai scanner n'est détecté."
+        echo "Vérifiez le câble, l'alimentation et exécutez: scanimage -L"
+        echo "$HEALTH_JSON"
+    fi
 else
     echo "⚠️ Le Bridge est installé, mais le test n'a pas répondu."
     echo "Consultez: $LOG_DIR/PausePlateScanner.error.log"
