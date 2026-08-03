@@ -11634,10 +11634,7 @@ let ppCloudDirty = false;
 let ppCloudSaveAgain = false;
 let ppCloudChangeVersion = 0;
 let ppCloudBaseState = {};
-<<<<<<< HEAD
-=======
 let ppCloudProfileSignature = "";
->>>>>>> 9ab1f10 (Secure Firebase permissions and multi-user sync)
 
 const PP_CLOUD_DATASETS = {
     products: () => products,
@@ -12004,10 +12001,7 @@ async function ppCloudHasData(){
 }
 
 async function ppUploadAllLocalToCloud(){
-<<<<<<< HEAD
-=======
     if(!ppIsAdmin())throw new Error("Initialisation Cloud réservée à l’administrateur.");
->>>>>>> 9ab1f10 (Secure Firebase permissions and multi-user sync)
     Object.keys(PP_CLOUD_DATASETS).forEach(key=>ppSetDataset(key,PP_CLOUD_DATASETS[key]()));
     const state=ppStateSnapshot();
     const batch=ppDb.batch();
@@ -12037,10 +12031,6 @@ async function ppLoadAllCloud(){
             ppCloudBaseState[key]=ppCloudClonePP(PP_CLOUD_DATASETS[key]());
         }
         ppSaveLocalOnly();
-<<<<<<< HEAD
-        ppCloudBaseState=ppCloudClonePP(ppStateSnapshot());
-=======
->>>>>>> 9ab1f10 (Secure Firebase permissions and multi-user sync)
         ppCloudDirty=false;
     }finally{ppApplyingCloudState=false;}
 }
@@ -12113,16 +12103,12 @@ async function ppSaveCloudNow(){
     const status=document.getElementById("ppCloudStatus");
     if(status)status.textContent="☁️ Synchronisation...";
     try{
-<<<<<<< HEAD
-        const keys=Object.keys(PP_CLOUD_DATASETS);
-=======
         const keys=ppCloudAllowedDatasetKeysPP();
         if(!keys.length){
             ppCloudDirty=false;
             if(status)status.textContent="✅ Synchronisé";
             return;
         }
->>>>>>> 9ab1f10 (Secure Firebase permissions and multi-user sync)
         const refs=keys.map(key=>ppDataDoc(key));
         await ppDb.runTransaction(async transaction=>{
             const snapshots=await Promise.all(refs.map(ref=>transaction.get(ref)));
@@ -12130,15 +12116,6 @@ async function ppSaveCloudNow(){
             keys.forEach((key,index)=>{
                 const remote=snapshots[index].exists?snapshots[index].data()?.items||[]:[];
                 const delta=ppCloudDatasetDeltaPP(key,baseState[key]||[],localState[key]||[]);
-<<<<<<< HEAD
-                const merged=ppCloudMergeDatasetPP(key,remote,delta);
-                nextState[key]=merged;
-                transaction.set(refs[index],{
-                    items:merged,
-                    updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
-                    updatedBy:ppCurrentUser.uid
-                },{merge:true});
-=======
                 const changed=delta.upserts.length>0||delta.deletes.length>0;
                 const merged=changed?ppCloudMergeDatasetPP(key,remote,delta):ppCloudEnsureRecordIdsPP(key,remote);
                 nextState[key]=merged;
@@ -12151,7 +12128,6 @@ async function ppSaveCloudNow(){
                         updatedBy:ppCurrentUser.uid
                     },{merge:true});
                 }
->>>>>>> 9ab1f10 (Secure Firebase permissions and multi-user sync)
             });
             mergedState=nextState;
         });
@@ -12175,10 +12151,7 @@ async function ppSaveCloudNow(){
         console.error("Cloud save failed",err);
         ppCloudDirty=true;
         if(status)status.textContent="⚠️ Hors ligne — sauvegarde locale";
-<<<<<<< HEAD
-=======
         if(String(err?.code||"").includes("permission-denied"))ppWriteSecurityEventPP("firestore-denied",err?.message||"Écriture Firebase refusée");
->>>>>>> 9ab1f10 (Secure Firebase permissions and multi-user sync)
     }finally{
         ppCloudSaving=false;
         if(ppCloudSaveAgain||ppCloudChangeVersion!==saveVersion){
