@@ -7251,6 +7251,17 @@ let ppActiveTVAModule = "deductible";
 function ensureTVASubmenuPP(){
     const page=document.getElementById('tvaPage');
     if(!page) return;
+
+    // Hide the static placeholder that originally occupied the TVA page.
+    // Keep only the real submenu and the four functional TVA modules.
+    const functionalIds=new Set([
+        'ppTVASubmenu','ppTVAAchatsModule','ppTVACollecteeModule',
+        'ppTVASituationModule','ppPaymentDeadlinesModule'
+    ]);
+    [...page.children].forEach(element=>{
+        if(!functionalIds.has(element.id))element.style.display='none';
+    });
+
     if(document.getElementById('ppTVASubmenu')) return;
 
     const nav=document.createElement('div');
