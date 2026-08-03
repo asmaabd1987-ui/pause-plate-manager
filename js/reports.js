@@ -1170,7 +1170,7 @@ function ppRenderSalesAnalysisPP(){
               <table class="pp-sales-table">
                 <thead><tr><th>#</th><th>Plat</th><th>Catégorie</th><th class="num">Qté</th><th class="num">CA TTC</th></tr></thead>
                 <tbody>
-                  ${recipes.slice(0,15).map((r,i)=>`
+                  ${recipes.map((r,i)=>`
                     <tr>
                       <td>${i+1}</td>
                       <td><strong>${typeof escapeHTML==="function"?escapeHTML(r.name):r.name}</strong></td>
@@ -1334,7 +1334,7 @@ function ppRenderStockFoodCostPP(){
               <table class="pp-stock-table">
                 <thead><tr><th>Article</th><th>Catégorie</th><th class="num">Stock</th><th class="num">Minimum</th><th class="num">À couvrir</th><th>Statut</th></tr></thead>
                 <tbody>
-                  ${lowRows.slice(0,20).map(r=>{
+                  ${lowRows.map(r=>{
                       const zero=r.stock<=0;
                       return `<tr>
                         <td><strong>${ppStockEscPP(r.name)}</strong></td>
@@ -1371,7 +1371,7 @@ function ppRenderStockFoodCostPP(){
     const top=document.getElementById("ppStockTopConsumption");
     if(top){
         top.innerHTML=consumption.length
-          ? consumption.slice(0,12).map((r,i)=>`
+          ? consumption.map((r,i)=>`
               <div class="pp-stock-rank">
                 <div class="n">${i+1}</div>
                 <div>
@@ -1414,7 +1414,7 @@ function ppRenderStockFoodCostPP(){
               <table class="pp-stock-table">
                 <thead><tr><th>Article</th><th>Catégorie</th><th class="num">Stock</th><th class="num">Prix moyen</th><th class="num">Valeur</th><th>Statut</th></tr></thead>
                 <tbody>
-                  ${rows.slice(0,30).map(r=>{
+                  ${rows.map(r=>{
                       const low=r.stock<=r.min;
                       return `<tr>
                         <td><strong>${ppStockEscPP(r.name)}</strong></td>
@@ -1628,8 +1628,7 @@ function ppRenderPurchasesSuppliersPP(){
     if(alerts){
         const alertRows=intelligence
           .filter(x=>(x.change!==null && x.change>=3) || x.gapPct>=3)
-          .sort((a,b)=>Math.max(b.change||0,b.gapPct||0)-Math.max(a.change||0,a.gapPct||0))
-          .slice(0,15);
+          .sort((a,b)=>Math.max(b.change||0,b.gapPct||0)-Math.max(a.change||0,a.gapPct||0));
 
         alerts.innerHTML=alertRows.length
           ? alertRows.map(x=>{
@@ -1658,7 +1657,7 @@ function ppRenderPurchasesSuppliersPP(){
         });
         const rows=[...map.values()].sort((a,b)=>b.total-a.total);
         ranking.innerHTML=rows.length
-          ? rows.slice(0,10).map((r,i)=>`
+          ? rows.map((r,i)=>`
               <div class="pp-buy-rank">
                 <div class="n">${i+1}</div>
                 <div><strong>${ppBuyEscPP(r.name)}</strong><small>${r.count} facture(s)</small></div>
@@ -1682,7 +1681,7 @@ function ppRenderPurchasesSuppliersPP(){
                   <th>Meilleur fournisseur récent</th><th class="num">Meilleur prix</th><th class="num">Écart</th><th>Diagnostic</th>
                 </tr></thead>
                 <tbody>
-                  ${rows.slice(0,60).map(x=>{
+                  ${rows.map(x=>{
                       const rise=x.change!==null && x.change>0.01;
                       const drop=x.change!==null && x.change<-0.01;
                       const overpriced=x.gap>0.001 && ppBuyNormPP(x.bestSupplier)!==ppBuyNormPP(x.supplierName);
@@ -1713,8 +1712,7 @@ function ppRenderPurchasesSuppliersPP(){
     if(increases){
         const rows=intelligence
           .filter(x=>x.change!==null && x.change>0.01)
-          .sort((a,b)=>b.change-a.change)
-          .slice(0,12);
+          .sort((a,b)=>b.change-a.change);
         increases.innerHTML=rows.length
           ? rows.map((x,i)=>`
               <div class="pp-buy-rank">
@@ -1727,7 +1725,7 @@ function ppRenderPurchasesSuppliersPP(){
 
     const history=document.getElementById("ppPurchaseHistory");
     if(history){
-        const rows=ppBuyRowsPP().slice(0,20);
+        const rows=ppBuyRowsPP();
         history.innerHTML=rows.length
           ? `<div class="pp-buy-table-wrap"><table class="pp-buy-table" style="min-width:620px">
               <thead><tr><th>Date</th><th>Article</th><th>Fournisseur</th><th class="num">Qté</th><th class="num">Prix unitaire</th></tr></thead>
@@ -1825,7 +1823,7 @@ function ppRenderExpensesReportPP(){
     if(!table)return;
     table.innerHTML=rows.length?`<div class="pp-expense-table-wrap"><table class="pp-expense-table" style="min-width:1500px">
       <thead><tr><th>Date</th><th>Échéance</th><th>Catégorie</th><th>Bénéficiaire</th><th>Libellé / Référence</th><th class="num">HT</th><th class="num">TVA</th><th class="num">TTC</th><th class="num">Réglé</th><th class="num">Reste</th><th>Statut</th><th>Dernier règlement</th><th>Action</th></tr></thead>
-      <tbody>${rows.slice(0,100).map(e=>{
+      <tbody>${rows.map(e=>{
           const ttc=ppReportExpenseTTCPP(e),ht=ppReportExpenseHTPP(e),totals=ppReportExpensePaymentTotalsPP(e);
           const latest=ppReportExpensePaymentsPP(e).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
           return `<tr>

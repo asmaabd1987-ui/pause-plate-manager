@@ -2307,3 +2307,91 @@ details summary{
 .pp-cloud-user-box #ppCloudStatus{font-weight:700;color:#094B2D}
 .pp-cloud-user-box button{border:0;background:#F1F5F2;color:#094B2D;border-radius:7px;padding:7px 9px;font-size:10px;font-weight:700}
 @media(max-width:800px){.pp-cloud-user-box small{display:none}.pp-cloud-user-box{margin-right:6px}}
+
+/* =========================================
+   GLOBAL PAGINATION — 15 LIGNES MAXIMUM
+========================================= */
+.pp-pagination-hidden{
+    display:none !important;
+}
+
+.pp-pagination{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:14px;
+    flex-wrap:wrap;
+    width:100%;
+    margin-top:16px;
+    padding:13px 14px;
+    border:1px solid var(--border);
+    border-radius:12px;
+    background:#fbfcfb;
+}
+
+.pp-pagination-info{
+    color:var(--muted);
+    font-size:12px;
+    font-weight:700;
+}
+
+.pp-pagination-pages{
+    display:flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:6px;
+    flex-wrap:wrap;
+}
+
+.pp-pagination button{
+    min-width:36px;
+    height:36px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    border:1px solid #d7dfda;
+    border-radius:9px;
+    padding:0 10px;
+    background:#fff;
+    color:var(--green);
+    font-size:12px;
+    font-weight:800;
+    transition:background .15s ease,color .15s ease,border-color .15s ease;
+}
+
+.pp-pagination button:hover:not(:disabled),
+.pp-pagination button.active{
+    border-color:var(--green);
+    background:var(--green);
+    color:#fff;
+}
+
+.pp-pagination button:disabled{
+    cursor:not-allowed;
+    opacity:.42;
+}
+
+.pp-pagination-ellipsis{
+    min-width:22px;
+    color:var(--muted);
+    text-align:center;
+    font-weight:800;
+}
+
+@media(max-width:650px){
+    .pp-pagination{
+        justify-content:center;
+    }
+    .pp-pagination-info{
+        width:100%;
+        text-align:center;
+    }
+    .pp-pagination-pages{
+        justify-content:center;
+    }
+    .pp-pagination button{
+        min-width:34px;
+        height:34px;
+        padding:0 8px;
+    }
+}

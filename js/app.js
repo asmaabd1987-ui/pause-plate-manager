@@ -5891,7 +5891,7 @@ th{background:#EAF3EE!important;color:#094B2D;font-weight:700;-webkit-print-colo
 .totals{margin-left:auto;max-width:340px;text-align:right}
 .totals p{margin:6px 0}
 .status{border:1px solid #ddd;padding:2px 6px;border-radius:8px}
-button,.btn,.action-buttons{display:none!important}
+button,.btn,.action-buttons,.pp-pagination{display:none!important}
 @media print{
   html,body{width:100%;padding:0!important;margin:0!important}
   a{text-decoration:none;color:inherit}
