@@ -1384,6 +1384,7 @@ function addInvoiceLine(data = {}){
                         "L",
                         "ml",
                         "pièce",
+                        "sac",
                         "carton",
                         "paquet"
                     ]
@@ -3140,23 +3141,6 @@ function finishScan(){
         );
 
 
-    // Merge repeated articles detected on the same invoice.
-    // Quantities are added and the unit price becomes a weighted average
-    // so the original total HT is preserved exactly.
-    if(
-        scannedInvoiceData
-        &&
-        Array.isArray(scannedInvoiceData.products)
-    ){
-
-        scannedInvoiceData.products =
-            deduplicateScannedProducts(
-                scannedInvoiceData.products
-            );
-
-    }
-
-
     renderScanResult();
 
 }
@@ -3234,27 +3218,31 @@ function extractInvoiceData(text){
     }
 
 
-    if(
-        !detectedProducts.length
-    ){
+    if(!detectedProducts.length){
+        const positionedProducts=extractProductsFromPositionedOCR(
+            ppInvoiceLiveScanPages
+        );
+        const textProducts=extractProductsFromTextTable(clean);
 
-        detectedProducts =
-            extractProductsFromPositionedOCR(
-                ppInvoiceLiveScanPages
+        const reliableTextRows=textProducts.filter(
+            product=>product?.ocrSource==="unit-column"
+        ).length;
+
+        // A unit-anchored text row is safer than raw coordinates for this
+        // invoice layout: table totals can visually resemble product rows.
+        // Prefer the text table when most rows are anchored by KG/UNITE/SAC;
+        // retain positional OCR as a fallback for other supplier layouts.
+        const reliableTextTable=
+            reliableTextRows>=2
+            &&
+            reliableTextRows>=Math.ceil(textProducts.length*0.7);
+        detectedProducts=reliableTextTable
+            ?textProducts
+            :(
+                ppOCRProductSetScorePP(textProducts)>=ppOCRProductSetScorePP(positionedProducts)
+                ?textProducts
+                :positionedProducts
             );
-
-    }
-
-
-    if(
-        !detectedProducts.length
-    ){
-
-        detectedProducts =
-            extractProductsFromTextTable(
-                clean
-            );
-
     }
 
 
@@ -4004,9 +3992,7 @@ function extractProductsFromStructuredPDF(pages){
     });
 
 
-    return deduplicateScannedProducts(
-        result
-    );
+    return result;
 
 }
 
@@ -4030,6 +4016,10 @@ function isProductTableEnd(normalized){
         "total ttc",
         "net a payer",
         "total a payer",
+        "montant ht",
+        "taux taxe",
+        "t.v.a.",
+        "tva",
         "base taux",
         "condition de paiement",
         "conditions de paiement",
@@ -4406,6 +4396,21 @@ function parseStructuredPDFRow(columns){
 // Parse scanned invoices from the actual word positions returned by
 // Tesseract.  This is more reliable than flattened OCR text because numbers
 // keep their original quantity / unit-price / amount columns.
+function ppOCRProductSetScorePP(items){
+    return (Array.isArray(items)?items:[]).reduce((score,item)=>{
+        const letters=(String(item?.name||"").match(/[A-Za-zÀ-ÿ]/g)||[]).length;
+        const quantity=Number(item?.quantity||0);
+        const price=Number(item?.price||0);
+        const total=Number(item?.totalHT||0);
+        return score
+            +100
+            +Math.min(20,letters)
+            +(quantity>0?15:0)
+            +(price>0?15:0)
+            +(total>0?15:0);
+    },0);
+}
+
 function extractProductsFromPositionedOCR(pages){
     const result=[];
     (Array.isArray(pages)?pages:[]).forEach(page=>{
@@ -4467,7 +4472,7 @@ function extractProductsFromPositionedOCR(pages){
             }
         });
     });
-    return deduplicateScannedProducts(result);
+    return result;
 }
 
 function ppOCRHeaderRolePP(value){
@@ -4593,7 +4598,9 @@ function ppLooksLikeNonProductDocumentRowPP(line){
     const normalized=normalizeText(value).replace(/^[^a-z0-9]+/,"");
     if(!normalized)return true;
     if(isAdministrativeText(normalized)||looksLikeAddressLine(normalized))return true;
-    if(/^(?:fa|fac|fact|facture|bl|bc|devis|bon)[\s:/#.\-]*(?:n|no|numero)?[°ºo\s:/#.\-]*\d/i.test(value))return true;
+    // BL/BC references are allowed here because suppliers often print the
+    // delivery-note number at the beginning of the first product row.
+    if(/^(?:fa|fac|fact|facture|devis)[\s:/#.\-]*(?:n|no|numero)?[°ºo\s:/#.\-]*\d/i.test(value))return true;
     if(/\b(?:date|echeance|numero|facture|client|fournisseur|ice|if|rc)\b/.test(normalized))return true;
     if(/\b\d{1,2}[/.\-]\d{1,2}[/.\-](?:19|20)?\d{2}\b/.test(value))return true;
     return false;
@@ -4607,9 +4614,7 @@ function extractProductsFromTextTable(text){
         .filter(Boolean);
 
     if(pageChunks.length>1){
-        return deduplicateScannedProducts(
-            pageChunks.flatMap(chunk=>extractProductsFromTextTable(chunk))
-        );
+        return pageChunks.flatMap(chunk=>extractProductsFromTextTable(chunk));
     }
 
     const lines =
@@ -4721,6 +4726,13 @@ function parseTextProductLine(line){
         return null;
 
     }
+
+
+    // Scanned supplier invoices usually keep the unit column readable even
+    // when table borders or decimal separators are damaged. Use that column
+    // as a stable anchor before falling back to the generic number parser.
+    const unitAnchoredProduct=ppParseUnitAnchoredOCRProductPP(line);
+    if(unitAnchoredProduct)return unitAnchoredProduct;
 
 
     const matches =
@@ -4872,6 +4884,84 @@ function parseTextProductLine(line){
 
     };
 
+}
+
+function ppOCRNumericTokensPP(value){
+    const text=String(value||"");
+    return [...text.matchAll(/-?\d{1,3}(?:[ .]\d{3})+(?:,\d+)?|-?\d+(?:[.,]\d+)?/g)]
+        .map(match=>{
+            let raw=String(match[0]||"").replace(/\s+/g,"");
+            let normalized=raw;
+            if(raw.includes(",")){
+                normalized=raw.replace(/\./g,"").replace(",",".");
+            }else if(/^\-?\d{1,3}(?:\.\d{3})+$/.test(raw)){
+                normalized=raw.replace(/\./g,"");
+            }
+            const number=Number(normalized.replace(/[^0-9.-]/g,""));
+            return {
+                raw:match[0],
+                index:Number(match.index||0),
+                value:Number.isFinite(number)?number:0
+            };
+        });
+}
+
+function ppParseUnitAnchoredOCRProductPP(line){
+    const value=String(line||"");
+    const units=[...value.matchAll(/\b(KGS?|KG|LITRES?|LTR|ML|SACS?|UNITE(?:S)?|UNITÉ(?:S)?|PCS?|PI[EÈ]CES?|CTN|CARTONS?|PAQUETS?)\b/gi)];
+    if(!units.length)return null;
+
+    // The last unit is the invoice unit column. Earlier occurrences can be
+    // part of a designation, e.g. "MAYONAISE JAP 1 KG ... 1 UNITE".
+    const unitMatch=units[units.length-1];
+    const left=value.slice(0,unitMatch.index);
+    const right=value.slice(Number(unitMatch.index)+String(unitMatch[0]).length);
+    const leftNumbers=ppOCRNumericTokensPP(left);
+    const rightNumbers=ppOCRNumericTokensPP(right);
+    if(!leftNumbers.length||!rightNumbers.length)return null;
+
+    const quantityToken=leftNumbers[leftNumbers.length-1];
+    let name=cleanProductName(
+        left.slice(0,quantityToken.index)
+            .replace(/\s+\d{1,2}\s*$/g,"")
+            .replace(/[|‘’`~_—–-]+\s*$/g,"")
+    )
+        .replace(/\s+[‘’`'"]?\s*(?:mit|en)\.?\s*$/i,"")
+        .replace(/[.,;:]+\s*$/g,"")
+        .trim();
+    if(!isValidProductName(name)||ppLooksLikeDocumentReferencePP(name,value))return null;
+
+    let quantity=Number(quantityToken.value||0);
+    const price=Number(rightNumbers[0]?.value||0);
+    const explicitTotal=rightNumbers.length>=2
+        ?Number(rightNumbers[rightNumbers.length-1]?.value||0)
+        :0;
+    if(price<=0||price>10000000)return null;
+
+    // Repair OCR decimals such as "400| KG 60,00 240,00" (4,00 KG)
+    // and "470| KG 240,00 1.128,00" (4,70 KG) from the line arithmetic.
+    if(explicitTotal>0){
+        const inferredQuantity=explicitTotal/price;
+        if(inferredQuantity>0&&inferredQuantity<=1000000){
+            quantity=Math.round(inferredQuantity*1000)/1000;
+        }
+    }
+    if(quantity<=0||quantity>1000000)return null;
+
+    const totalHT=explicitTotal||quantity*price;
+    return {
+        name,
+        quantity,
+        unit:detectUnitFromText(unitMatch[0]),
+        price,
+        vatRate:0,
+        vatDetected:false,
+        vatAmount:0,
+        totalHT,
+        totalTTC:totalHT,
+        category:guessCategory(name),
+        ocrSource:"unit-column"
+    };
 }
 
 
@@ -5237,7 +5327,9 @@ function extractTVAAmount(text){
         text,
         [
             "TOTAL TVA",
-            "MONTANT TVA"
+            "MONTANT TVA",
+            "T.V.A.",
+            "TVA"
         ]
     );
 
@@ -5852,6 +5944,8 @@ function isValidProductName(name){
         ||
         normalized.length <
         2
+        ||
+        (String(name||"").match(/[A-Za-zÀ-ÿ]/g)||[]).length<2
     ){
 
         return false;
@@ -5874,7 +5968,7 @@ function detectUnitFromText(text){
             ""
         )
         .match(
-            /\b(KG|KGS?|G|L|LTR|LITRE|ML|PCS?|PC|PI[EÈ]CES?|UNITE|UNITÉ|UNITES|UNITÉS|CTN|CARTONS?|PAQUETS?)\b/i
+            /\b(KG|KGS?|G|L|LTR|LITRE|ML|SACS?|PCS?|PC|PI[EÈ]CES?|UNITE|UNITÉ|UNITES|UNITÉS|CTN|CARTONS?|PAQUETS?)\b/i
         );
 
 
@@ -5934,6 +6028,13 @@ function normalizeUnit(unit){
     if(value === "ml"){
 
         return "ml";
+
+    }
+
+
+    if(value === "sac"||value === "sacs"){
+
+        return "sac";
 
     }
 
@@ -6238,12 +6339,12 @@ function isAdministrativeText(normalized){
 
     ]
     .some(function(prefix){
-
-        return value.startsWith(
-            normalizeText(
-                prefix
-            )
-        );
+        const normalizedPrefix=normalizeText(prefix);
+        if(value===normalizedPrefix)return true;
+        const next=value.charAt(normalizedPrefix.length);
+        return value.startsWith(normalizedPrefix)
+            &&
+            (!next||/[^a-z0-9]/i.test(next));
 
     });
 
@@ -7545,7 +7646,9 @@ function useScannedInvoiceData(){
                 productId:existing?existing.id:null,
                 name:existing?existing.name:cleanedName,
                 category:existing?existing.category:item.category,
-                unit:existing?existing.unit:item.unit,
+                unit:item.ocrSource==="unit-column"
+                    ?item.unit
+                    :(existing?existing.unit:item.unit),
                 quantity:item.quantity,
                 price:item.price,
                 vatRate,
