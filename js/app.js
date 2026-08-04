@@ -14109,3 +14109,275 @@ setTimeout(ppFinalizeRoleUI,3000);
         ppEnsureMovementProductSearchPP();
     }
 })();
+
+
+/* =========================================================
+   VENTES — RECHERCHE RAPIDE DANS LES FICHES / AFFECTATIONS
+   Ajout ciblé : conserve les selects d'origine comme source de vérité.
+========================================================= */
+
+function ppEnsureSalesQuickSearchStylesPP(){
+    if(document.getElementById('ppSalesQuickSearchStyles'))return;
+    const style=document.createElement('style');
+    style.id='ppSalesQuickSearchStyles';
+    style.textContent=`
+      .pp-sales-search-wrap{position:relative;min-width:0}
+      .pp-sales-search-input{width:100%;min-height:42px;padding:10px 12px;border:1px solid #d0d5dd;border-radius:10px;background:#fff;color:#18251b;font:inherit}
+      .pp-sales-search-input:focus{outline:none;border-color:#094B2D;box-shadow:0 0 0 3px rgba(9,75,45,.12)}
+      .pp-sales-search-menu{display:none;position:absolute;z-index:10050;left:0;right:0;top:calc(100% + 5px);max-height:280px;overflow:auto;background:#fff;border:1px solid #d0d5dd;border-radius:12px;box-shadow:0 14px 35px rgba(16,24,40,.16);padding:5px}
+      .pp-sales-search-menu.is-open{display:block}
+      .pp-sales-search-option{display:block;width:100%;border:0;background:transparent;text-align:left;padding:9px 10px;border-radius:8px;cursor:pointer;color:#18251b;font:inherit}
+      .pp-sales-search-option:hover,.pp-sales-search-option.is-active{background:#f2f7f4}
+      .pp-sales-search-option strong{display:block;white-space:normal}
+      .pp-sales-search-option small{display:block;color:#667085;margin-top:2px;white-space:normal}
+      .pp-sales-search-empty{padding:12px;color:#667085;text-align:center}
+      .pp-sales-search-native{position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important}
+      @media(max-width:700px){.pp-sales-search-menu{position:fixed;left:12px;right:12px;top:auto;bottom:12px;max-height:48vh}.pp-sale-recipe-line{grid-template-columns:1fr!important}}
+    `;
+    document.head.appendChild(style);
+
+    if(!document.body.dataset.ppSalesSearchOutsideInstalled){
+        document.body.dataset.ppSalesSearchOutsideInstalled='1';
+        document.addEventListener('click',event=>{
+            if(event.target.closest('.pp-sales-search-wrap'))return;
+            document.querySelectorAll('.pp-sales-search-menu.is-open').forEach(menu=>menu.classList.remove('is-open'));
+        });
+    }
+}
+
+function ppSalesSearchTextPP(value){
+    return normalizeText(String(value||''));
+}
+
+function ppSalesSearchMovePP(input,direction){
+    const wrap=input.closest('.pp-sales-search-wrap');
+    const menu=wrap?.querySelector('.pp-sales-search-menu');
+    if(!menu)return;
+    const options=[...menu.querySelectorAll('.pp-sales-search-option')];
+    if(!options.length)return;
+    let index=options.findIndex(option=>option.classList.contains('is-active'));
+    index=index<0?(direction>0?0:options.length-1):(index+direction+options.length)%options.length;
+    options.forEach((option,i)=>option.classList.toggle('is-active',i===index));
+    options[index].scrollIntoView({block:'nearest'});
+}
+
+function ppSalesSearchKeydownPP(event){
+    const input=event.currentTarget;
+    const menu=input.closest('.pp-sales-search-wrap')?.querySelector('.pp-sales-search-menu');
+    if(event.key==='ArrowDown'){
+        event.preventDefault();
+        if(!menu?.classList.contains('is-open'))ppOpenSalesSearchPP(input);
+        ppSalesSearchMovePP(input,1);
+    }else if(event.key==='ArrowUp'){
+        event.preventDefault();
+        if(!menu?.classList.contains('is-open'))ppOpenSalesSearchPP(input);
+        ppSalesSearchMovePP(input,-1);
+    }else if(event.key==='Enter'){
+        const active=menu?.querySelector('.pp-sales-search-option.is-active');
+        const options=[...(menu?.querySelectorAll('.pp-sales-search-option')||[])];
+        const target=active||(options.length===1?options[0]:null);
+        if(target){event.preventDefault();target.click();}
+    }else if(event.key==='Escape'){
+        menu?.classList.remove('is-open');
+    }
+}
+
+function ppOpenSalesSearchPP(input){
+    ppEnsureSalesQuickSearchStylesPP();
+    if(input.classList.contains('pp-sale-recipe-search')){
+        ppRenderSaleRecipeSuggestionsPP(input);
+    }else if(input.classList.contains('pp-daily-assignment-search')){
+        ppRenderDailyAssignmentSuggestionsPP(input);
+    }
+}
+
+function ppRenderSaleRecipeSuggestionsPP(input){
+    const wrap=input.closest('.pp-sales-search-wrap');
+    const menu=wrap?.querySelector('.pp-sales-search-menu');
+    if(!menu)return;
+    const q=ppSalesSearchTextPP(input.value);
+    const list=recipesPP.slice()
+        .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'fr'))
+        .filter(recipe=>!q||ppSalesSearchTextPP([recipe.name,recipe.category,recipe.description].join(' ')).includes(q))
+        .slice(0,80);
+    menu.innerHTML=list.length?list.map(recipe=>`
+      <button type="button" class="pp-sales-search-option" data-value="${recipe.id}" onclick="ppChooseSaleRecipePP(this)">
+        <strong>${escapeHTML(recipe.name||'Sans nom')}</strong>
+        <small>${escapeHTML(recipe.category||'Fiche technique')} · ${formatMoney(recipe.salePrice||0)}</small>
+      </button>`).join(''):'<div class="pp-sales-search-empty">Aucune fiche technique trouvée.</div>';
+    menu.classList.add('is-open');
+}
+
+function ppChooseSaleRecipePP(button){
+    const wrap=button.closest('.pp-sales-search-wrap');
+    const row=button.closest('.pp-sale-recipe-line');
+    const select=row?.querySelector('.pp-sale-recipe');
+    const input=wrap?.querySelector('.pp-sale-recipe-search');
+    const recipe=recipesPP.find(item=>Number(item.id)===Number(button.dataset.value));
+    if(!select||!input||!recipe)return;
+    select.value=String(recipe.id);
+    input.value=recipe.name;
+    input.dataset.selectedId=String(recipe.id);
+    wrap.querySelector('.pp-sales-search-menu')?.classList.remove('is-open');
+    updateSaleRecipeLinePP(select);
+}
+
+function ppSaleRecipeTypingPP(input){
+    input.dataset.selectedId='';
+    const select=input.closest('.pp-sale-recipe-line')?.querySelector('.pp-sale-recipe');
+    if(select)select.value='';
+    ppRenderSaleRecipeSuggestionsPP(input);
+    if(select)updateSaleRecipeLinePP(select);
+}
+
+/* Override ciblé : le select reste présent mais caché pour préserver tout le calcul existant. */
+function addSaleRecipeLinePP(data={}){
+    ppEnsureSalesQuickSearchStylesPP();
+    const box=document.getElementById('ppSaleRecipeLines');if(!box)return;
+    const selectedRecipe=recipesPP.find(item=>Number(item.id)===Number(data.recipeId));
+    const row=document.createElement('div');row.className='pp-sale-recipe-line';
+    row.style.cssText='display:grid;grid-template-columns:minmax(260px,2fr) minmax(110px,.7fr) minmax(130px,.8fr) minmax(130px,.8fr) 55px;gap:8px;align-items:end;border:1px solid #e5e7eb;border-radius:12px;padding:10px;margin-bottom:8px';
+    row.innerHTML=`
+      <div>
+        <label>Plat / fiche technique</label>
+        <div class="pp-sales-search-wrap">
+          <input type="text" class="pp-sales-search-input pp-sale-recipe-search" autocomplete="off"
+            placeholder="Rechercher une fiche technique…"
+            value="${escapeHTML(selectedRecipe?.name||'')}"
+            data-selected-id="${selectedRecipe?.id||''}"
+            onfocus="ppOpenSalesSearchPP(this)"
+            oninput="ppSaleRecipeTypingPP(this)"
+            onkeydown="ppSalesSearchKeydownPP(event)">
+          <select class="pp-sale-recipe pp-sales-search-native" onchange="updateSaleRecipeLinePP(this)">${saleRecipeOptionsPP(data.recipeId)}</select>
+          <div class="pp-sales-search-menu"></div>
+        </div>
+      </div>
+      <div><label>Quantité vendue</label><input class="pp-sale-recipe-qty" type="number" min="0.000001" step="0.000001" value="${Number(data.quantity||1)}" oninput="updateSaleRecipeLinePP(this)"></div>
+      <div><label>Prix vente</label><input class="pp-sale-recipe-price" readonly></div>
+      <div><label>Coût matière</label><input class="pp-sale-recipe-cost" readonly></div>
+      <button type="button" class="btn danger" onclick="this.closest('.pp-sale-recipe-line').remove();updateSaleRecipesTotalsPP()">🗑️</button>`;
+    box.appendChild(row);
+    updateSaleRecipeLinePP(row.querySelector('.pp-sale-recipe'));
+}
+
+function ppDailyAssignmentItemsPP(){
+    const recipes=recipesPP.map(recipe=>({
+        value:`r:${recipe.id}`,
+        name:String(recipe.name||''),
+        type:'Fiche technique',
+        extra:recipe.category||'',
+        search:[recipe.name,recipe.category,recipe.description].join(' ')
+    }));
+    const stock=products.map(product=>({
+        value:`p:${product.id}`,
+        name:String(product.name||''),
+        type:'Produit stock',
+        extra:`${formatNumber(product.stock||0)} ${product.unit||''}`.trim(),
+        search:[product.name,product.category,product.unit].join(' ')
+    }));
+    return [...recipes,...stock].sort((a,b)=>a.name.localeCompare(b.name,'fr'));
+}
+
+function ppDailyAssignmentLabelPP(match){
+    if(match?.recipeId){
+        const recipe=recipesPP.find(item=>Number(item.id)===Number(match.recipeId));
+        return recipe?recipe.name:'';
+    }
+    if(match?.stockProductId){
+        const product=products.find(item=>Number(item.id)===Number(match.stockProductId));
+        return product?product.name:'';
+    }
+    return '';
+}
+
+function ppRenderDailyAssignmentSuggestionsPP(input){
+    const wrap=input.closest('.pp-sales-search-wrap');
+    const menu=wrap?.querySelector('.pp-sales-search-menu');
+    if(!menu)return;
+    const q=ppSalesSearchTextPP(input.value);
+    const items=ppDailyAssignmentItemsPP()
+        .filter(item=>!q||ppSalesSearchTextPP(item.search).includes(q))
+        .slice(0,100);
+    menu.innerHTML=`
+      ${!q?`<button type="button" class="pp-sales-search-option" data-value="" onclick="ppChooseDailyAssignmentPP(this)">
+        <strong>Non affecté</strong><small>Supprimer l’affectation actuelle</small>
+      </button>`:''}
+      ${items.map(item=>`
+        <button type="button" class="pp-sales-search-option" data-value="${item.value}" onclick="ppChooseDailyAssignmentPP(this)">
+          <strong>${escapeHTML(item.name)}</strong>
+          <small>${escapeHTML(item.type)}${item.extra?` · ${escapeHTML(item.extra)}`:''}</small>
+        </button>`).join('')}`;
+    menu.classList.add('is-open');
+}
+
+function ppChooseDailyAssignmentPP(button){
+    const wrap=button.closest('.pp-sales-search-wrap');
+    const input=wrap?.querySelector('.pp-daily-assignment-search');
+    const index=Number(input?.dataset.matchIndex);
+    const value=String(button.dataset.value||'');
+    if(!Number.isInteger(index)||!ppDailyScanMatches[index])return;
+    if(input){
+        if(value.startsWith('r:'))input.value=recipesPP.find(item=>Number(item.id)===Number(value.slice(2)))?.name||'';
+        else if(value.startsWith('p:'))input.value=products.find(item=>Number(item.id)===Number(value.slice(2)))?.name||'';
+        else input.value='';
+    }
+    wrap.querySelector('.pp-sales-search-menu')?.classList.remove('is-open');
+    updateDailySalesAssignmentPP(index,value);
+}
+
+function ppDailyAssignmentTypingPP(input){
+    ppRenderDailyAssignmentSuggestionsPP(input);
+}
+
+/* Dernier override : recherche rapide dans la vérification du scan de ventes. */
+function renderDailyScanReviewPP(){
+    ppEnsureSalesQuickSearchStylesPP();
+    const box=document.getElementById('ppDailyScanReview');if(!box)return;
+    if(!ppDailyScanMatches.length){
+        box.innerHTML='<div class="scan-note">Aucune ligne de vente reconnue.</div>';
+        const save=document.getElementById('ppDailyScanSaveBtn');if(save)save.disabled=true;return;
+    }
+
+    const matched=ppDailyScanMatches.filter(x=>x.matchType!=='unmatched').length;
+    const unmatched=ppDailyScanMatches.length-matched;
+    const sumTTC=ppDailyScanReportSummary?.grandTTC||ppDailyScanMatches.reduce((a,x)=>a+Number(x.totalTTC||0),0);
+
+    box.innerHTML=`
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:12px 0">
+        <div class="stat-card" style="padding:12px"><small>Lignes détectées</small><strong style="display:block">${ppDailyScanMatches.length}</strong></div>
+        <div class="stat-card" style="padding:12px"><small>Affectées</small><strong style="display:block">${matched}</strong></div>
+        <div class="stat-card" style="padding:12px"><small>À vérifier</small><strong style="display:block">${unmatched}</strong></div>
+        <div class="stat-card" style="padding:12px"><small>Net TTC rapport</small><strong style="display:block">${formatMoney(sumTTC)}</strong></div>
+      </div>
+      <div style="padding:10px 12px;background:#f8fafc;border-radius:10px;margin-bottom:12px">
+        <strong>Principe :</strong> plats préparés → Fiche Technique ; boissons/produits finis → Produit fini / Stock direct.
+        Le choix manuel est mémorisé pour les prochains scans.
+      </div>
+      <h3>Vérification avant enregistrement</h3>
+      <div style="overflow:auto"><table style="width:100%;min-width:1100px">
+      <thead><tr><th>Catégorie</th><th>Désignation rapport</th><th>Qté</th><th>Total TTC</th><th>Affectation</th><th>Confiance</th></tr></thead><tbody>
+      ${ppDailyScanMatches.map((m,i)=>`<tr>
+          <td>${escapeHTML(m.category||'-')}</td>
+          <td><strong>${escapeHTML(m.rawName||m.sourceLine||'-')}</strong></td>
+          <td><input type="number" min="0.000001" step="0.000001" value="${m.quantity}" onchange="ppDailyScanMatches[${i}].quantity=Number(this.value)"></td>
+          <td>${formatMoney(m.totalTTC||0)}</td>
+          <td style="min-width:310px">
+            <div class="pp-sales-search-wrap">
+              <input type="text" class="pp-sales-search-input pp-daily-assignment-search" autocomplete="off"
+                placeholder="Rechercher une fiche ou un article…"
+                value="${escapeHTML(ppDailyAssignmentLabelPP(m))}"
+                data-match-index="${i}"
+                onfocus="ppOpenSalesSearchPP(this)"
+                oninput="ppDailyAssignmentTypingPP(this)"
+                onkeydown="ppSalesSearchKeydownPP(event)">
+              <div class="pp-sales-search-menu"></div>
+            </div>
+          </td>
+          <td>${m.matchType==='unmatched'?'<span class="status danger">À vérifier</span>':`<span class="status success">${m.score>=100?'Mémorisé / validé':Math.round(m.score)+'%'}</span>`}</td>
+        </tr>`).join('')}
+      </tbody></table></div>
+      ${ppDailyScanReportSummary?.paymentMethods?.length?`<div style="margin-top:12px"><strong>Paiements :</strong> ${ppDailyScanReportSummary.paymentMethods.map(p=>`${p.mode}: ${formatMoney(p.amount)}`).join(' / ')}</div>`:''}
+      ${ppDailyScanReportSummary?.subtotalHT?`<div style="margin-top:6px"><strong>HT:</strong> ${formatMoney(ppDailyScanReportSummary.subtotalHT)} — <strong>TVA:</strong> ${formatMoney(ppDailyScanReportSummary.vat)} — <strong>TTC:</strong> ${formatMoney(ppDailyScanReportSummary.grandTTC)}</div>`:''}
+    `;
+    const save=document.getElementById('ppDailyScanSaveBtn');if(save)save.disabled=false;
+}
