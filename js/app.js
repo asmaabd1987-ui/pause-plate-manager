@@ -11783,7 +11783,7 @@ async function ppEnsureUserProfile(user){
             email:user.email||"",
             role:isAdmin?"admin":"employee",
             active:true,
-            permissions:{stock:true,expenses:true}
+            permissions:{stock:true,expenses:true,shiftClosings:isAdmin}
         };
         await profileRef.set({
             ...profile,
@@ -11806,7 +11806,7 @@ async function ppEnsureUserProfile(user){
     ppCurrentUserProfile={
         ...profile,
         role:ppCurrentRole,
-        permissions:profile.permissions||(ppCurrentRole==="admin"?{stock:true,expenses:true}:{stock:false,expenses:false})
+        permissions:profile.permissions||(ppCurrentRole==="admin"?{stock:true,expenses:true,shiftClosings:true}:{stock:false,expenses:false,shiftClosings:false})
     };
     ppCloudProfileSignature=ppProfileScopeSignaturePP(ppCurrentUserProfile);
 
@@ -11828,7 +11828,8 @@ function ppProfileScopeSignaturePP(profile){
         username:String(value.username||""),
         permissions:{
             stock:value.permissions?.stock===true,
-            expenses:value.permissions?.expenses===true
+            expenses:value.permissions?.expenses===true,
+            shiftClosings:value.permissions?.shiftClosings===true
         }
     });
 }
@@ -11861,7 +11862,7 @@ function ppEnforceLocalDatasetScopePP(){
         const allowedModules=new Set([
             ...(ppCurrentUserProfile?.permissions?.stock===true?["stock"]:[]),
             ...(ppCurrentUserProfile?.permissions?.expenses===true?["expenses"]:[]),
-            "shiftClosings"
+            ...(ppCurrentUserProfile?.permissions?.shiftClosings===true?["shiftClosings"]:[])
         ]);
         ppAuditTrail=(Array.isArray(ppAuditTrail)?ppAuditTrail:[]).filter(entry=>
             allowedModules.has(String(entry?.module||""))&&String(entry?.user?.uid||"")===uid
@@ -12073,7 +12074,7 @@ function ppStartCloudListeners(){
             if(nextSignature===ppCloudProfileSignature)return;
             ppCloudProfileSignature=nextSignature;
             ppCurrentRole=String(profile.role||"employee");
-            ppCurrentUserProfile={...profile,role:ppCurrentRole,permissions:profile.permissions||{stock:false,expenses:false}};
+            ppCurrentUserProfile={...profile,role:ppCurrentRole,permissions:profile.permissions||{stock:false,expenses:false,shiftClosings:false}};
             ppCloudReady=false;
             ppStopCloudListeners();
             ppEnforceLocalDatasetScopePP();
@@ -12273,7 +12274,7 @@ function ppCan(module,action='view'){
     const perms=ppCurrentUserProfile?.permissions || {};
     if(module==='stock') return perms.stock !== false;
     if(module==='expenses') return perms.expenses !== false;
-    if(module==='shiftClosings') return true;
+    if(module==='shiftClosings') return perms.shiftClosings === true;
     return false;
 }
 
@@ -12530,7 +12531,11 @@ setTimeout(ppInjectAuditButtons,500);
 /* ---------- Role-aware navigation ---------- */
 function ppApplyPermissionsUI(){
     if(ppIsAdmin())return;
-    const allowed=['stock','expenses'];
+    const allowed=[];
+    const permissions=ppCurrentUserProfile?.permissions||{};
+    if(permissions.stock!==false)allowed.push('stock');
+    if(permissions.expenses!==false)allowed.push('expenses');
+    if(permissions.shiftClosings===true)allowed.push('shift');
     document.querySelectorAll('[data-page]').forEach(el=>{
         const page=String(el.dataset.page||'').toLowerCase();
         if(page && !allowed.some(x=>page.includes(x))) el.style.display='none';
@@ -12539,7 +12544,7 @@ function ppApplyPermissionsUI(){
     document.querySelectorAll('.sidebar button,.sidebar a,.nav-item').forEach(el=>{
         const t=(el.textContent||'').toLowerCase();
         if(!t)return;
-        if(!(t.includes('stock')||t.includes('dépense')||t.includes('depense')||t.includes('déconnexion')||t.includes('logout'))){
+        if(!(t.includes('stock')||t.includes('dépense')||t.includes('depense')||t.includes('clôture shift')||t.includes('cloture shift')||t.includes('déconnexion')||t.includes('logout'))){
             el.style.display='none';
         }
     });
@@ -12552,7 +12557,7 @@ function ppApplyPermissionsUI(){
   userProfiles/{uid} = {
     role:"employee",
     name:"...",
-    permissions:{stock:true,expenses:true}
+    permissions:{stock:true,expenses:true,shiftClosings:true}
   }
 */
 async function ppLoadUserProfile(){
@@ -12565,7 +12570,7 @@ async function ppLoadUserProfile(){
             role:String(u.email||'').toLowerCase()===PP_ADMIN_EMAIL.toLowerCase()?PP_ACCESS.ADMIN:PP_ACCESS.EMPLOYEE,
             name:u.email,
             active:true,
-            permissions:{stock:true,expenses:true}
+            permissions:{stock:true,expenses:true,shiftClosings:false}
         };
     }catch(e){
         console.warn('Profil utilisateur:',e);
@@ -12611,6 +12616,7 @@ function ppEnsureUsersManagerModal(){
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px">
           <label><input id="ppPermStock" type="checkbox" checked style="width:auto"> Stock / Entrées / Sorties</label>
           <label><input id="ppPermExpenses" type="checkbox" checked style="width:auto"> Dépenses</label>
+          <label><input id="ppPermShiftClosings" type="checkbox" style="width:auto"> Clôture Shift</label>
         </div>
         <button class="btn primary" type="button" onclick="ppCreateEmployee()" style="margin-top:12px">+ Créer l'utilisateur</button>
         <div id="ppUserManagerMessage" class="pp-cloud-message" style="margin-top:8px"></div>
@@ -12618,8 +12624,8 @@ function ppEnsureUsersManagerModal(){
 
       <h3>Utilisateurs enregistrés</h3>
       <div style="overflow:auto">
-        <table style="width:100%;min-width:820px">
-          <thead><tr><th>Nom</th><th>Utilisateur</th><th>Rôle</th><th>Stock</th><th>Dépenses</th><th>Statut</th><th>Actions</th></tr></thead>
+        <table style="width:100%;min-width:960px">
+          <thead><tr><th>Nom</th><th>Utilisateur</th><th>Rôle</th><th>Stock</th><th>Dépenses</th><th>Clôture Shift</th><th>Statut</th><th>Actions</th></tr></thead>
           <tbody id="ppUsersManagerTable"></tbody>
         </table>
       </div>
@@ -12671,7 +12677,8 @@ async function ppCreateEmployee(){
             active:true,
             permissions:{
                 stock:document.getElementById("ppPermStock").checked,
-                expenses:document.getElementById("ppPermExpenses").checked
+                expenses:document.getElementById("ppPermExpenses").checked,
+                shiftClosings:document.getElementById("ppPermShiftClosings").checked
             },
             createdBy:ppCurrentUser?.uid||null,
             createdAt:firebase.firestore.FieldValue.serverTimestamp()
@@ -12755,6 +12762,10 @@ function ppEnsureEditUserModal(){
               <input id="ppEditPermExpenses" type="checkbox" style="width:auto">
               Dépenses
             </label>
+            <label>
+              <input id="ppEditPermShiftClosings" type="checkbox" style="width:auto">
+              Clôture Shift
+            </label>
           </div>
         </div>
 
@@ -12795,6 +12806,7 @@ async function ppOpenEditUser(uid){
 
     document.getElementById("ppEditPermStock").checked=u.permissions?.stock!==false;
     document.getElementById("ppEditPermExpenses").checked=u.permissions?.expenses!==false;
+    document.getElementById("ppEditPermShiftClosings").checked=u.permissions?.shiftClosings===true;
     document.getElementById("ppEditUserMessage").textContent="";
 
     const current=ppCurrentFirebaseUser();
@@ -12831,10 +12843,11 @@ async function ppSaveEditedUser(){
     if(self||principal)active=true;
 
     const permissions=role==="admin"
-        ? {stock:true,expenses:true}
+        ? {stock:true,expenses:true,shiftClosings:true}
         : {
             stock:document.getElementById("ppEditPermStock").checked,
-            expenses:document.getElementById("ppEditPermExpenses").checked
+            expenses:document.getElementById("ppEditPermExpenses").checked,
+            shiftClosings:document.getElementById("ppEditPermShiftClosings").checked
           };
 
     const update={
@@ -12932,7 +12945,7 @@ async function ppRenderUsersManager(){
     const tb=document.getElementById("ppUsersManagerTable");
     if(!tb||!ppDb)return;
 
-    tb.innerHTML='<tr><td colspan="7">Chargement...</td></tr>';
+    tb.innerHTML='<tr><td colspan="8">Chargement...</td></tr>';
 
     try{
         const snap=await ppDb.collection("userProfiles").get();
@@ -12950,7 +12963,7 @@ async function ppRenderUsersManager(){
         );
 
         if(!rows.length){
-            tb.innerHTML='<tr><td colspan="7">Aucun utilisateur.</td></tr>';
+            tb.innerHTML='<tr><td colspan="8">Aucun utilisateur.</td></tr>';
             return;
         }
 
@@ -12967,6 +12980,7 @@ async function ppRenderUsersManager(){
                 <td>${u.role==="admin"?"Admin":"Employé"}</td>
                 <td>${u.role==="admin"||u.permissions?.stock!==false?"✅":"—"}</td>
                 <td>${u.role==="admin"||u.permissions?.expenses!==false?"✅":"—"}</td>
+                <td>${u.role==="admin"||u.permissions?.shiftClosings===true?"✅":"—"}</td>
                 <td>
                   <span class="status ${u.active===false?"danger":"success"}">
                     ${u.active===false?"Désactivé":"Actif"}
@@ -12997,7 +13011,7 @@ async function ppRenderUsersManager(){
 
     }catch(err){
         console.error(err);
-        tb.innerHTML='<tr><td colspan="7">Erreur de chargement.</td></tr>';
+        tb.innerHTML='<tr><td colspan="8">Erreur de chargement.</td></tr>';
     }
 }
 
@@ -13203,9 +13217,10 @@ function ppPageNameFromElement(el){
 
 function ppEmployeeAllowedPages(){
     const perms=ppCurrentUserProfile?.permissions||{};
-    const allowed=["shift"];
+    const allowed=[];
     if(perms.stock!==false)allowed.push("stock");
     if(perms.expenses!==false)allowed.push("expenses");
+    if(perms.shiftClosings===true)allowed.push("shift");
     return allowed;
 }
 

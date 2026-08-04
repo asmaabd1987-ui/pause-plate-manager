@@ -50,6 +50,14 @@ service cloud.firestore {
         && profile().permissions.expenses == true;
     }
 
+    function hasShiftClosingPermission() {
+      return hasActiveProfile()
+        && profile().role == 'employee'
+        && profile().keys().hasAll(['permissions'])
+        && profile().permissions.keys().hasAll(['shiftClosings'])
+        && profile().permissions.shiftClosings == true;
+    }
+
     function isActiveEmployee() {
       return hasActiveProfile() && profile().role == 'employee';
     }
@@ -84,7 +92,7 @@ service cloud.firestore {
           || request.resource.data.module == 'security'
           || (request.resource.data.module == 'stock' && hasStockPermission())
           || (request.resource.data.module == 'expenses' && hasExpensesPermission())
-          || (request.resource.data.module == 'shiftClosings' && isActiveEmployee())
+          || (request.resource.data.module == 'shiftClosings' && hasShiftClosingPermission())
         );
     }
 
@@ -144,7 +152,7 @@ service cloud.firestore {
       allow read: if companyId == 'pause-plate-manager'
         && (
           isAdmin()
-          || (isActiveEmployee() && resource.data.employeeUid == request.auth.uid)
+          || (hasShiftClosingPermission() && resource.data.employeeUid == request.auth.uid)
         );
 
       allow create: if companyId == 'pause-plate-manager'
@@ -153,7 +161,7 @@ service cloud.firestore {
         && (
           isAdmin()
           || (
-            isActiveEmployee()
+            hasShiftClosingPermission()
             && request.resource.data.employeeUid == request.auth.uid
             && request.resource.data.createdBy == request.auth.uid
           )
@@ -165,7 +173,7 @@ service cloud.firestore {
         && (
           isAdmin()
           || (
-            isActiveEmployee()
+            hasShiftClosingPermission()
             && resource.data.employeeUid == request.auth.uid
             && request.resource.data.employeeUid == request.auth.uid
             && request.resource.data.createdBy == resource.data.createdBy

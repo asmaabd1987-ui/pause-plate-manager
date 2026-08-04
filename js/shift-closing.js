@@ -89,6 +89,7 @@ function ppShiftLabelPP(shift){
 }
 
 function ppShiftVisibleRowsPP(){
+    if(typeof ppCan === "function" && !ppCan("shiftClosings", "view")) return [];
     if(ppIsAdmin()) return ppShiftClosingsPP.slice();
     const uid = ppShiftCurrentUidPP();
     if(!uid) return [];
@@ -261,6 +262,10 @@ function ppSetShiftFormBusyPP(busy){
 
 async function ppSaveShiftClosingPP(event){
     event?.preventDefault?.();
+    if(typeof ppCan === "function" && !ppCan("shiftClosings", "edit")){
+        alert("Vous n'avez pas la permission Clôture Shift.");
+        return;
+    }
     const uid = ppShiftCurrentUidPP();
     if(!uid){ alert("Connectez-vous avant d'enregistrer la clôture."); return; }
 
@@ -279,8 +284,9 @@ async function ppSaveShiftClosingPP(event){
         return;
     }
 
+    const recordEmployeeUid = old?.employeeUid || uid;
     const duplicate = ppShiftVisibleRowsPP().find(item =>
-        item.id !== ppShiftEditingIdPP && item.date === date && item.shift === shift && item.employeeUid === uid
+        item.id !== ppShiftEditingIdPP && item.date === date && item.shift === shift && item.employeeUid === recordEmployeeUid
     );
     if(duplicate){
         ppEditShiftClosingPP(duplicate.id);
@@ -312,6 +318,17 @@ async function ppSaveShiftClosingPP(event){
         updatedAt: now
     });
 
+    if(old){
+        const confirmed = confirm(
+            `Confirmer la modification de cette clôture ?\n\n` +
+            `Employé : ${record.employeeName}\n` +
+            `Date : ${formatDate(record.date)} — ${ppShiftLabelPP(record.shift)}\n` +
+            `Ancien reste espèces : ${formatMoney(old.cashBalance)}\n` +
+            `Nouveau reste espèces : ${formatMoney(record.cashBalance)}`
+        );
+        if(!confirmed) return;
+    }
+
     ppSetShiftFormBusyPP(true);
     try{
         const collection = ppShiftCollectionPP();
@@ -337,7 +354,7 @@ async function ppSaveShiftClosingPP(event){
         ppResetShiftClosingFormPP();
         ppRenderShiftClosingsPP();
         ppShiftSetCloudStatusPP("✅ Clôture synchronisée", "success");
-        alert(`Clôture enregistrée.\n\nReste espèces à remettre : ${formatMoney(record.cashBalance)}`);
+        alert(`${old ? "Clôture modifiée" : "Clôture enregistrée"}.\n\nReste espèces à remettre : ${formatMoney(record.cashBalance)}`);
     }catch(error){
         console.error("Clôture Shift", error);
         ppShiftSetCloudStatusPP("⚠️ Enregistrement impossible", "danger");
@@ -348,6 +365,10 @@ async function ppSaveShiftClosingPP(event){
 }
 
 function ppEditShiftClosingPP(id){
+    if(typeof ppCan === "function" && !ppCan("shiftClosings", "edit")){
+        alert("Vous n'avez pas la permission Clôture Shift.");
+        return;
+    }
     const record = ppShiftClosingsPP.find(item => item.id === String(id));
     if(!record) return;
     const uid = ppShiftCurrentUidPP();
@@ -393,6 +414,10 @@ async function ppDeleteShiftClosingPP(id){
 }
 
 function ppPrintShiftClosingPP(id){
+    if(typeof ppCan === "function" && !ppCan("shiftClosings", "view")){
+        alert("Vous n'avez pas la permission Clôture Shift.");
+        return;
+    }
     const record = ppShiftClosingsPP.find(item => item.id === String(id));
     if(!record) return;
     printDocument(
@@ -407,8 +432,9 @@ function ppPrintShiftClosingPP(id){
             ["Autre", formatMoney(record.other)],
             ["Détail Autre", record.otherLabel || "-"],
             ["Reste espèces à remettre", formatMoney(record.cashBalance)],
-            ["Observation", record.notes || "-"]
-        ])}`
+            ["Observation", record.notes || "-"],
+            ["Dernière mise à jour", new Date(record.updatedAt).toLocaleString("fr-FR")]
+        ])}<div style="display:grid;grid-template-columns:1fr 1fr;gap:50px;margin-top:55px;text-align:center"><div style="border-top:1px solid #444;padding-top:8px">Signature employé</div><div style="border-top:1px solid #444;padding-top:8px">Signature responsable</div></div>`
     );
 }
 
@@ -435,8 +461,8 @@ function ppRenderShiftClosingsPP(){
           <td>${formatMoney(item.other)}${item.otherLabel ? `<small class="pp-shift-table-note">${escapeHTML(item.otherLabel)}</small>` : ""}</td>
           <td class="${item.cashBalance < 0 ? "pp-shift-negative" : "pp-shift-positive"}"><strong>${formatMoney(item.cashBalance)}</strong></td>
           <td><div class="action-buttons">
-            <button class="btn small view" type="button" onclick="ppPrintShiftClosingPP('${item.id}')" title="Imprimer">🖨️</button>
-            ${canEdit ? `<button class="btn small edit" type="button" onclick="ppEditShiftClosingPP('${item.id}')" title="Modifier">✏️</button>` : ""}
+            <button class="btn small print pp-shift-action-button" type="button" onclick="ppPrintShiftClosingPP('${item.id}')" title="Imprimer la clôture">🖨️ Imprimer</button>
+            ${canEdit ? `<button class="btn small edit pp-shift-action-button" type="button" onclick="ppEditShiftClosingPP('${item.id}')" title="Modifier la clôture">✏️ Modifier</button>` : ""}
             ${ppIsAdmin() ? `<button class="btn small danger" type="button" onclick="ppDeleteShiftClosingPP('${item.id}')" title="Supprimer">🗑️</button>` : ""}
           </div></td>
         </tr>`;
@@ -457,6 +483,13 @@ function ppStartShiftClosingCloudPP(){
     ppStopShiftClosingCloudPP();
     const collection = ppShiftCollectionPP();
     const uid = ppShiftCurrentUidPP();
+    if(typeof ppCan === "function" && !ppCan("shiftClosings", "view")){
+        ppShiftClosingsPP = [];
+        ppShiftSaveLocalPP();
+        ppShiftSetCloudStatusPP("Accès Clôture Shift désactivé", "warning");
+        ppRenderShiftClosingsPP();
+        return;
+    }
     if(!collection || !uid){
         ppShiftSetCloudStatusPP("⚠️ Firebase indisponible", "warning");
         ppRenderShiftClosingsPP();
