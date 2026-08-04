@@ -13345,3 +13345,339 @@ ppBootstrapCloud = async function(user){
 // Also refresh on delayed UI renders/listeners.
 setTimeout(ppFinalizeRoleUI,1500);
 setTimeout(ppFinalizeRoleUI,3000);
+
+
+/* =========================================================
+   RECHERCHE ARTICLE — ENTRÉE / SORTIE DE STOCK
+   Interface uniquement : le select movementProduct original
+   reste la source utilisée par saveMovement().
+========================================================= */
+(function(){
+    "use strict";
+
+    const PP_MOVEMENT_SEARCH_STYLE_ID = "ppMovementProductSearchStyle";
+    const PP_MOVEMENT_SEARCH_INPUT_ID = "movementProductSearch";
+    const PP_MOVEMENT_SEARCH_RESULTS_ID = "movementProductSearchResults";
+
+    function ppNormalizeMovementSearchPP(value){
+        return String(value||"")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g,"")
+            .toLowerCase()
+            .replace(/\s+/g," ")
+            .trim();
+    }
+
+    function ppInstallMovementSearchStylePP(){
+        if(document.getElementById(PP_MOVEMENT_SEARCH_STYLE_ID))return;
+
+        const style=document.createElement("style");
+        style.id=PP_MOVEMENT_SEARCH_STYLE_ID;
+        style.textContent=`
+            .pp-movement-product-search{
+                position:relative;
+                width:100%;
+                margin-bottom:14px;
+            }
+            #${PP_MOVEMENT_SEARCH_INPUT_ID}{
+                width:100%;
+                min-height:46px;
+                padding:11px 42px 11px 13px;
+                border:1px solid var(--border,#dfe5e1);
+                border-radius:10px;
+                background:#fff;
+                color:var(--text,#26332c);
+                font:inherit;
+                outline:none;
+                transition:border-color .18s ease,box-shadow .18s ease;
+            }
+            #${PP_MOVEMENT_SEARCH_INPUT_ID}:focus{
+                border-color:var(--green,#094b2d);
+                box-shadow:0 0 0 3px rgba(9,75,45,.12);
+            }
+            .pp-movement-product-search::after{
+                content:"⌕";
+                position:absolute;
+                top:11px;
+                right:14px;
+                color:var(--green,#094b2d);
+                font-size:21px;
+                line-height:1;
+                pointer-events:none;
+            }
+            #${PP_MOVEMENT_SEARCH_RESULTS_ID}{
+                position:absolute;
+                z-index:10050;
+                top:calc(100% + 6px);
+                left:0;
+                right:0;
+                display:none;
+                max-height:280px;
+                overflow:auto;
+                padding:6px;
+                border:1px solid var(--border,#dfe5e1);
+                border-radius:12px;
+                background:#fff;
+                box-shadow:0 14px 35px rgba(24,37,27,.18);
+            }
+            #${PP_MOVEMENT_SEARCH_RESULTS_ID}.is-open{
+                display:block;
+            }
+            .pp-movement-search-option{
+                display:block;
+                width:100%;
+                padding:11px 12px;
+                border:0;
+                border-radius:9px;
+                background:transparent;
+                color:var(--text,#26332c);
+                text-align:left;
+                font:inherit;
+                cursor:pointer;
+            }
+            .pp-movement-search-option:hover,
+            .pp-movement-search-option.is-active{
+                background:var(--green-light,#eaf3ee);
+            }
+            .pp-movement-search-option strong{
+                display:block;
+                margin-bottom:3px;
+            }
+            .pp-movement-search-option small{
+                display:block;
+                color:var(--muted,#7a857e);
+            }
+            .pp-movement-search-empty{
+                padding:14px 12px;
+                color:var(--muted,#7a857e);
+                text-align:center;
+            }
+            @media(max-width:550px){
+                #${PP_MOVEMENT_SEARCH_RESULTS_ID}{
+                    max-height:42vh;
+                }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function ppMovementProductLabelPP(product){
+        return String(product?.name||"");
+    }
+
+    function ppMovementProductMetaPP(product){
+        const stock=typeof formatNumber==="function"
+            ? formatNumber(Number(product?.stock||0))
+            : String(Number(product?.stock||0));
+        return `Stock actuel : ${stock} ${String(product?.unit||"")}`.trim();
+    }
+
+    function ppGetMovementProductPP(id){
+        return Array.isArray(products)
+            ? products.find(product=>Number(product.id)===Number(id))
+            : null;
+    }
+
+    function ppCloseMovementSearchPP(){
+        document.getElementById(PP_MOVEMENT_SEARCH_RESULTS_ID)
+            ?.classList.remove("is-open");
+    }
+
+    function ppSelectMovementProductPP(productId,focusQuantity=false){
+        const select=document.getElementById("movementProduct");
+        const input=document.getElementById(PP_MOVEMENT_SEARCH_INPUT_ID);
+        const product=ppGetMovementProductPP(productId);
+        if(!select || !input || !product)return;
+
+        select.value=String(product.id);
+        input.value=ppMovementProductLabelPP(product);
+        input.dataset.selectedId=String(product.id);
+        select.dispatchEvent(new Event("change",{bubbles:true}));
+        ppCloseMovementSearchPP();
+
+        if(focusQuantity){
+            document.getElementById("movementQuantity")?.focus();
+        }
+    }
+
+    function ppRenderMovementSearchResultsPP(query=""){
+        const box=document.getElementById(PP_MOVEMENT_SEARCH_RESULTS_ID);
+        if(!box)return;
+
+        const normalized=ppNormalizeMovementSearchPP(query);
+        const matches=(Array.isArray(products)?products:[])
+            .filter(product=>ppNormalizeMovementSearchPP(product.name).includes(normalized))
+            .sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""),"fr",{sensitivity:"base"}))
+            .slice(0,80);
+
+        box.replaceChildren();
+
+        if(!matches.length){
+            const empty=document.createElement("div");
+            empty.className="pp-movement-search-empty";
+            empty.textContent="Aucun article trouvé.";
+            box.appendChild(empty);
+            box.classList.add("is-open");
+            return;
+        }
+
+        matches.forEach((product,index)=>{
+            const button=document.createElement("button");
+            button.type="button";
+            button.className="pp-movement-search-option"+(index===0?" is-active":"");
+            button.dataset.productId=String(product.id);
+
+            const name=document.createElement("strong");
+            name.textContent=ppMovementProductLabelPP(product);
+
+            const meta=document.createElement("small");
+            meta.textContent=ppMovementProductMetaPP(product);
+
+            button.append(name,meta);
+            button.addEventListener("mousedown",event=>{
+                event.preventDefault();
+                ppSelectMovementProductPP(product.id,true);
+            });
+            box.appendChild(button);
+        });
+
+        box.classList.add("is-open");
+    }
+
+    function ppSyncMovementSearchFromSelectPP(){
+        const select=document.getElementById("movementProduct");
+        const input=document.getElementById(PP_MOVEMENT_SEARCH_INPUT_ID);
+        if(!select || !input)return;
+
+        const product=ppGetMovementProductPP(select.value);
+        input.value=product ? ppMovementProductLabelPP(product) : "";
+        input.dataset.selectedId=product ? String(product.id) : "";
+    }
+
+    function ppEnsureMovementProductSearchPP(){
+        const select=document.getElementById("movementProduct");
+        if(!select)return null;
+
+        ppInstallMovementSearchStylePP();
+
+        let input=document.getElementById(PP_MOVEMENT_SEARCH_INPUT_ID);
+        if(!input){
+            const wrapper=document.createElement("div");
+            wrapper.className="pp-movement-product-search";
+
+            input=document.createElement("input");
+            input.id=PP_MOVEMENT_SEARCH_INPUT_ID;
+            input.type="search";
+            input.autocomplete="off";
+            input.spellcheck=false;
+            input.placeholder="Rechercher un article...";
+            input.setAttribute("aria-label","Rechercher un article");
+            input.setAttribute("aria-controls",PP_MOVEMENT_SEARCH_RESULTS_ID);
+
+            const results=document.createElement("div");
+            results.id=PP_MOVEMENT_SEARCH_RESULTS_ID;
+            results.setAttribute("role","listbox");
+
+            wrapper.append(input,results);
+            select.parentNode.insertBefore(wrapper,select);
+            select.style.display="none";
+            select.setAttribute("aria-hidden","true");
+
+            input.addEventListener("focus",()=>{
+                ppRenderMovementSearchResultsPP(input.value);
+            });
+
+            input.addEventListener("input",()=>{
+                const selected=ppGetMovementProductPP(input.dataset.selectedId);
+                if(!selected || ppNormalizeMovementSearchPP(input.value)!==ppNormalizeMovementSearchPP(selected.name)){
+                    select.value="";
+                    input.dataset.selectedId="";
+                }
+                ppRenderMovementSearchResultsPP(input.value);
+            });
+
+            input.addEventListener("keydown",event=>{
+                if(event.key==="Escape"){
+                    ppCloseMovementSearchPP();
+                    return;
+                }
+
+                if(event.key==="ArrowDown"){
+                    event.preventDefault();
+                    const options=[...document.querySelectorAll(".pp-movement-search-option")];
+                    if(!options.length)return;
+                    const active=document.querySelector(".pp-movement-search-option.is-active");
+                    const current=Math.max(options.indexOf(active),0);
+                    options.forEach(option=>option.classList.remove("is-active"));
+                    options[Math.min(current+1,options.length-1)].classList.add("is-active");
+                    options[Math.min(current+1,options.length-1)].scrollIntoView({block:"nearest"});
+                    return;
+                }
+
+                if(event.key==="ArrowUp"){
+                    event.preventDefault();
+                    const options=[...document.querySelectorAll(".pp-movement-search-option")];
+                    if(!options.length)return;
+                    const active=document.querySelector(".pp-movement-search-option.is-active");
+                    const current=Math.max(options.indexOf(active),0);
+                    options.forEach(option=>option.classList.remove("is-active"));
+                    options[Math.max(current-1,0)].classList.add("is-active");
+                    options[Math.max(current-1,0)].scrollIntoView({block:"nearest"});
+                    return;
+                }
+
+                if(event.key==="Enter"){
+                    const active=document.querySelector(".pp-movement-search-option.is-active");
+                    if(active){
+                        event.preventDefault();
+                        ppSelectMovementProductPP(active.dataset.productId,true);
+                    }
+                }
+            });
+
+            select.addEventListener("change",ppSyncMovementSearchFromSelectPP);
+
+            document.addEventListener("mousedown",event=>{
+                if(!event.target.closest(".pp-movement-product-search")){
+                    ppCloseMovementSearchPP();
+                }
+            });
+
+            document.getElementById("movementForm")?.addEventListener("submit",()=>{
+                if(select.value)return;
+                const exact=(Array.isArray(products)?products:[]).find(product=>
+                    ppNormalizeMovementSearchPP(product.name)===ppNormalizeMovementSearchPP(input.value)
+                );
+                if(exact)ppSelectMovementProductPP(exact.id,false);
+            },true);
+        }
+
+        ppSyncMovementSearchFromSelectPP();
+        return input;
+    }
+
+    const ppOpenMovementModalSearchBasePP=window.openMovementModal;
+    if(typeof ppOpenMovementModalSearchBasePP==="function"){
+        window.openMovementModal=function(){
+            const result=ppOpenMovementModalSearchBasePP.apply(this,arguments);
+
+            requestAnimationFrame(()=>{
+                const input=ppEnsureMovementProductSearchPP();
+                ppSyncMovementSearchFromSelectPP();
+
+                window.setTimeout(()=>{
+                    input?.focus();
+                    ppRenderMovementSearchResultsPP(input?.value||"");
+                },80);
+            });
+
+            return result;
+        };
+    }
+
+    if(document.readyState==="loading"){
+        document.addEventListener("DOMContentLoaded",ppEnsureMovementProductSearchPP,{once:true});
+    }else{
+        ppEnsureMovementProductSearchPP();
+    }
+})();
