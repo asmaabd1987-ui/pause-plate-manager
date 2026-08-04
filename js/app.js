@@ -9889,7 +9889,7 @@ function ensureRecipesModulePP(){
     wrap.innerHTML=`
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
         <div><h2 style="margin:0 0 4px">🍽️ Fiches Techniques</h2><p style="margin:0;color:#667085">Recettes, grammages, coût matière et marge.</p></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="importFichesTechniquesPP(true,true)">🔄 Importer / mettre à jour les 179 fiches</button><button class="btn primary" onclick="openRecipePP()">➕ Nouvelle fiche technique</button></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="openRecipePP()">➕ Nouvelle fiche technique</button></div>
       </div>
       <div style="display:grid;grid-template-columns:minmax(260px,1fr) minmax(180px,280px);gap:10px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:15px">
         <input id="ppRecipeSearch" placeholder="🔎 Rechercher par plat ou article..." oninput="renderRecipesPP()" style="padding:10px">
@@ -9940,14 +9940,187 @@ function ensureRecipeModalPP(){
     document.body.appendChild(m);document.getElementById('ppRecipeForm').addEventListener('submit',e=>{e.preventDefault();saveRecipePP();});
 }
 function recipeProductOptionsPP(selected=''){return `<option value="">Sélectionner un article du stock</option>`+products.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name),'fr')).map(p=>`<option value="${p.id}" ${Number(selected)===Number(p.id)?'selected':''}>${escapeHTML(p.name)} — ${formatMoney(p.price)}/${escapeHTML(p.unit)}</option>`).join('');}
+
+
+const PP_RECIPE_INGREDIENT_SEARCH_STYLE_ID='ppRecipeIngredientSearchStyle';
+
+function ppNormalizeRecipeIngredientSearchPP(value){
+    return String(value||'')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g,'')
+        .toLowerCase()
+        .replace(/\s+/g,' ')
+        .trim();
+}
+
+function ppInstallRecipeIngredientSearchStylePP(){
+    if(document.getElementById(PP_RECIPE_INGREDIENT_SEARCH_STYLE_ID))return;
+    const style=document.createElement('style');
+    style.id=PP_RECIPE_INGREDIENT_SEARCH_STYLE_ID;
+    style.textContent=`
+      .pp-ri-search{position:relative;width:100%}
+      .pp-ri-search-input{width:100%;min-height:42px;padding:9px 38px 9px 11px;border:1px solid var(--border,#dfe5e1);border-radius:9px;background:#fff;color:var(--text,#26332c);font:inherit;outline:none}
+      .pp-ri-search-input:focus{border-color:var(--green,#094b2d);box-shadow:0 0 0 3px rgba(9,75,45,.12)}
+      .pp-ri-search::after{content:'⌕';position:absolute;right:12px;top:9px;color:var(--green,#094b2d);font-size:20px;line-height:1;pointer-events:none}
+      .pp-ri-search-results{position:absolute;z-index:10060;left:0;right:0;top:calc(100% + 5px);display:none;max-height:260px;overflow:auto;padding:5px;border:1px solid var(--border,#dfe5e1);border-radius:11px;background:#fff;box-shadow:0 14px 35px rgba(24,37,27,.18)}
+      .pp-ri-search-results.is-open{display:block}
+      .pp-ri-search-option{display:block;width:100%;padding:9px 10px;border:0;border-radius:8px;background:transparent;color:var(--text,#26332c);text-align:left;font:inherit;cursor:pointer}
+      .pp-ri-search-option:hover,.pp-ri-search-option.is-active{background:var(--green-light,#eaf3ee)}
+      .pp-ri-search-option strong,.pp-ri-search-option small{display:block}
+      .pp-ri-search-option small{margin-top:2px;color:var(--muted,#7a857e)}
+      .pp-ri-search-empty{padding:12px 10px;color:var(--muted,#7a857e);text-align:center}
+      @media(max-width:700px){.pp-ri-search-results{max-height:38vh}}
+    `;
+    document.head.appendChild(style);
+}
+
+function ppCloseRecipeIngredientSearchesPP(exceptRow=null){
+    document.querySelectorAll('.pp-ri-search-results.is-open').forEach(box=>{
+        if(!exceptRow || !exceptRow.contains(box))box.classList.remove('is-open');
+    });
+}
+
+function ppRecipeIngredientProductPP(id){
+    return (Array.isArray(products)?products:[]).find(product=>Number(product.id)===Number(id))||null;
+}
+
+function ppSyncRecipeIngredientSearchPP(row){
+    const select=row?.querySelector('.pp-ri-product');
+    const input=row?.querySelector('.pp-ri-search-input');
+    if(!select||!input)return;
+    const product=ppRecipeIngredientProductPP(select.value);
+    input.value=product?String(product.name||''):'';
+    input.dataset.selectedId=product?String(product.id):'';
+}
+
+function ppSelectRecipeIngredientProductPP(row,productId,focusQuantity=true){
+    const select=row?.querySelector('.pp-ri-product');
+    const input=row?.querySelector('.pp-ri-search-input');
+    const product=ppRecipeIngredientProductPP(productId);
+    if(!select||!input||!product)return;
+    select.value=String(product.id);
+    input.value=String(product.name||'');
+    input.dataset.selectedId=String(product.id);
+    select.dispatchEvent(new Event('change',{bubbles:true}));
+    row.querySelector('.pp-ri-search-results')?.classList.remove('is-open');
+    if(focusQuantity)row.querySelector('.pp-ri-qty')?.focus();
+}
+
+function ppRenderRecipeIngredientResultsPP(row,query=''){
+    const box=row?.querySelector('.pp-ri-search-results');
+    if(!box)return;
+    const normalized=ppNormalizeRecipeIngredientSearchPP(query);
+    const matches=(Array.isArray(products)?products:[])
+        .filter(product=>{
+            const haystack=ppNormalizeRecipeIngredientSearchPP(`${product.name||''} ${product.category||''}`);
+            return !normalized||haystack.includes(normalized);
+        })
+        .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'fr',{sensitivity:'base'}))
+        .slice(0,80);
+    box.replaceChildren();
+    if(!matches.length){
+        const empty=document.createElement('div');
+        empty.className='pp-ri-search-empty';
+        empty.textContent='Aucun article trouvé.';
+        box.appendChild(empty);
+        box.classList.add('is-open');
+        return;
+    }
+    matches.forEach((product,index)=>{
+        const button=document.createElement('button');
+        button.type='button';
+        button.className='pp-ri-search-option'+(index===0?' is-active':'');
+        button.dataset.productId=String(product.id);
+        const name=document.createElement('strong');
+        name.textContent=String(product.name||'');
+        const meta=document.createElement('small');
+        meta.textContent=`${String(product.category||'Autre')} — ${typeof formatMoney==='function'?formatMoney(Number(product.price||0)):Number(product.price||0)} / ${String(product.unit||'')}`;
+        button.append(name,meta);
+        button.addEventListener('mousedown',event=>{
+            event.preventDefault();
+            ppSelectRecipeIngredientProductPP(row,product.id,true);
+        });
+        box.appendChild(button);
+    });
+    ppCloseRecipeIngredientSearchesPP(row);
+    box.classList.add('is-open');
+}
+
+function ppEnsureRecipeIngredientSearchPP(row){
+    const select=row?.querySelector('.pp-ri-product');
+    if(!select)return null;
+    ppInstallRecipeIngredientSearchStylePP();
+    let input=row.querySelector('.pp-ri-search-input');
+    if(input){ppSyncRecipeIngredientSearchPP(row);return input;}
+    const wrapper=document.createElement('div');
+    wrapper.className='pp-ri-search';
+    input=document.createElement('input');
+    input.type='search';
+    input.className='pp-ri-search-input';
+    input.autocomplete='off';
+    input.spellcheck=false;
+    input.placeholder='Rechercher un ingrédient / article...';
+    input.setAttribute('aria-label','Rechercher un ingrédient ou article du stock');
+    const results=document.createElement('div');
+    results.className='pp-ri-search-results';
+    results.setAttribute('role','listbox');
+    wrapper.append(input,results);
+    select.parentNode.insertBefore(wrapper,select);
+    select.style.display='none';
+    select.setAttribute('aria-hidden','true');
+    input.addEventListener('focus',()=>ppRenderRecipeIngredientResultsPP(row,input.value));
+    input.addEventListener('input',()=>{
+        const selected=ppRecipeIngredientProductPP(input.dataset.selectedId);
+        if(!selected||ppNormalizeRecipeIngredientSearchPP(input.value)!==ppNormalizeRecipeIngredientSearchPP(selected.name)){
+            select.value='';
+            input.dataset.selectedId='';
+            updateRecipeLinePP(select);
+        }
+        ppRenderRecipeIngredientResultsPP(row,input.value);
+    });
+    input.addEventListener('keydown',event=>{
+        const options=[...row.querySelectorAll('.pp-ri-search-option')];
+        if(event.key==='Escape'){
+            row.querySelector('.pp-ri-search-results')?.classList.remove('is-open');
+            return;
+        }
+        if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+            if(!options.length)return;
+            event.preventDefault();
+            const active=row.querySelector('.pp-ri-search-option.is-active');
+            let index=Math.max(options.indexOf(active),0);
+            index=event.key==='ArrowDown'?Math.min(index+1,options.length-1):Math.max(index-1,0);
+            options.forEach(option=>option.classList.remove('is-active'));
+            options[index].classList.add('is-active');
+            options[index].scrollIntoView({block:'nearest'});
+            return;
+        }
+        if(event.key==='Enter'){
+            const active=row.querySelector('.pp-ri-search-option.is-active');
+            if(active){
+                event.preventDefault();
+                ppSelectRecipeIngredientProductPP(row,active.dataset.productId,true);
+            }
+        }
+    });
+    select.addEventListener('change',()=>ppSyncRecipeIngredientSearchPP(row));
+    if(!document.documentElement.dataset.ppRecipeIngredientOutsideBound){
+        document.documentElement.dataset.ppRecipeIngredientOutsideBound='1';
+        document.addEventListener('mousedown',event=>{
+            if(!event.target.closest('.pp-ri-search'))ppCloseRecipeIngredientSearchesPP();
+        });
+    }
+    ppSyncRecipeIngredientSearchPP(row);
+    return input;
+}
 function addRecipeIngredientPP(data={}){
     const box=document.getElementById('ppRecipeIngredients');if(!box)return;
     const row=document.createElement('div');row.className='pp-recipe-line';row.style.cssText='display:grid;grid-template-columns:minmax(240px,2fr) minmax(110px,.7fr) minmax(90px,.6fr) minmax(120px,.8fr) minmax(120px,.8fr) 55px;gap:8px;align-items:end;border:1px solid #e5e7eb;border-radius:12px;padding:10px;margin-bottom:8px';
     row.innerHTML=`<div><label>Article stock</label><select class="pp-ri-product" onchange="updateRecipeLinePP(this)">${recipeProductOptionsPP(data.productId)}</select></div><div><label>Quantité</label><input class="pp-ri-qty" type="number" min="0" step="0.000001" value="${Number(data.quantity||0)}" oninput="updateRecipeLinePP(this)"></div><div><label>Unité</label><input class="pp-ri-unit" readonly></div><div><label>Prix moyen</label><input class="pp-ri-price" readonly></div><div><label>Coût</label><input class="pp-ri-cost" readonly></div><button type="button" class="btn danger" onclick="this.closest('.pp-recipe-line').remove();updateRecipeTotalsPP()">🗑️</button>`;
-    box.appendChild(row);updateRecipeLinePP(row.querySelector('.pp-ri-product'));
+    box.appendChild(row);ppEnsureRecipeIngredientSearchPP(row);updateRecipeLinePP(row.querySelector('.pp-ri-product'));
 }
 function updateRecipeLinePP(el){const row=el.closest('.pp-recipe-line'),p=products.find(x=>Number(x.id)===Number(row.querySelector('.pp-ri-product').value)),q=Number(row.querySelector('.pp-ri-qty').value||0);row.querySelector('.pp-ri-unit').value=p?.unit||'';row.querySelector('.pp-ri-price').value=p?Number(p.price||0).toFixed(4):'';row.querySelector('.pp-ri-cost').value=p?(q*Number(p.price||0)).toFixed(4):'';updateRecipeTotalsPP();}
-function currentRecipeIngredientsPP(){return [...document.querySelectorAll('#ppRecipeIngredients .pp-recipe-line')].map(row=>{const productId=Number(row.querySelector('.pp-ri-product').value),quantity=Number(row.querySelector('.pp-ri-qty').value||0),p=products.find(x=>Number(x.id)===productId);return {productId,quantity,unit:p?.unit||'',unitPrice:Number(p?.price||0)};}).filter(i=>i.productId&&i.quantity>0);}
+function currentRecipeIngredientsPP(){return [...document.querySelectorAll('#ppRecipeIngredients .pp-recipe-line')].map(row=>{const select=row.querySelector('.pp-ri-product');let productId=Number(select?.value);if(!productId){const typed=ppNormalizeRecipeIngredientSearchPP(row.querySelector('.pp-ri-search-input')?.value);const exact=(Array.isArray(products)?products:[]).find(product=>ppNormalizeRecipeIngredientSearchPP(product.name)===typed);if(exact){productId=Number(exact.id);if(select)select.value=String(exact.id);}}const quantity=Number(row.querySelector('.pp-ri-qty').value||0),p=products.find(x=>Number(x.id)===productId);return {productId,quantity,unit:p?.unit||'',unitPrice:Number(p?.price||0)};}).filter(i=>i.productId&&i.quantity>0);}
 function updateRecipeTotalsPP(){const ingredients=currentRecipeIngredientsPP(),r={ingredients,salePrice:Number(getValue('ppRecipeSalePrice')||0)},t=recipeTotalsPP(r);setText('ppRecipeCost',formatMoney(t.cost));setText('ppRecipePct',formatNumber(t.pct)+'%');setText('ppRecipeMargin',formatMoney(t.margin));setText('ppRecipeRecommended',formatMoney(t.recommended));}
 function openRecipePP(id=null){ensureRecipeModalPP();const r=id?recipesPP.find(x=>Number(x.id)===Number(id)):null;setValue('ppRecipeId',r?.id||'');setValue('ppRecipeName',r?.name||'');setValue('ppRecipeCategory',r?.category||'Plat');setValue('ppRecipeSalePrice',r?.salePrice||'');setValue('ppRecipePortions',r?.portions||1);setValue('ppRecipeNotes',r?.notes||'');setText('ppRecipeModalTitle',r?'Modifier la fiche technique':'Nouvelle fiche technique');document.getElementById('ppRecipeIngredients').innerHTML='';(r?.ingredients?.length?r.ingredients:[{}]).forEach(addRecipeIngredientPP);updateRecipeTotalsPP();openModal('ppRecipeModal');}
 function saveRecipePP(){const id=Number(getValue('ppRecipeId'))||null,name=getValue('ppRecipeName').trim(),ingredients=currentRecipeIngredientsPP();if(!name){alert('Saisissez le nom du plat.');return;}if(!ingredients.length){alert('Ajoutez au moins un ingrédient.');return;}const old=id?recipesPP.find(x=>Number(x.id)===id):null,obj={id:id||createId(),name,category:getValue('ppRecipeCategory'),salePrice:Number(getValue('ppRecipeSalePrice')||0),portions:Number(getValue('ppRecipePortions')||1),notes:getValue('ppRecipeNotes').trim(),ingredients,createdAt:old?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};if(id){const n=recipesPP.findIndex(x=>Number(x.id)===id);if(n>=0)recipesPP[n]=obj;}else recipesPP.unshift(obj);saveData();closeModal('ppRecipeModal');renderRecipesPP();}
