@@ -4,8 +4,9 @@ PAUSE & PLATE MANAGER — APPLICATION PRIVÉE iPHONE + SAMSUNG
 Cette application ouvre la version Firebase officielle :
 https://asmaabd1987-ui.github.io/pause-plate-manager/
 
-Les modifications publiées par GitHub sont donc visibles automatiquement dans
-l'application, sans reconstruire l'APK ou le projet iPhone.
+Les modifications Web publiées par GitHub sont visibles automatiquement dans
+l'application. Une modification native (comme le module d'impression) exige
+une nouvelle construction de l'APK ou du projet iPhone.
 
 PRÉPARATION SUR LE MAC
 ----------------------
@@ -35,6 +36,7 @@ SÉCURITÉ
 - Aucun mot de passe Firebase n'est stocké dans ce projet Mobile.
 - Le Scanner Bridge temps réel reste réservé à Windows/Mac.
 - Sur téléphone, utilisez l'import d'image ou de PDF pour les factures.
+- L'impression utilise le dialogue natif Android PrintManager / iPhone AirPrint.
 
 Identifiant natif : ma.pauseplate.manager
 Technologie : Capacitor 8.5.0

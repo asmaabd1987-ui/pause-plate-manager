@@ -6548,33 +6548,8 @@ function cleanSupplierName(value){
 
 function detailRowsHTML(rows, allowHtml=false){return `<div class="details-grid">${rows.map(([k,v])=>`<div class="details-label">${escapeHTML(k)}</div><div class="details-value">${allowHtml?String(v):escapeHTML(String(v??''))}</div>`).join('')}</div>`;}
 function showDetailsModal(title,rows,onPrint=null,allowHtml=false){let modal=document.getElementById('detailsModal');if(!modal){modal=document.createElement('div');modal.id='detailsModal';modal.className='modal-overlay';modal.innerHTML='<div class="modal details-modal"><div class="modal-header"><h2 id="detailsModalTitle"></h2><button type="button" onclick="closeModal(\'detailsModal\')">×</button></div><div id="detailsModalBody"></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal(\'detailsModal\')">Fermer</button><button type="button" class="btn print" id="detailsPrintBtn">🖨️ Imprimer</button></div></div>';document.body.appendChild(modal);}document.getElementById('detailsModalTitle').textContent=title;document.getElementById('detailsModalBody').innerHTML=detailRowsHTML(rows,allowHtml);const btn=document.getElementById('detailsPrintBtn');btn.style.display=onPrint?'inline-block':'none';btn.onclick=onPrint||null;openModal('detailsModal');}
-function printDocument(title,bodyHtml){
-    /*
-      Impression sans popup:
-      - fonctionne sur Safari / Chrome / Edge
-      - évite le blocage de window.open() sur GitHub Pages
-      - imprime dans un iframe invisible puis le supprime
-    */
-    try{
-        const oldFrame=document.getElementById('ppPrintFrame');
-        if(oldFrame)oldFrame.remove();
-
-        const frame=document.createElement('iframe');
-        frame.id='ppPrintFrame';
-        frame.setAttribute('aria-hidden','true');
-        frame.style.position='fixed';
-        frame.style.right='0';
-        frame.style.bottom='0';
-        frame.style.width='0';
-        frame.style.height='0';
-        frame.style.border='0';
-        frame.style.opacity='0';
-        frame.style.pointerEvents='none';
-        document.body.appendChild(frame);
-
-        const doc=frame.contentWindow.document;
-        doc.open();
-        doc.write(`<!doctype html>
+function ppPrintableDocumentHTML(title,bodyHtml){
+    return `<!doctype html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -6609,7 +6584,70 @@ button,.btn,.action-buttons,.pp-pagination{display:none!important}
 </style>
 </head>
 <body>${bodyHtml}</body>
-</html>`);
+</html>`;
+}
+
+async function ppPrintDocumentNativePP(title,html){
+    const capacitor=window.Capacitor;
+    if(!capacitor?.isNativePlatform?.())return false;
+
+    const printer=
+        capacitor.Plugins?.Printer ||
+        (typeof capacitor.registerPlugin==='function'
+            ? capacitor.registerPlugin('Printer')
+            : null);
+
+    if(!printer || typeof printer.printHtml!=='function'){
+        throw new Error('Le module d’impression native n’est pas installé dans cette version de l’application.');
+    }
+
+    await printer.printHtml({
+        name:String(title||'Pause & Plate').slice(0,80),
+        html
+    });
+    return true;
+}
+
+function printDocument(title,bodyHtml){
+    /*
+      Mobile natif : PrintManager Android / UIPrintInteractionController iOS.
+      Navigateur : iframe invisible compatible Safari / Chrome / Edge.
+    */
+    const printableHTML=ppPrintableDocumentHTML(title,bodyHtml);
+    const nativePlatform=window.Capacitor?.isNativePlatform?.()===true;
+
+    if(nativePlatform){
+        ppPrintDocumentNativePP(title,printableHTML).catch(err=>{
+            console.error('Erreur impression mobile:',err);
+            alert(
+                "Impossible d'ouvrir l'impression mobile.\n\n"+
+                (err?.message||err)+
+                "\n\nInstallez la dernière version de l'application Pause & Plate."
+            );
+        });
+        return;
+    }
+
+    try{
+        const oldFrame=document.getElementById('ppPrintFrame');
+        if(oldFrame)oldFrame.remove();
+
+        const frame=document.createElement('iframe');
+        frame.id='ppPrintFrame';
+        frame.setAttribute('aria-hidden','true');
+        frame.style.position='fixed';
+        frame.style.right='0';
+        frame.style.bottom='0';
+        frame.style.width='0';
+        frame.style.height='0';
+        frame.style.border='0';
+        frame.style.opacity='0';
+        frame.style.pointerEvents='none';
+        document.body.appendChild(frame);
+
+        const doc=frame.contentWindow.document;
+        doc.open();
+        doc.write(printableHTML);
         doc.close();
 
         const doPrint=()=>{

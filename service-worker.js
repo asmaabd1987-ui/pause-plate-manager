@@ -2,7 +2,7 @@
    The cache contains only application files and public library assets.
    Firebase/Firestore data and Scanner Bridge requests are never cached. */
 
-const PP_PWA_VERSION = '20260804-shift-permissions-v3';
+const PP_PWA_VERSION = '20260804-native-print-v1';
 const PP_SHELL_CACHE = `pause-plate-shell-${PP_PWA_VERSION}`;
 const PP_RUNTIME_CACHE = `pause-plate-runtime-${PP_PWA_VERSION}`;
 
