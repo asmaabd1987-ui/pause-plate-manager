@@ -11860,7 +11860,8 @@ function ppEnforceLocalDatasetScopePP(){
         const uid=String(ppCurrentUser?.uid||"");
         const allowedModules=new Set([
             ...(ppCurrentUserProfile?.permissions?.stock===true?["stock"]:[]),
-            ...(ppCurrentUserProfile?.permissions?.expenses===true?["expenses"]:[])
+            ...(ppCurrentUserProfile?.permissions?.expenses===true?["expenses"]:[]),
+            "shiftClosings"
         ]);
         ppAuditTrail=(Array.isArray(ppAuditTrail)?ppAuditTrail:[]).filter(entry=>
             allowedModules.has(String(entry?.module||""))&&String(entry?.user?.uid||"")===uid
@@ -12272,6 +12273,7 @@ function ppCan(module,action='view'){
     const perms=ppCurrentUserProfile?.permissions || {};
     if(module==='stock') return perms.stock !== false;
     if(module==='expenses') return perms.expenses !== false;
+    if(module==='shiftClosings') return true;
     return false;
 }
 
@@ -13079,6 +13081,7 @@ async function ppOpenGlobalAudit(){
                 <option value="">Tous les modules</option>
                 <option value="stock">Stock</option>
                 <option value="expenses">Dépenses</option>
+                <option value="shiftClosings">Clôtures Shift</option>
                 <option value="users">Utilisateurs</option>
                 <option value="security">Sécurité / accès refusés</option>
               </select>
@@ -13135,7 +13138,7 @@ function ppRenderGlobalAudit(){
     }
 
     const actionLabel={create:"Création",update:"Modification",delete:"Suppression",activate:"Activation",deactivate:"Désactivation"};
-    const moduleLabel={stock:"Stock",expenses:"Dépenses",users:"Utilisateurs"};
+    const moduleLabel={stock:"Stock",expenses:"Dépenses",shiftClosings:"Clôtures Shift",users:"Utilisateurs"};
 
     body.innerHTML=`
       <div class="table-wrapper">
@@ -13161,7 +13164,7 @@ function ppRenderGlobalAudit(){
                 <td>${escapeHTML(x.label||x.entityId||"-")}</td>
                 <td>${Number(x.version||1)}</td>
                 <td>
-                  ${(x.module==="stock"||x.module==="expenses")
+                  ${(x.module==="stock"||x.module==="expenses"||x.module==="shiftClosings")
                     ? `<button class="btn small view" type="button" onclick="ppShowAudit('${String(x.module).replace(/'/g,"")}','${String(x.entityId).replace(/'/g,"")}','Historique complet')">👁 Voir</button>`
                     : "—"}
                 </td>
@@ -13200,7 +13203,7 @@ function ppPageNameFromElement(el){
 
 function ppEmployeeAllowedPages(){
     const perms=ppCurrentUserProfile?.permissions||{};
-    const allowed=[];
+    const allowed=["shift"];
     if(perms.stock!==false)allowed.push("stock");
     if(perms.expenses!==false)allowed.push("expenses");
     return allowed;

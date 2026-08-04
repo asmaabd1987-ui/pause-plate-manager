@@ -201,7 +201,8 @@ function ppDownloadBlobPP(content,mime,filename){const blob=content instanceof B
 
 function ppBackupPayloadPP(){
     const data=ppStateSnapshot();
-    return {format:'pause-plate-manager-backup',schemaVersion:4,companyId:PP_COMPANY_ID,exportedAt:new Date().toISOString(),exportedBy:ppCurrentUserProfile?.name||ppCurrentUserProfile?.username||'Admin',data,auditTrail:Array.isArray(ppAuditTrail)?ppAuditTrail:[],counts:Object.fromEntries(Object.entries(data).map(([key,value])=>[key,Array.isArray(value)?value.length:0]))};
+    if(typeof ppShiftExportRowsPP==='function')data.shiftClosings=ppShiftExportRowsPP();
+    return {format:'pause-plate-manager-backup',schemaVersion:5,companyId:PP_COMPANY_ID,exportedAt:new Date().toISOString(),exportedBy:ppCurrentUserProfile?.name||ppCurrentUserProfile?.username||'Admin',data,auditTrail:Array.isArray(ppAuditTrail)?ppAuditTrail:[],counts:Object.fromEntries(Object.entries(data).map(([key,value])=>[key,Array.isArray(value)?value.length:0]))};
 }
 
 function ppDownloadDatabaseBackupPP(prefix='pause-plate-backup'){
@@ -215,13 +216,15 @@ async function ppImportDatabasePP(event){
     try{
         const payload=JSON.parse(await file.text()),data=payload?.data||payload?.datasets;
         if(payload?.format!=='pause-plate-manager-backup'||!data||typeof data!=='object')throw new Error('Format de sauvegarde non reconnu.');
-        const recognized=Object.keys(PP_CLOUD_DATASETS).filter(key=>Array.isArray(data[key]));if(!recognized.length)throw new Error('La sauvegarde ne contient aucune collection reconnue.');
-        if(!confirm(`Restaurer ${recognized.length} collections depuis la sauvegarde du ${formatDate(payload.exportedAt)} ?\n\nLes données actuelles concernées seront remplacées. Une copie de sécurité va être téléchargée avant la restauration.`))return;
+        const recognized=Object.keys(PP_CLOUD_DATASETS).filter(key=>Array.isArray(data[key])),hasShiftClosings=Array.isArray(data.shiftClosings),collectionCount=recognized.length+(hasShiftClosings?1:0);if(!collectionCount)throw new Error('La sauvegarde ne contient aucune collection reconnue.');
+        if(!confirm(`Restaurer ${collectionCount} collections depuis la sauvegarde du ${formatDate(payload.exportedAt)} ?\n\nLes données actuelles concernées seront remplacées. Une copie de sécurité va être téléchargée avant la restauration.`))return;
         ppDownloadDatabaseBackupPP('pause-plate-avant-restauration');
         ppApplyingCloudState=true;
         try{recognized.forEach(key=>ppSetDataset(key,data[key]));if(Array.isArray(payload.auditTrail)){ppAuditTrail=payload.auditTrail;localStorage.setItem('pause_plate_audit_trail',JSON.stringify(ppAuditTrail));}ppSaveLocalOnly();}
         finally{ppApplyingCloudState=false;}
-        saveData();clearTimeout(ppCloudSaveTimer);if(ppCloudReady)await ppSaveCloudNow();renderAll();alert('Restauration terminée et synchronisée avec Firebase.');
+        saveData();clearTimeout(ppCloudSaveTimer);if(ppCloudReady)await ppSaveCloudNow();
+        if(hasShiftClosings&&typeof ppRestoreShiftClosingsFromBackupPP==='function')await ppRestoreShiftClosingsFromBackupPP(data.shiftClosings);
+        renderAll();alert('Restauration terminée et synchronisée avec Firebase.');
     }catch(error){console.error(error);alert(`Restauration impossible : ${error.message||error}`);}finally{if(input)input.value='';}
 }
 
@@ -243,8 +246,9 @@ function ensureExportsCenterPP(){
 
 function renderExportsCenterPP(){
     ensureExportsCenterPP();const table=document.getElementById('ppExportDatasetTable');if(!table)return;
-    const labels={products:'Produits',movements:'Mouvements stock',suppliers:'Fournisseurs',invoices:'Factures achats',supplierPayments:'Règlements fournisseurs',clients:'Clients',clientInvoices:'Factures clients',clientPayments:'Règlements clients',sales:'Ventes',expenses:'Dépenses',recipes:'Fiches techniques',dailySalesScans:'Scans journaliers',accountingEntries:'Écritures manuelles',accountingSettings:'Paramètres comptables',cashClosings:'Clôtures de caisse'};
-    table.innerHTML=Object.entries(ppStateSnapshot()).map(([key,value])=>`<tr><td><strong>${escapeHTML(labels[key]||key)}</strong></td><td>${Array.isArray(value)?value.length:0}</td><td><span class="status success">Firebase + local</span></td></tr>`).join('');
+    const labels={products:'Produits',movements:'Mouvements stock',suppliers:'Fournisseurs',invoices:'Factures achats',supplierPayments:'Règlements fournisseurs',clients:'Clients',clientInvoices:'Factures clients',clientPayments:'Règlements clients',sales:'Ventes',expenses:'Dépenses',recipes:'Fiches techniques',dailySalesScans:'Scans journaliers',accountingEntries:'Écritures manuelles',accountingSettings:'Paramètres comptables',cashClosings:'Clôtures de caisse',shiftClosings:'Clôtures Shift'};
+    const snapshot=ppStateSnapshot();if(typeof ppShiftExportRowsPP==='function')snapshot.shiftClosings=ppShiftExportRowsPP();
+    table.innerHTML=Object.entries(snapshot).map(([key,value])=>`<tr><td><strong>${escapeHTML(labels[key]||key)}</strong></td><td>${Array.isArray(value)?value.length:0}</td><td><span class="status success">Firebase + local</span></td></tr>`).join('');
     const status=document.getElementById('ppExportCloudStatus');if(status){status.textContent=ppCloudReady?'✅ Firebase synchronisé':'⚠️ Sauvegarde locale';status.className=`status ${ppCloudReady?'success':'warning'}`;}
 }
 
@@ -292,6 +296,7 @@ function ppExportExcelPP(){
     const journalRows=journal.flatMap(e=>e.lines.map(l=>({Date:ppExcelSafeDatePP(e.date),Journal:e.journal||'',Pièce:e.piece||'',Compte:String(l.account||''),'Libellé compte':l.accountLabel||'',Libellé:l.label||e.label||'',Débit:Number(l.debit||0),Crédit:Number(l.credit||0),Source:e.source||''})));
     const balanceMap=ppAccountingBalanceMapPP(journal),balanceRows=[...balanceMap.values()].sort((a,b)=>a.account.localeCompare(b.account)).map(r=>{const diff=r.debit-r.credit;return {Compte:String(r.account),'Libellé':r.label,'Total débit':r.debit,'Total crédit':r.credit,'Solde débiteur':Math.max(diff,0),'Solde créditeur':Math.max(-diff,0)};});
     const cashRows=cashClosingsPP.slice().sort((a,b)=>a.date.localeCompare(b.date)).map(c=>({Date:ppExcelSafeDatePP(c.date),Ouverture:c.openingCash,'Entrées espèces':c.cashIn,'Sorties espèces':c.cashOut,'Caisse théorique':c.theoreticalCash,'Caisse réelle':c.actualCash,Écart:c.difference,'Clôturé par':c.closedBy,Observation:c.notes,'Clôturé le':new Date(c.closedAt)}));
+    const shiftRows=(typeof ppShiftExportRowsPP==='function'?ppShiftExportRowsPP():[]).slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(c=>({Date:ppExcelSafeDatePP(c.date),Shift:typeof ppShiftLabelPP==='function'?ppShiftLabelPP(c.shift):c.shift,Employé:c.employeeName||'',Recette:Number(c.systemRevenue||0),TPE:Number(c.tpe||0),Dépenses:Number(c.expenses||0),Autre:Number(c.other||0),'Détail autre':c.otherLabel||'','Reste espèces':Number(c.cashBalance||0),Observation:c.notes||'','Mis à jour le':new Date(c.updatedAt)}));
     const auditRows=(Array.isArray(ppAuditTrail)?ppAuditTrail:[]).map(a=>({Date:new Date(a.at),Utilisateur:a.user?.name||a.user?.email||'',Module:a.module||'',Action:a.action||'',Élément:a.label||a.entityId||'',Version:Number(a.version||0)}));
 
     const sheets={};
@@ -300,7 +305,7 @@ function ppExportExcelPP(){
     ppExcelSheetPP(wb,'Achats',purchaseRows,[14,18,30,16,14,16,16,16,14,14]);ppExcelSheetPP(wb,'Lignes Achats',purchaseLineRows,[18,14,28,30,12,12,14,14,16]);ppExcelSheetPP(wb,'Reglements Frs',supplierPaymentRows,[14,30,16,16,22,36,28]);
     ppExcelSheetPP(wb,'Clients',clientRows,[15,28,18,28,18,32,16,16,16]);ppExcelSheetPP(wb,'Factures Clients',clientInvoiceRows,[14,18,28,30,16,16,16]);ppExcelSheetPP(wb,'Reglements Clients',clientPaymentRows,[14,28,16,16,22,36]);
     ppExcelSheetPP(wb,'Ventes',saleRows,[14,18,28,16,16,14,16,18]);ppExcelSheetPP(wb,'Lignes Ventes',saleLineRows,[18,14,30,12,16,18]);ppExcelSheetPP(wb,'Depenses',expenseRows,[14,14,24,28,18,30,20,16,14,14,16,16,16,20]);ppExcelSheetPP(wb,'Reglements Depenses',expensePaymentRows,[14,30,22,16,16,22,28]);
-    ppExcelSheetPP(wb,'Fiches Techniques',recipeRows,[16,30,20,12,16,18,16,18,18]);ppExcelSheetPP(wb,'Ingredients FT',ingredientRows,[30,30,14,12,16,16]);ppExcelSheetPP(wb,'Journal Comptable',journalRows,[14,10,20,12,32,34,16,16,18]);ppExcelSheetPP(wb,'Balance',balanceRows,[12,34,16,16,18,18]);ppExcelSheetPP(wb,'Clotures Caisse',cashRows,[14,16,18,18,18,18,16,22,30,20]);ppExcelSheetPP(wb,'Journal Activite',auditRows,[20,24,18,18,30,12]);
+    ppExcelSheetPP(wb,'Fiches Techniques',recipeRows,[16,30,20,12,16,18,16,18,18]);ppExcelSheetPP(wb,'Ingredients FT',ingredientRows,[30,30,14,12,16,16]);ppExcelSheetPP(wb,'Journal Comptable',journalRows,[14,10,20,12,32,34,16,16,18]);ppExcelSheetPP(wb,'Balance',balanceRows,[12,34,16,16,18,18]);ppExcelSheetPP(wb,'Clotures Caisse',cashRows,[14,16,18,18,18,18,16,22,30,20]);ppExcelSheetPP(wb,'Clotures Shift',shiftRows,[14,18,24,16,16,16,16,28,18,30,20]);ppExcelSheetPP(wb,'Journal Activite',auditRows,[20,24,18,18,30,12]);
 
     const stockValue=stockRows.reduce((s,r)=>s+r['Valeur stock'],0),ca=saleRows.reduce((s,r)=>s+r['Total TTC'],0),purchases=purchaseRows.reduce((s,r)=>s+r['Total TTC'],0),expenses=expenseRows.reduce((s,r)=>s+r['Total TTC'],0),allMap=ppAccountingBalanceMapPP(journal);
     const allRevenues=[...allMap.values()].filter(r=>r.account.startsWith('7')).reduce((s,r)=>s+r.credit-r.debit,0),allCharges=[...allMap.values()].filter(r=>r.account.startsWith('6')).reduce((s,r)=>s+r.debit-r.credit,0);
@@ -329,7 +334,7 @@ function exportCashClosingPDFPP(date=null){
 function ppExportManagementPDFPP(){
     if(!ppIsAdmin()){alert('Réservé à l’administrateur.');return;}const JsPDF=ppPdfLibraryPP();if(!JsPDF){alert('La bibliothèque PDF n’a pas été chargée. Vérifiez la connexion internet puis rechargez la page.');return;}
     const from=getValue('ppExportFrom'),to=getValue('ppExportTo');if(from&&to&&from>to){alert('La date de début doit être antérieure à la date de fin.');return;}const inRange=d=>{const x=String(d||'').slice(0,10);return (!from||x>=from)&&(!to||x<=to);};
-    const sales=salesPP.filter(s=>inRange(s.date)),purchases=invoices.filter(i=>inRange(i.date)),expenses=expensesPP.filter(e=>inRange(e.date)),closings=cashClosingsPP.filter(c=>inRange(c.date));
+    const sales=salesPP.filter(s=>inRange(s.date)),purchases=invoices.filter(i=>inRange(i.date)),expenses=expensesPP.filter(e=>inRange(e.date)),closings=cashClosingsPP.filter(c=>inRange(c.date)),shiftClosings=(typeof ppShiftExportRowsPP==='function'?ppShiftExportRowsPP():[]).filter(c=>inRange(c.date));
     const caTTC=sales.reduce((s,x)=>s+Number(x.totalTTC||0),0),caHT=caTTC/1.10,purchaseTTC=purchases.reduce((s,x)=>s+Number(x.totalTTC||0),0),expenseTTC=expenses.reduce((s,x)=>s+Number(x.totalTTC??x.amount??0),0);
     const entries=ppAccountingJournalPP().filter(e=>inRange(e.date)),map=ppAccountingBalanceMapPP(entries),revenues=[...map.values()].filter(r=>r.account.startsWith('7')).reduce((s,r)=>s+r.credit-r.debit,0),charges=[...map.values()].filter(r=>r.account.startsWith('6')).reduce((s,r)=>s+r.debit-r.credit,0),result=revenues-charges;
     const doc=new JsPDF({orientation:'landscape',unit:'mm',format:'a4'});ppPdfHeaderPP(doc,'Rapport de gestion',`${ppPdfDatePP(from)} - ${ppPdfDatePP(to)}`);
@@ -338,6 +343,7 @@ function ppExportManagementPDFPP(){
     y=ppPdfTablePP(doc,'Achats',['Date','Facture','Fournisseur','HT','TVA','TTC','Reste'],purchases.map(i=>[ppPdfDatePP(i.date),i.number||'-',i.supplierName||'-',ppPdfMoneyPP(i.totalHT),ppPdfMoneyPP(i.tva),ppPdfMoneyPP(i.totalTTC),ppPdfMoneyPP(i.due)]),y);
     y=ppPdfTablePP(doc,'Dépenses',['Date','Catégorie','Bénéficiaire','HT','TVA','TTC','Reste'],expenses.map(e=>{const t=ppExpensePaymentTotalsPP(e);return [ppPdfDatePP(e.date),e.category||'-',e.beneficiary||'-',ppPdfMoneyPP(e.totalHT),ppPdfMoneyPP(e.vatAmount),ppPdfMoneyPP(e.totalTTC??e.amount),ppPdfMoneyPP(t.due)];}),y);
     y=ppPdfTablePP(doc,'Clôtures de caisse',['Date','Ouverture','Entrées','Sorties','Théorique','Réel','Écart'],closings.map(c=>[ppPdfDatePP(c.date),ppPdfMoneyPP(c.openingCash),ppPdfMoneyPP(c.cashIn),ppPdfMoneyPP(c.cashOut),ppPdfMoneyPP(c.theoreticalCash),ppPdfMoneyPP(c.actualCash),ppPdfMoneyPP(c.difference)]),y);
+    y=ppPdfTablePP(doc,'Clôtures Shift',['Date','Shift','Employé','Recette','TPE','Dépenses','Autre','Reste espèces'],shiftClosings.map(c=>[ppPdfDatePP(c.date),typeof ppShiftLabelPP==='function'?ppShiftLabelPP(c.shift):c.shift,c.employeeName||'-',ppPdfMoneyPP(c.systemRevenue),ppPdfMoneyPP(c.tpe),ppPdfMoneyPP(c.expenses),ppPdfMoneyPP(c.other),ppPdfMoneyPP(c.cashBalance)]),y);
     const balanceRows=[...map.values()].sort((a,b)=>a.account.localeCompare(b.account)).map(r=>[r.account,r.label,ppPdfMoneyPP(r.debit),ppPdfMoneyPP(r.credit),ppPdfMoneyPP(Math.max(r.debit-r.credit,0)),ppPdfMoneyPP(Math.max(r.credit-r.debit,0))]);ppPdfTablePP(doc,'Balance comptable',['Compte','Libellé','Débit','Crédit','Solde débiteur','Solde créditeur'],balanceRows,y);ppPdfFooterAllPagesPP(doc);doc.save(`pause-plate-rapport-${from||'debut'}-${to||'fin'}.pdf`);
 }
 

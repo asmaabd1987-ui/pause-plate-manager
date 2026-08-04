@@ -32,6 +32,201 @@
 
 }
 
+/* =========================================================
+   CLOTURE SHIFT
+========================================================= */
+
+.pp-shift-toolbar,
+.pp-shift-history-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    flex-wrap:wrap;
+    margin-bottom:16px;
+}
+
+.pp-shift-toolbar h2,
+.pp-shift-history-head h3{
+    margin:0 0 4px;
+    color:#12372a;
+}
+
+.pp-shift-toolbar p,
+.pp-shift-history-head p{
+    margin:0;
+    color:#667085;
+}
+
+.pp-shift-form,
+.pp-shift-history{
+    background:#fff;
+    border:1px solid #e4e7ec;
+    border-radius:18px;
+    padding:18px;
+    margin-bottom:18px;
+    box-shadow:0 4px 14px rgba(16,24,40,.05);
+}
+
+.pp-shift-form-grid{
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:14px;
+    margin-bottom:16px;
+}
+
+.pp-shift-form-grid-head{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+}
+
+.pp-shift-notes-field{
+    grid-column:auto;
+}
+
+.pp-shift-amount-grid{
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:12px;
+    margin-bottom:16px;
+}
+
+.pp-shift-amount-card{
+    padding:15px;
+    border:1px solid #e4e7ec;
+    border-top:4px solid #0b6b45;
+    border-radius:14px;
+    background:#fbfdfc;
+}
+
+.pp-shift-amount-card.is-tpe{border-top-color:#2563eb}
+.pp-shift-amount-card.is-expense{border-top-color:#d97706}
+.pp-shift-amount-card.is-other{border-top-color:#7f56d9}
+
+.pp-shift-amount-card label{
+    display:block;
+    min-height:34px;
+    margin-bottom:7px;
+    font-weight:800;
+    color:#344054;
+}
+
+.pp-shift-amount-card small{
+    display:block;
+    color:#667085;
+    line-height:1.4;
+    margin-top:7px;
+}
+
+.pp-shift-money-input{
+    display:flex;
+    align-items:center;
+    border:1px solid #d0d5dd;
+    border-radius:10px;
+    overflow:hidden;
+    background:#fff;
+}
+
+.pp-shift-money-input:focus-within{
+    border-color:#0b6b45;
+    box-shadow:0 0 0 3px rgba(11,107,69,.10);
+}
+
+.pp-shift-money-input input{
+    border:0 !important;
+    box-shadow:none !important;
+    border-radius:0 !important;
+    font-size:18px;
+    font-weight:800;
+    min-width:0;
+}
+
+.pp-shift-money-input span{
+    padding:0 12px;
+    color:#0b6b45;
+    font-weight:900;
+}
+
+.pp-shift-calculation{
+    display:grid;
+    grid-template-columns:minmax(220px,1fr) auto auto;
+    gap:18px;
+    align-items:center;
+    padding:18px;
+    border-radius:15px;
+    background:#eaf6ef;
+    border:1px solid #b7dfc7;
+    color:#094b2d;
+}
+
+.pp-shift-calculation span,
+.pp-shift-calculation small{
+    display:block;
+}
+
+.pp-shift-calculation span{font-weight:900}
+.pp-shift-calculation small{margin-top:3px;color:#527262}
+.pp-shift-calculation strong{font-size:28px;white-space:nowrap}
+.pp-shift-calculation em{font-style:normal;font-weight:800;text-align:right}
+
+.pp-shift-calculation.is-negative{
+    color:#b42318;
+    background:#fef3f2;
+    border-color:#fecdca;
+}
+
+.pp-shift-calculation.is-negative small{color:#b54708}
+
+.pp-shift-form-actions{
+    display:flex;
+    justify-content:flex-end;
+    gap:10px;
+    margin-top:16px;
+}
+
+.pp-shift-filters{
+    display:flex;
+    gap:8px;
+    align-items:center;
+    flex-wrap:wrap;
+}
+
+.pp-shift-filters input,
+.pp-shift-filters select{
+    width:auto;
+    min-width:155px;
+}
+
+.pp-shift-positive{color:#067647}
+.pp-shift-negative{color:#b42318}
+
+.pp-shift-table-note{
+    display:block;
+    max-width:170px;
+    margin-top:3px;
+    color:#667085;
+    white-space:normal;
+}
+
+@media(max-width:1050px){
+    .pp-shift-amount-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+@media(max-width:700px){
+    .pp-shift-form,
+    .pp-shift-history{padding:13px;border-radius:14px}
+    .pp-shift-form-grid,
+    .pp-shift-form-grid-head,
+    .pp-shift-amount-grid{grid-template-columns:1fr}
+    .pp-shift-calculation{grid-template-columns:1fr;gap:8px}
+    .pp-shift-calculation em{text-align:left}
+    .pp-shift-form-actions{flex-direction:column-reverse}
+    .pp-shift-form-actions .btn{width:100%}
+    .pp-shift-filters{width:100%}
+    .pp-shift-filters input,
+    .pp-shift-filters select,
+    .pp-shift-filters .btn{width:100%}
+}
+
 
 /* =========================================
    RESET

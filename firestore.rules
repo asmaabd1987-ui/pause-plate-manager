@@ -50,6 +50,10 @@ service cloud.firestore {
         && profile().permissions.expenses == true;
     }
 
+    function isActiveEmployee() {
+      return hasActiveProfile() && profile().role == 'employee';
+    }
+
     function canAccessDataset(dataset) {
       return isAdmin()
         || (hasStockPermission() && (dataset == 'products' || dataset == 'movements'))
@@ -80,7 +84,47 @@ service cloud.firestore {
           || request.resource.data.module == 'security'
           || (request.resource.data.module == 'stock' && hasStockPermission())
           || (request.resource.data.module == 'expenses' && hasExpensesPermission())
+          || (request.resource.data.module == 'shiftClosings' && isActiveEmployee())
         );
+    }
+
+    function validShiftClosing() {
+      return request.resource.data.keys().hasAll([
+          'id', 'date', 'shift', 'employeeUid', 'employeeName',
+          'systemRevenue', 'tpe', 'expenses', 'other', 'cashBalance',
+          'employeeUsername', 'otherLabel', 'notes',
+          'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.id is string
+        && request.resource.data.date is string
+        && request.resource.data.date.size() == 10
+        && request.resource.data.shift in ['morning', 'evening', 'full-day']
+        && request.resource.data.employeeUid is string
+        && request.resource.data.employeeName is string
+        && request.resource.data.employeeName.size() <= 120
+        && request.resource.data.employeeUsername is string
+        && request.resource.data.otherLabel is string
+        && request.resource.data.otherLabel.size() <= 160
+        && request.resource.data.notes is string
+        && request.resource.data.notes.size() <= 300
+        && request.resource.data.systemRevenue is number
+        && request.resource.data.systemRevenue >= 0
+        && request.resource.data.systemRevenue <= 100000000
+        && request.resource.data.tpe is number
+        && request.resource.data.tpe >= 0
+        && request.resource.data.tpe <= 100000000
+        && request.resource.data.expenses is number
+        && request.resource.data.expenses >= 0
+        && request.resource.data.expenses <= 100000000
+        && request.resource.data.other is number
+        && request.resource.data.other >= 0
+        && request.resource.data.other <= 100000000
+        && request.resource.data.cashBalance is number
+        && request.resource.data.cashBalance >= -100000000
+        && request.resource.data.cashBalance <= 100000000
+        && request.resource.data.createdBy is string
+        && request.resource.data.createdAt is string
+        && request.resource.data.updatedAt is string;
     }
 
     match /companies/{companyId}/data/{dataset} {
@@ -94,6 +138,42 @@ service cloud.firestore {
 
     match /companies/{companyId}/meta/{documentId} {
       allow read, write: if companyId == 'pause-plate-manager' && isAdmin();
+    }
+
+    match /companies/{companyId}/shiftClosings/{shiftId} {
+      allow read: if companyId == 'pause-plate-manager'
+        && (
+          isAdmin()
+          || (isActiveEmployee() && resource.data.employeeUid == request.auth.uid)
+        );
+
+      allow create: if companyId == 'pause-plate-manager'
+        && validShiftClosing()
+        && request.resource.data.id == shiftId
+        && (
+          isAdmin()
+          || (
+            isActiveEmployee()
+            && request.resource.data.employeeUid == request.auth.uid
+            && request.resource.data.createdBy == request.auth.uid
+          )
+        );
+
+      allow update: if companyId == 'pause-plate-manager'
+        && validShiftClosing()
+        && request.resource.data.id == shiftId
+        && (
+          isAdmin()
+          || (
+            isActiveEmployee()
+            && resource.data.employeeUid == request.auth.uid
+            && request.resource.data.employeeUid == request.auth.uid
+            && request.resource.data.createdBy == resource.data.createdBy
+            && request.resource.data.createdAt == resource.data.createdAt
+          )
+        );
+
+      allow delete: if companyId == 'pause-plate-manager' && isAdmin();
     }
 
     match /userProfiles/{uid} {
