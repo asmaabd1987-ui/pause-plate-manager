@@ -139,6 +139,29 @@ products =
             lastPurchaseTVAKnown:
                 product.lastPurchaseTVAKnown === true,
 
+            // Learned supplier invoice designations linked to this stock article.
+            invoiceAliases:
+                Array.isArray(product.invoiceAliases)
+                ? product.invoiceAliases
+                    .map(function(alias){
+                        if(typeof alias === "string"){
+                            return {
+                                supplierId: null,
+                                designation: alias,
+                                normalized: normalizeText(alias),
+                                updatedAt: new Date().toISOString()
+                            };
+                        }
+                        return {
+                            supplierId: alias?.supplierId ?? null,
+                            designation: String(alias?.designation || alias?.name || ""),
+                            normalized: String(alias?.normalized || normalizeText(alias?.designation || alias?.name || "")),
+                            updatedAt: alias?.updatedAt || new Date().toISOString()
+                        };
+                    })
+                    .filter(function(alias){ return Boolean(alias.normalized); })
+                : [],
+
             createdAt:
                 product.createdAt ??
                 new Date().toISOString()
@@ -1220,6 +1243,23 @@ function addInvoiceLine(data = {}){
     line.dataset.vatKnown = data.vatKnown ? "1" : "0";
     line.dataset.vatSource = data.vatSource || "";
 
+    // Keep the designation exactly as read on the supplier invoice.
+    // It is used to learn an alias without changing quantity, price or VAT.
+    const originalDesignation = String(
+        data.sourceDesignation ||
+        data.originalDesignation ||
+        data.name ||
+        ""
+    ).trim();
+    line.dataset.invoiceOriginalDesignation = originalDesignation;
+    line.dataset.preserveInvoiceValues = (
+        data.preserveInvoiceValues === true ||
+        Boolean(data.sourceDesignation || data.originalDesignation) ||
+        data.quantity !== undefined ||
+        data.price !== undefined ||
+        data.vatRate !== undefined
+    ) ? "1" : "0";
+
 
     const selectedCategory =
         data.category ||
@@ -1773,21 +1813,110 @@ function ppFindDuplicateSupplierInvoicePP(supplierId,number,excludedInvoiceId=nu
 }
 
 function saveInvoice(){
-    const supplierId=Number(getValue("invoiceSupplier")); const supplier=suppliers.find(x=>Number(x.id)===supplierId); if(!supplier){alert("Veuillez sélectionner un fournisseur.");return;}
-    const number=getValue("invoiceNumber").trim(); if(!number){alert("Veuillez saisir le numéro de facture.");return;}
+    const supplierId=Number(getValue("invoiceSupplier"));
+    const supplier=suppliers.find(x=>Number(x.id)===supplierId);
+    if(!supplier){alert("Veuillez sélectionner un fournisseur.");return;}
+
+    const number=getValue("invoiceNumber").trim();
+    if(!number){alert("Veuillez saisir le numéro de facture.");return;}
+
     const duplicateInvoice=ppFindDuplicateSupplierInvoicePP(supplier.id,number,editingInvoiceId);
     if(duplicateInvoice){
         alert(`Cette facture existe déjà pour ${supplier.name}.\n\nN° facture : ${duplicateInvoice.number}\nDate : ${formatDate(duplicateInvoice.date)}\nMontant TTC : ${formatMoney(duplicateInvoice.totalTTC)}`);
         return;
     }
-    const paymentTerm=ppInvoiceTermFromFormPP();if(!paymentTerm)return;
-    const lines=[]; document.querySelectorAll("#invoiceLines .invoice-line").forEach(line=>{const productId=Number(line.querySelector(".invoice-product")?.value);const existing=products.find(p=>Number(p.id)===productId);const typed=(line.querySelector(".invoice-new-product")?.value||"").trim();const name=existing?existing.name:typed;const quantity=parseNumber(line.querySelector(".invoice-quantity")?.value);const price=parseNumber(line.querySelector(".invoice-price")?.value);const vatRate=parseNumber(line.querySelector(".invoice-vat")?.value);if(!name||quantity<=0)return;const totalHT=quantity*price,vatAmount=totalHT*vatRate/100;lines.push({productId:existing?existing.id:null,name,category:line.querySelector(".invoice-category")?.value||"Autre",unit:line.querySelector(".invoice-unit")?.value||"pièce",quantity,price,vatRate,vatKnown:line.dataset.vatKnown==="1",vatSource:line.dataset.vatSource||"",vatAmount,totalHT,totalTTC:totalHT+vatAmount});});
+
+    const paymentTerm=ppInvoiceTermFromFormPP();
+    if(!paymentTerm)return;
+
+    const lines=[];
+    document.querySelectorAll("#invoiceLines .invoice-line").forEach(line=>{
+        const productId=Number(line.querySelector(".invoice-product")?.value);
+        const existing=products.find(p=>Number(p.id)===productId);
+        const typed=(line.querySelector(".invoice-new-product")?.value||"").trim();
+        const sourceDesignation=(line.dataset.invoiceOriginalDesignation||typed).trim();
+        const name=existing?existing.name:typed;
+        const quantity=parseNumber(line.querySelector(".invoice-quantity")?.value);
+        const price=parseNumber(line.querySelector(".invoice-price")?.value);
+        const vatRate=parseNumber(line.querySelector(".invoice-vat")?.value);
+        if(!name||quantity<=0)return;
+
+        const totalHT=quantity*price;
+        const vatAmount=totalHT*vatRate/100;
+        lines.push({
+            productId:existing?existing.id:null,
+            name,
+            sourceDesignation:sourceDesignation||name,
+            category:line.querySelector(".invoice-category")?.value||"Autre",
+            unit:line.querySelector(".invoice-unit")?.value||"pièce",
+            quantity,
+            price,
+            vatRate,
+            vatKnown:line.dataset.vatKnown==="1",
+            vatSource:line.dataset.vatSource||"",
+            vatAmount,
+            totalHT,
+            totalTTC:totalHT+vatAmount
+        });
+    });
+
     if(!lines.length){alert("Ajoutez au moins un produit.");return;}
-    const totalHT=lines.reduce((a,l)=>a+l.totalHT,0),totalTVA=lines.reduce((a,l)=>a+l.vatAmount,0),totalTTC=totalHT+totalTVA,paid=parseNumber(getValue("invoicePaid"));
-    if(editingInvoiceId){ const old=invoices.find(x=>Number(x.id)===editingInvoiceId); if(old) reverseInvoiceEffects(old); }
-    const invoice={id:editingInvoiceId||createId(),number,date:getValue("invoiceDate"),supplierId:supplier.id,supplierName:supplier.name,lines,totalHT,tva:totalTVA,totalTTC,paid,due:Math.max(totalTTC-paid,0),paymentTermType:paymentTerm.type,paymentTermDays:paymentTerm.days,paymentTermSource:'supplier',paymentTermNote:supplier.paymentTermNote||'',dueDate:paymentTerm.dueDate,createdAt:editingInvoiceId?(invoices.find(x=>Number(x.id)===editingInvoiceId)?.createdAt||new Date().toISOString()):new Date().toISOString(),updatedAt:new Date().toISOString()};
-    if(editingInvoiceId){const i=invoices.findIndex(x=>Number(x.id)===editingInvoiceId);invoices[i]=invoice;} else invoices.unshift(invoice);
-    applyInvoiceEffects(invoice); editingInvoiceId=null;saveData();closeModal("invoiceModal");renderAll();alert("Facture enregistrée avec succès.");
+
+    // Learn every manual/automatic link between the supplier designation and
+    // the canonical stock article. The next scan will select it directly.
+    lines.forEach(line=>{
+        if(!line.productId)return;
+        const product=products.find(p=>Number(p.id)===Number(line.productId));
+        ppRememberInvoiceAliasPP(product,line.sourceDesignation||line.name,supplier.id);
+    });
+
+    const totalHT=lines.reduce((a,l)=>a+l.totalHT,0);
+    const totalTVA=lines.reduce((a,l)=>a+l.vatAmount,0);
+    const totalTTC=totalHT+totalTVA;
+    const paid=parseNumber(getValue("invoicePaid"));
+
+    if(editingInvoiceId){
+        const old=invoices.find(x=>Number(x.id)===editingInvoiceId);
+        if(old)reverseInvoiceEffects(old);
+    }
+
+    const previousInvoice=editingInvoiceId
+        ?invoices.find(x=>Number(x.id)===editingInvoiceId)
+        :null;
+    const invoice={
+        id:editingInvoiceId||createId(),
+        number,
+        date:getValue("invoiceDate"),
+        supplierId:supplier.id,
+        supplierName:supplier.name,
+        lines,
+        totalHT,
+        tva:totalTVA,
+        totalTTC,
+        paid,
+        due:Math.max(totalTTC-paid,0),
+        paymentTermType:paymentTerm.type,
+        paymentTermDays:paymentTerm.days,
+        paymentTermSource:"supplier",
+        paymentTermNote:supplier.paymentTermNote||"",
+        dueDate:paymentTerm.dueDate,
+        createdAt:previousInvoice?.createdAt||new Date().toISOString(),
+        updatedAt:new Date().toISOString()
+    };
+
+    if(editingInvoiceId){
+        const i=invoices.findIndex(x=>Number(x.id)===editingInvoiceId);
+        invoices[i]=invoice;
+    }else{
+        invoices.unshift(invoice);
+    }
+
+    applyInvoiceEffects(invoice);
+    editingInvoiceId=null;
+    saveData();
+    closeModal("invoiceModal");
+    renderAll();
+    alert("Facture enregistrée avec succès.");
 }
 
 
@@ -5928,6 +6057,120 @@ function findProductByName(name){
 }
 
 
+
+function ppNormalizeInvoiceDesignationPP(value){
+    return normalizeText(
+        cleanProductName(value || "")
+    )
+    .replace(/[^a-z0-9]+/g," ")
+    .replace(/\s+/g," ")
+    .trim();
+}
+
+function ppInvoiceAliasesForProductPP(product){
+    if(!product)return [];
+    if(!Array.isArray(product.invoiceAliases))product.invoiceAliases=[];
+    return product.invoiceAliases;
+}
+
+function ppRememberInvoiceAliasPP(product, designation, supplierId){
+    if(!product)return false;
+    const raw=String(designation||"").trim();
+    const normalized=ppNormalizeInvoiceDesignationPP(raw);
+    const canonical=ppNormalizeInvoiceDesignationPP(product.name);
+    if(!normalized || normalized===canonical)return false;
+
+    const supplierKey=Number(supplierId)||null;
+    const aliases=ppInvoiceAliasesForProductPP(product);
+    const existing=aliases.find(alias=>
+        ppNormalizeInvoiceDesignationPP(alias?.designation||alias?.name||alias?.normalized||"")===normalized
+        && (Number(alias?.supplierId)||null)===supplierKey
+    );
+
+    if(existing){
+        existing.designation=raw;
+        existing.normalized=normalized;
+        existing.updatedAt=new Date().toISOString();
+        return false;
+    }
+
+    aliases.push({
+        supplierId:supplierKey,
+        designation:raw,
+        normalized,
+        updatedAt:new Date().toISOString()
+    });
+    return true;
+}
+
+function ppFindProductByInvoiceAliasPP(designation, supplierId){
+    const normalized=ppNormalizeInvoiceDesignationPP(designation);
+    if(!normalized)return null;
+    const supplierKey=Number(supplierId)||null;
+
+    // Prefer an alias learned from this exact supplier.
+    for(const product of products){
+        const aliases=ppInvoiceAliasesForProductPP(product);
+        const found=aliases.find(alias=>{
+            const aliasNormalized=ppNormalizeInvoiceDesignationPP(
+                alias?.designation||alias?.name||alias?.normalized||""
+            );
+            return aliasNormalized===normalized
+                && (Number(alias?.supplierId)||null)===supplierKey;
+        });
+        if(found)return product;
+    }
+
+    // Fallback for aliases saved before the supplier was known.
+    for(const product of products){
+        const aliases=ppInvoiceAliasesForProductPP(product);
+        const found=aliases.find(alias=>{
+            const aliasNormalized=ppNormalizeInvoiceDesignationPP(
+                alias?.designation||alias?.name||alias?.normalized||""
+            );
+            return aliasNormalized===normalized
+                && !Number(alias?.supplierId);
+        });
+        if(found)return product;
+    }
+
+    // When OCR did not recognize the supplier, accept the alias only when it
+    // points unambiguously to one stock article across all suppliers.
+    const anySupplierMatches=products.filter(product=>
+        ppInvoiceAliasesForProductPP(product).some(alias=>
+            ppNormalizeInvoiceDesignationPP(
+                alias?.designation||alias?.name||alias?.normalized||""
+            )===normalized
+        )
+    );
+    if(anySupplierMatches.length===1)return anySupplierMatches[0];
+
+    return null;
+}
+
+function ppFindProductByInvoiceDesignationPP(designation, supplierId){
+    const exact=findProductByName(designation);
+    if(exact)return exact;
+
+    const learned=ppFindProductByInvoiceAliasPP(designation,supplierId);
+    if(learned)return learned;
+
+    // Conservative automatic match: all words of one existing article must
+    // appear as complete words in the scanned designation, and the result
+    // must be unique. Example: "Surimi bâtonnet" -> "Surimi".
+    const scanned=ppNormalizeInvoiceDesignationPP(designation);
+    if(!scanned)return null;
+    const scannedTokens=new Set(scanned.split(" ").filter(token=>token.length>=3));
+    const candidates=products.filter(product=>{
+        const canonical=ppNormalizeInvoiceDesignationPP(product.name);
+        const tokens=canonical.split(" ").filter(token=>token.length>=3);
+        return tokens.length>0 && tokens.every(token=>scannedTokens.has(token));
+    });
+
+    if(candidates.length===1)return candidates[0];
+    return null;
+}
+
 function cleanProductName(name){
 
     return String(
@@ -7648,19 +7891,28 @@ function markInvoiceVatManual(select){
 function handleInvoiceProductChange(select){
     const line=select.closest(".invoice-line"); if(!line)return;
     const product=products.find(item=>Number(item.id)===Number(select.value)); if(!product)return;
-    const name=line.querySelector(".invoice-new-product"); if(name)name.value=product.name;
-    const cat=line.querySelector(".invoice-category"); if(cat)cat.value=product.category;
-    const unit=line.querySelector(".invoice-unit"); if(unit)unit.value=product.unit;
-    const price=line.querySelector(".invoice-price"); if(price)price.value=Number(product.price||0);
-    const vat=line.querySelector(".invoice-vat");
-    if(vat){
-        const hist = getPurchaseVatInfoForProduct(product);
-        if(hist.found && [...vat.options].some(o=>Number(o.value)===Number(hist.rate))){
-            vat.value=String(hist.rate);
-            line.dataset.vatKnown="1";
-            line.dataset.vatSource="history";
+
+    const name=line.querySelector(".invoice-new-product");
+    if(name)name.value=product.name;
+
+    const preserveValues=line.dataset.preserveInvoiceValues==="1";
+    if(!preserveValues){
+        const cat=line.querySelector(".invoice-category"); if(cat)cat.value=product.category;
+        const unit=line.querySelector(".invoice-unit"); if(unit)unit.value=product.unit;
+        const price=line.querySelector(".invoice-price"); if(price)price.value=Number(product.price||0);
+        const vat=line.querySelector(".invoice-vat");
+        if(vat){
+            const hist=getPurchaseVatInfoForProduct(product);
+            if(hist.found && [...vat.options].some(o=>Number(o.value)===Number(hist.rate))){
+                vat.value=String(hist.rate);
+                line.dataset.vatKnown="1";
+                line.dataset.vatSource="history";
+            }
         }
     }
+
+    // On scanned/edited invoice lines, changing the linked stock article must
+    // never erase quantity, unit, price or VAT.
     updateInvoiceTotals();
 }
 
@@ -7686,7 +7938,8 @@ function useScannedInvoiceData(){
         const c=document.getElementById("invoiceLines"); if(c)c.innerHTML="";
         data.products.forEach(function(item){
             const cleanedName=cleanProductName(item.name);
-            const existing=findProductByName(cleanedName);
+            const detectedSupplierId=Number(data.supplier?.id || getValue("invoiceSupplier")) || null;
+            const existing=ppFindProductByInvoiceDesignationPP(cleanedName,detectedSupplierId);
             let vatRate=Number(item.vatRate||0);
             let vatKnown=Boolean(item.vatDetected);
             let vatSource=vatKnown?"ocrLine":"";
@@ -7709,6 +7962,8 @@ function useScannedInvoiceData(){
             addInvoiceLine({
                 productId:existing?existing.id:null,
                 name:existing?existing.name:cleanedName,
+                sourceDesignation:cleanedName,
+                preserveInvoiceValues:true,
                 category:existing?existing.category:item.category,
                 unit:item.ocrSource==="unit-column"
                     ?item.unit
