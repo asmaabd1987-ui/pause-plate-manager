@@ -6548,33 +6548,8 @@ function cleanSupplierName(value){
 
 function detailRowsHTML(rows, allowHtml=false){return `<div class="details-grid">${rows.map(([k,v])=>`<div class="details-label">${escapeHTML(k)}</div><div class="details-value">${allowHtml?String(v):escapeHTML(String(v??''))}</div>`).join('')}</div>`;}
 function showDetailsModal(title,rows,onPrint=null,allowHtml=false){let modal=document.getElementById('detailsModal');if(!modal){modal=document.createElement('div');modal.id='detailsModal';modal.className='modal-overlay';modal.innerHTML='<div class="modal details-modal"><div class="modal-header"><h2 id="detailsModalTitle"></h2><button type="button" onclick="closeModal(\'detailsModal\')">×</button></div><div id="detailsModalBody"></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal(\'detailsModal\')">Fermer</button><button type="button" class="btn print" id="detailsPrintBtn">🖨️ Imprimer</button></div></div>';document.body.appendChild(modal);}document.getElementById('detailsModalTitle').textContent=title;document.getElementById('detailsModalBody').innerHTML=detailRowsHTML(rows,allowHtml);const btn=document.getElementById('detailsPrintBtn');btn.style.display=onPrint?'inline-block':'none';btn.onclick=onPrint||null;openModal('detailsModal');}
-function printDocument(title,bodyHtml){
-    /*
-      Impression sans popup:
-      - fonctionne sur Safari / Chrome / Edge
-      - évite le blocage de window.open() sur GitHub Pages
-      - imprime dans un iframe invisible puis le supprime
-    */
-    try{
-        const oldFrame=document.getElementById('ppPrintFrame');
-        if(oldFrame)oldFrame.remove();
-
-        const frame=document.createElement('iframe');
-        frame.id='ppPrintFrame';
-        frame.setAttribute('aria-hidden','true');
-        frame.style.position='fixed';
-        frame.style.right='0';
-        frame.style.bottom='0';
-        frame.style.width='0';
-        frame.style.height='0';
-        frame.style.border='0';
-        frame.style.opacity='0';
-        frame.style.pointerEvents='none';
-        document.body.appendChild(frame);
-
-        const doc=frame.contentWindow.document;
-        doc.open();
-        doc.write(`<!doctype html>
+function ppPrintableDocumentHTML(title,bodyHtml){
+    return `<!doctype html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -6609,7 +6584,70 @@ button,.btn,.action-buttons,.pp-pagination{display:none!important}
 </style>
 </head>
 <body>${bodyHtml}</body>
-</html>`);
+</html>`;
+}
+
+async function ppPrintDocumentNativePP(title,html){
+    const capacitor=window.Capacitor;
+    if(!capacitor?.isNativePlatform?.())return false;
+
+    const printer=
+        capacitor.Plugins?.Printer ||
+        (typeof capacitor.registerPlugin==='function'
+            ? capacitor.registerPlugin('Printer')
+            : null);
+
+    if(!printer || typeof printer.printHtml!=='function'){
+        throw new Error('Le module d’impression native n’est pas installé dans cette version de l’application.');
+    }
+
+    await printer.printHtml({
+        name:String(title||'Pause & Plate').slice(0,80),
+        html
+    });
+    return true;
+}
+
+function printDocument(title,bodyHtml){
+    /*
+      Mobile natif : PrintManager Android / UIPrintInteractionController iOS.
+      Navigateur : iframe invisible compatible Safari / Chrome / Edge.
+    */
+    const printableHTML=ppPrintableDocumentHTML(title,bodyHtml);
+    const nativePlatform=window.Capacitor?.isNativePlatform?.()===true;
+
+    if(nativePlatform){
+        ppPrintDocumentNativePP(title,printableHTML).catch(err=>{
+            console.error('Erreur impression mobile:',err);
+            alert(
+                "Impossible d'ouvrir l'impression mobile.\n\n"+
+                (err?.message||err)+
+                "\n\nInstallez la dernière version de l'application Pause & Plate."
+            );
+        });
+        return;
+    }
+
+    try{
+        const oldFrame=document.getElementById('ppPrintFrame');
+        if(oldFrame)oldFrame.remove();
+
+        const frame=document.createElement('iframe');
+        frame.id='ppPrintFrame';
+        frame.setAttribute('aria-hidden','true');
+        frame.style.position='fixed';
+        frame.style.right='0';
+        frame.style.bottom='0';
+        frame.style.width='0';
+        frame.style.height='0';
+        frame.style.border='0';
+        frame.style.opacity='0';
+        frame.style.pointerEvents='none';
+        document.body.appendChild(frame);
+
+        const doc=frame.contentWindow.document;
+        doc.open();
+        doc.write(printableHTML);
         doc.close();
 
         const doPrint=()=>{
@@ -11783,7 +11821,7 @@ async function ppEnsureUserProfile(user){
             email:user.email||"",
             role:isAdmin?"admin":"employee",
             active:true,
-            permissions:{stock:true,expenses:true}
+            permissions:{stock:true,expenses:true,shiftClosings:isAdmin}
         };
         await profileRef.set({
             ...profile,
@@ -11806,7 +11844,7 @@ async function ppEnsureUserProfile(user){
     ppCurrentUserProfile={
         ...profile,
         role:ppCurrentRole,
-        permissions:profile.permissions||(ppCurrentRole==="admin"?{stock:true,expenses:true}:{stock:false,expenses:false})
+        permissions:profile.permissions||(ppCurrentRole==="admin"?{stock:true,expenses:true,shiftClosings:true}:{stock:false,expenses:false,shiftClosings:false})
     };
     ppCloudProfileSignature=ppProfileScopeSignaturePP(ppCurrentUserProfile);
 
@@ -11828,7 +11866,8 @@ function ppProfileScopeSignaturePP(profile){
         username:String(value.username||""),
         permissions:{
             stock:value.permissions?.stock===true,
-            expenses:value.permissions?.expenses===true
+            expenses:value.permissions?.expenses===true,
+            shiftClosings:value.permissions?.shiftClosings===true
         }
     });
 }
@@ -11860,7 +11899,8 @@ function ppEnforceLocalDatasetScopePP(){
         const uid=String(ppCurrentUser?.uid||"");
         const allowedModules=new Set([
             ...(ppCurrentUserProfile?.permissions?.stock===true?["stock"]:[]),
-            ...(ppCurrentUserProfile?.permissions?.expenses===true?["expenses"]:[])
+            ...(ppCurrentUserProfile?.permissions?.expenses===true?["expenses"]:[]),
+            ...(ppCurrentUserProfile?.permissions?.shiftClosings===true?["shiftClosings"]:[])
         ]);
         ppAuditTrail=(Array.isArray(ppAuditTrail)?ppAuditTrail:[]).filter(entry=>
             allowedModules.has(String(entry?.module||""))&&String(entry?.user?.uid||"")===uid
@@ -12072,7 +12112,7 @@ function ppStartCloudListeners(){
             if(nextSignature===ppCloudProfileSignature)return;
             ppCloudProfileSignature=nextSignature;
             ppCurrentRole=String(profile.role||"employee");
-            ppCurrentUserProfile={...profile,role:ppCurrentRole,permissions:profile.permissions||{stock:false,expenses:false}};
+            ppCurrentUserProfile={...profile,role:ppCurrentRole,permissions:profile.permissions||{stock:false,expenses:false,shiftClosings:false}};
             ppCloudReady=false;
             ppStopCloudListeners();
             ppEnforceLocalDatasetScopePP();
@@ -12272,6 +12312,7 @@ function ppCan(module,action='view'){
     const perms=ppCurrentUserProfile?.permissions || {};
     if(module==='stock') return perms.stock !== false;
     if(module==='expenses') return perms.expenses !== false;
+    if(module==='shiftClosings') return perms.shiftClosings === true;
     return false;
 }
 
@@ -12528,7 +12569,11 @@ setTimeout(ppInjectAuditButtons,500);
 /* ---------- Role-aware navigation ---------- */
 function ppApplyPermissionsUI(){
     if(ppIsAdmin())return;
-    const allowed=['stock','expenses'];
+    const allowed=[];
+    const permissions=ppCurrentUserProfile?.permissions||{};
+    if(permissions.stock!==false)allowed.push('stock');
+    if(permissions.expenses!==false)allowed.push('expenses');
+    if(permissions.shiftClosings===true)allowed.push('shift');
     document.querySelectorAll('[data-page]').forEach(el=>{
         const page=String(el.dataset.page||'').toLowerCase();
         if(page && !allowed.some(x=>page.includes(x))) el.style.display='none';
@@ -12537,7 +12582,7 @@ function ppApplyPermissionsUI(){
     document.querySelectorAll('.sidebar button,.sidebar a,.nav-item').forEach(el=>{
         const t=(el.textContent||'').toLowerCase();
         if(!t)return;
-        if(!(t.includes('stock')||t.includes('dépense')||t.includes('depense')||t.includes('déconnexion')||t.includes('logout'))){
+        if(!(t.includes('stock')||t.includes('dépense')||t.includes('depense')||t.includes('clôture shift')||t.includes('cloture shift')||t.includes('déconnexion')||t.includes('logout'))){
             el.style.display='none';
         }
     });
@@ -12550,7 +12595,7 @@ function ppApplyPermissionsUI(){
   userProfiles/{uid} = {
     role:"employee",
     name:"...",
-    permissions:{stock:true,expenses:true}
+    permissions:{stock:true,expenses:true,shiftClosings:true}
   }
 */
 async function ppLoadUserProfile(){
@@ -12563,7 +12608,7 @@ async function ppLoadUserProfile(){
             role:String(u.email||'').toLowerCase()===PP_ADMIN_EMAIL.toLowerCase()?PP_ACCESS.ADMIN:PP_ACCESS.EMPLOYEE,
             name:u.email,
             active:true,
-            permissions:{stock:true,expenses:true}
+            permissions:{stock:true,expenses:true,shiftClosings:false}
         };
     }catch(e){
         console.warn('Profil utilisateur:',e);
@@ -12609,6 +12654,7 @@ function ppEnsureUsersManagerModal(){
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px">
           <label><input id="ppPermStock" type="checkbox" checked style="width:auto"> Stock / Entrées / Sorties</label>
           <label><input id="ppPermExpenses" type="checkbox" checked style="width:auto"> Dépenses</label>
+          <label><input id="ppPermShiftClosings" type="checkbox" style="width:auto"> Clôture Shift</label>
         </div>
         <button class="btn primary" type="button" onclick="ppCreateEmployee()" style="margin-top:12px">+ Créer l'utilisateur</button>
         <div id="ppUserManagerMessage" class="pp-cloud-message" style="margin-top:8px"></div>
@@ -12616,8 +12662,8 @@ function ppEnsureUsersManagerModal(){
 
       <h3>Utilisateurs enregistrés</h3>
       <div style="overflow:auto">
-        <table style="width:100%;min-width:820px">
-          <thead><tr><th>Nom</th><th>Utilisateur</th><th>Rôle</th><th>Stock</th><th>Dépenses</th><th>Statut</th><th>Actions</th></tr></thead>
+        <table style="width:100%;min-width:960px">
+          <thead><tr><th>Nom</th><th>Utilisateur</th><th>Rôle</th><th>Stock</th><th>Dépenses</th><th>Clôture Shift</th><th>Statut</th><th>Actions</th></tr></thead>
           <tbody id="ppUsersManagerTable"></tbody>
         </table>
       </div>
@@ -12669,7 +12715,8 @@ async function ppCreateEmployee(){
             active:true,
             permissions:{
                 stock:document.getElementById("ppPermStock").checked,
-                expenses:document.getElementById("ppPermExpenses").checked
+                expenses:document.getElementById("ppPermExpenses").checked,
+                shiftClosings:document.getElementById("ppPermShiftClosings").checked
             },
             createdBy:ppCurrentUser?.uid||null,
             createdAt:firebase.firestore.FieldValue.serverTimestamp()
@@ -12753,6 +12800,10 @@ function ppEnsureEditUserModal(){
               <input id="ppEditPermExpenses" type="checkbox" style="width:auto">
               Dépenses
             </label>
+            <label>
+              <input id="ppEditPermShiftClosings" type="checkbox" style="width:auto">
+              Clôture Shift
+            </label>
           </div>
         </div>
 
@@ -12793,6 +12844,7 @@ async function ppOpenEditUser(uid){
 
     document.getElementById("ppEditPermStock").checked=u.permissions?.stock!==false;
     document.getElementById("ppEditPermExpenses").checked=u.permissions?.expenses!==false;
+    document.getElementById("ppEditPermShiftClosings").checked=u.permissions?.shiftClosings===true;
     document.getElementById("ppEditUserMessage").textContent="";
 
     const current=ppCurrentFirebaseUser();
@@ -12829,10 +12881,11 @@ async function ppSaveEditedUser(){
     if(self||principal)active=true;
 
     const permissions=role==="admin"
-        ? {stock:true,expenses:true}
+        ? {stock:true,expenses:true,shiftClosings:true}
         : {
             stock:document.getElementById("ppEditPermStock").checked,
-            expenses:document.getElementById("ppEditPermExpenses").checked
+            expenses:document.getElementById("ppEditPermExpenses").checked,
+            shiftClosings:document.getElementById("ppEditPermShiftClosings").checked
           };
 
     const update={
@@ -12930,7 +12983,7 @@ async function ppRenderUsersManager(){
     const tb=document.getElementById("ppUsersManagerTable");
     if(!tb||!ppDb)return;
 
-    tb.innerHTML='<tr><td colspan="7">Chargement...</td></tr>';
+    tb.innerHTML='<tr><td colspan="8">Chargement...</td></tr>';
 
     try{
         const snap=await ppDb.collection("userProfiles").get();
@@ -12948,7 +13001,7 @@ async function ppRenderUsersManager(){
         );
 
         if(!rows.length){
-            tb.innerHTML='<tr><td colspan="7">Aucun utilisateur.</td></tr>';
+            tb.innerHTML='<tr><td colspan="8">Aucun utilisateur.</td></tr>';
             return;
         }
 
@@ -12965,6 +13018,7 @@ async function ppRenderUsersManager(){
                 <td>${u.role==="admin"?"Admin":"Employé"}</td>
                 <td>${u.role==="admin"||u.permissions?.stock!==false?"✅":"—"}</td>
                 <td>${u.role==="admin"||u.permissions?.expenses!==false?"✅":"—"}</td>
+                <td>${u.role==="admin"||u.permissions?.shiftClosings===true?"✅":"—"}</td>
                 <td>
                   <span class="status ${u.active===false?"danger":"success"}">
                     ${u.active===false?"Désactivé":"Actif"}
@@ -12995,7 +13049,7 @@ async function ppRenderUsersManager(){
 
     }catch(err){
         console.error(err);
-        tb.innerHTML='<tr><td colspan="7">Erreur de chargement.</td></tr>';
+        tb.innerHTML='<tr><td colspan="8">Erreur de chargement.</td></tr>';
     }
 }
 
@@ -13079,6 +13133,7 @@ async function ppOpenGlobalAudit(){
                 <option value="">Tous les modules</option>
                 <option value="stock">Stock</option>
                 <option value="expenses">Dépenses</option>
+                <option value="shiftClosings">Clôtures Shift</option>
                 <option value="users">Utilisateurs</option>
                 <option value="security">Sécurité / accès refusés</option>
               </select>
@@ -13135,7 +13190,7 @@ function ppRenderGlobalAudit(){
     }
 
     const actionLabel={create:"Création",update:"Modification",delete:"Suppression",activate:"Activation",deactivate:"Désactivation"};
-    const moduleLabel={stock:"Stock",expenses:"Dépenses",users:"Utilisateurs"};
+    const moduleLabel={stock:"Stock",expenses:"Dépenses",shiftClosings:"Clôtures Shift",users:"Utilisateurs"};
 
     body.innerHTML=`
       <div class="table-wrapper">
@@ -13161,7 +13216,7 @@ function ppRenderGlobalAudit(){
                 <td>${escapeHTML(x.label||x.entityId||"-")}</td>
                 <td>${Number(x.version||1)}</td>
                 <td>
-                  ${(x.module==="stock"||x.module==="expenses")
+                  ${(x.module==="stock"||x.module==="expenses"||x.module==="shiftClosings")
                     ? `<button class="btn small view" type="button" onclick="ppShowAudit('${String(x.module).replace(/'/g,"")}','${String(x.entityId).replace(/'/g,"")}','Historique complet')">👁 Voir</button>`
                     : "—"}
                 </td>
@@ -13203,6 +13258,7 @@ function ppEmployeeAllowedPages(){
     const allowed=[];
     if(perms.stock!==false)allowed.push("stock");
     if(perms.expenses!==false)allowed.push("expenses");
+    if(perms.shiftClosings===true)allowed.push("shift");
     return allowed;
 }
 
@@ -13289,679 +13345,3 @@ ppBootstrapCloud = async function(user){
 // Also refresh on delayed UI renders/listeners.
 setTimeout(ppFinalizeRoleUI,1500);
 setTimeout(ppFinalizeRoleUI,3000);
-
-/* =========================================================
-   SEARCHABLE SELECTS — PAUSE & PLATE v9
-   Recherche instantanée dans toutes les listes déroulantes.
-   Compatible avec les formulaires existants et les champs
-   créés dynamiquement (factures, recettes, ventes, etc.).
-========================================================= */
-(function ppSearchableSelectsV9(){
-    "use strict";
-
-    const PP_SS_STATE = new WeakMap();
-    const PP_SS_STYLE_ID = "ppSearchableSelectStylesV9";
-    const PP_SS_PANEL_ID = "ppSearchableSelectPanelV9";
-    let ppSSActiveSelect = null;
-    let ppSSPanel = null;
-    let ppSSInput = null;
-    let ppSSList = null;
-    let ppSSRefreshFrame = 0;
-    const ppSSPendingRoots = new Set();
-
-    function ppSSNormalize(value){
-        return String(value ?? "")
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .toLocaleLowerCase("fr")
-            .trim();
-    }
-
-    function ppSSInjectStyles(){
-        if(document.getElementById(PP_SS_STYLE_ID))return;
-        const style=document.createElement("style");
-        style.id=PP_SS_STYLE_ID;
-        style.textContent=`
-            .pp-search-select{
-                position:relative;
-                display:inline-block;
-                width:100%;
-                min-width:0;
-                max-width:100%;
-                vertical-align:middle;
-            }
-            .pp-search-select__native{
-                position:absolute !important;
-                left:0 !important;
-                bottom:0 !important;
-                width:1px !important;
-                height:1px !important;
-                min-width:1px !important;
-                max-width:1px !important;
-                padding:0 !important;
-                margin:0 !important;
-                opacity:0 !important;
-                pointer-events:none !important;
-                border:0 !important;
-                z-index:-1 !important;
-            }
-            .pp-search-select__trigger{
-                width:100%;
-                min-height:42px;
-                display:flex;
-                align-items:center;
-                justify-content:space-between;
-                gap:10px;
-                padding:9px 12px;
-                border:1px solid #d5d9d6;
-                border-radius:10px;
-                background:#fffdf8;
-                color:#18251b;
-                font:inherit;
-                font-size:14px;
-                line-height:1.25;
-                text-align:left;
-                cursor:pointer;
-                box-shadow:none;
-                transition:border-color .16s ease,box-shadow .16s ease,background .16s ease;
-            }
-            .pp-search-select__trigger:hover{
-                border-color:#9caf9f;
-                background:#fffefb;
-            }
-            .pp-search-select__trigger:focus-visible,
-            .pp-search-select.is-open .pp-search-select__trigger{
-                outline:none;
-                border-color:#094B2D;
-                box-shadow:0 0 0 3px rgba(9,75,45,.13);
-            }
-            .pp-search-select.is-invalid .pp-search-select__trigger{
-                border-color:#b42318;
-                box-shadow:0 0 0 3px rgba(180,35,24,.10);
-            }
-            .pp-search-select__trigger:disabled{
-                cursor:not-allowed;
-                opacity:.64;
-                background:#f2f3f1;
-            }
-            .pp-search-select__value{
-                min-width:0;
-                overflow:hidden;
-                text-overflow:ellipsis;
-                white-space:nowrap;
-            }
-            .pp-search-select__arrow{
-                flex:0 0 auto;
-                width:8px;
-                height:8px;
-                border-right:2px solid currentColor;
-                border-bottom:2px solid currentColor;
-                transform:rotate(45deg) translateY(-2px);
-                opacity:.65;
-                transition:transform .16s ease;
-            }
-            .pp-search-select.is-open .pp-search-select__arrow{
-                transform:rotate(225deg) translate(-1px,-1px);
-            }
-            .pp-search-select-panel{
-                position:fixed;
-                z-index:2147483000;
-                display:none;
-                padding:8px;
-                border:1px solid rgba(9,75,45,.20);
-                border-radius:14px;
-                background:#fffdf8;
-                box-shadow:0 18px 48px rgba(24,37,27,.22);
-                box-sizing:border-box;
-            }
-            .pp-search-select-panel__search{
-                width:100%;
-                height:42px;
-                padding:9px 12px;
-                border:1px solid #cdd5cf;
-                border-radius:10px;
-                background:#fff;
-                color:#18251b;
-                font:inherit;
-                font-size:14px;
-                outline:none;
-                box-sizing:border-box;
-            }
-            .pp-search-select-panel__search:focus{
-                border-color:#094B2D;
-                box-shadow:0 0 0 3px rgba(9,75,45,.12);
-            }
-            .pp-search-select-panel__list{
-                max-height:min(310px,48vh);
-                overflow:auto;
-                overscroll-behavior:contain;
-                -webkit-overflow-scrolling:touch;
-                margin-top:7px;
-                padding:2px;
-            }
-            .pp-search-select-panel__option{
-                width:100%;
-                min-height:40px;
-                display:flex;
-                align-items:center;
-                justify-content:space-between;
-                gap:10px;
-                padding:9px 10px;
-                border:0;
-                border-radius:9px;
-                background:transparent;
-                color:#18251b;
-                font:inherit;
-                font-size:14px;
-                text-align:left;
-                cursor:pointer;
-            }
-            .pp-search-select-panel__option:hover,
-            .pp-search-select-panel__option:focus-visible{
-                outline:none;
-                background:#edf4ef;
-            }
-            .pp-search-select-panel__option.is-selected{
-                background:#e4efe7;
-                color:#094B2D;
-                font-weight:700;
-            }
-            .pp-search-select-panel__option:disabled{
-                opacity:.45;
-                cursor:not-allowed;
-            }
-            .pp-search-select-panel__option-text{
-                min-width:0;
-                overflow:hidden;
-                text-overflow:ellipsis;
-                white-space:normal;
-            }
-            .pp-search-select-panel__check{
-                flex:0 0 auto;
-                color:#D9A51E;
-                font-weight:900;
-            }
-            .pp-search-select-panel__empty{
-                padding:18px 10px;
-                color:#667085;
-                font-size:13px;
-                text-align:center;
-            }
-            @media (max-width:600px){
-                .pp-search-select-panel{
-                    left:10px !important;
-                    right:10px !important;
-                    width:auto !important;
-                    max-width:none !important;
-                    border-radius:16px;
-                }
-                .pp-search-select-panel__list{
-                    max-height:min(340px,50vh);
-                }
-                .pp-search-select__trigger{
-                    min-height:44px;
-                }
-            }
-        `;
-        document.head.appendChild(style);
-    }
-
-    function ppSSEnsurePanel(){
-        if(ppSSPanel && document.body.contains(ppSSPanel))return;
-        ppSSPanel=document.getElementById(PP_SS_PANEL_ID);
-        if(ppSSPanel){
-            ppSSInput=ppSSPanel.querySelector("input");
-            ppSSList=ppSSPanel.querySelector(".pp-search-select-panel__list");
-            return;
-        }
-
-        ppSSPanel=document.createElement("div");
-        ppSSPanel.id=PP_SS_PANEL_ID;
-        ppSSPanel.className="pp-search-select-panel";
-        ppSSPanel.setAttribute("role","dialog");
-        ppSSPanel.setAttribute("aria-label","Recherche dans la liste");
-
-        ppSSInput=document.createElement("input");
-        ppSSInput.type="search";
-        ppSSInput.className="pp-search-select-panel__search";
-        ppSSInput.placeholder="Rechercher une désignation...";
-        ppSSInput.autocomplete="off";
-        ppSSInput.spellcheck=false;
-        ppSSInput.setAttribute("aria-label","Rechercher dans la liste");
-
-        ppSSList=document.createElement("div");
-        ppSSList.className="pp-search-select-panel__list";
-        ppSSList.setAttribute("role","listbox");
-
-        ppSSPanel.append(ppSSInput,ppSSList);
-        document.body.appendChild(ppSSPanel);
-
-        ppSSInput.addEventListener("input",()=>ppSSRenderOptions(ppSSInput.value));
-        ppSSInput.addEventListener("keydown",ppSSHandleSearchKeyboard);
-        ppSSList.addEventListener("keydown",ppSSHandleOptionKeyboard);
-    }
-
-    function ppSSShouldEnhance(select){
-        if(!(select instanceof HTMLSelectElement))return false;
-        if(select.multiple || Number(select.size||0)>1)return false;
-        if(select.dataset.nativeSelect==="true" || select.hasAttribute("data-pp-native-select"))return false;
-        if(select.closest("#"+PP_SS_PANEL_ID))return false;
-        return true;
-    }
-
-    function ppSSSelectedText(select){
-        const option=select.options[select.selectedIndex];
-        return option ? String(option.textContent||option.label||option.value||"").trim() : "Sélectionner...";
-    }
-
-    function ppSSCopySizing(select,wrapper){
-        const inline=select.style;
-        if(inline.width)wrapper.style.width=inline.width;
-        if(inline.minWidth)wrapper.style.minWidth=inline.minWidth;
-        if(inline.maxWidth)wrapper.style.maxWidth=inline.maxWidth;
-        if(inline.flex)wrapper.style.flex=inline.flex;
-        if(inline.flexGrow)wrapper.style.flexGrow=inline.flexGrow;
-        if(inline.flexShrink)wrapper.style.flexShrink=inline.flexShrink;
-        if(inline.alignSelf)wrapper.style.alignSelf=inline.alignSelf;
-    }
-
-    function ppSSEnhance(select){
-        if(!ppSSShouldEnhance(select))return;
-        if(PP_SS_STATE.has(select)){
-            ppSSSync(select);
-            return;
-        }
-
-        const wrapper=document.createElement("div");
-        wrapper.className="pp-search-select";
-        ppSSCopySizing(select,wrapper);
-
-        const trigger=document.createElement("button");
-        trigger.type="button";
-        trigger.className="pp-search-select__trigger";
-        trigger.setAttribute("aria-haspopup","listbox");
-        trigger.setAttribute("aria-expanded","false");
-
-        const value=document.createElement("span");
-        value.className="pp-search-select__value";
-
-        const arrow=document.createElement("span");
-        arrow.className="pp-search-select__arrow";
-        arrow.setAttribute("aria-hidden","true");
-
-        trigger.append(value,arrow);
-
-        select.parentNode.insertBefore(wrapper,select);
-        wrapper.append(select,trigger);
-        select.classList.add("pp-search-select__native");
-        select.setAttribute("data-pp-search-enhanced","true");
-
-        PP_SS_STATE.set(select,{wrapper,trigger,value});
-
-        trigger.addEventListener("click",event=>{
-            event.preventDefault();
-            event.stopPropagation();
-            if(select.disabled)return;
-            if(ppSSActiveSelect===select)ppSSClose();
-            else ppSSOpen(select);
-        });
-
-        trigger.addEventListener("keydown",event=>{
-            if(select.disabled)return;
-            if(["Enter"," ","ArrowDown","ArrowUp"].includes(event.key)){
-                event.preventDefault();
-                ppSSOpen(select);
-            }
-        });
-
-        select.addEventListener("change",()=>{
-            const state=PP_SS_STATE.get(select);
-            state?.wrapper.classList.remove("is-invalid");
-            ppSSSync(select);
-        });
-        select.addEventListener("input",()=>ppSSSync(select));
-        select.addEventListener("invalid",()=>{
-            const state=PP_SS_STATE.get(select);
-            if(!state)return;
-            state.wrapper.classList.add("is-invalid");
-            setTimeout(()=>{
-                if(!select.disabled){
-                    state.trigger.focus();
-                    ppSSOpen(select);
-                }
-            },0);
-        },true);
-
-        ppSSSync(select);
-    }
-
-    function ppSSSync(select){
-        const state=PP_SS_STATE.get(select);
-        if(!state || !document.contains(select))return;
-        const text=ppSSSelectedText(select);
-        state.value.textContent=text || "Sélectionner...";
-        state.trigger.title=text || "";
-        state.trigger.disabled=!!select.disabled;
-        state.trigger.setAttribute("aria-disabled",select.disabled?"true":"false");
-        if(select.required)state.trigger.setAttribute("aria-required","true");
-        else state.trigger.removeAttribute("aria-required");
-        if(ppSSActiveSelect===select)ppSSRenderOptions(ppSSInput?.value||"");
-    }
-
-    function ppSSOptionRows(select){
-        return Array.from(select.options).map((option,index)=>({
-            option,
-            index,
-            text:String(option.textContent||option.label||option.value||"").trim(),
-            search:ppSSNormalize(`${option.textContent||""} ${option.value||""}`),
-            disabled:!!option.disabled || !!option.parentElement?.disabled
-        }));
-    }
-
-    function ppSSRenderOptions(query=""){
-        if(!ppSSActiveSelect || !ppSSList)return;
-        const normalized=ppSSNormalize(query);
-        const rows=ppSSOptionRows(ppSSActiveSelect).filter(row=>!normalized || row.search.includes(normalized));
-        ppSSList.innerHTML="";
-
-        if(!rows.length){
-            const empty=document.createElement("div");
-            empty.className="pp-search-select-panel__empty";
-            empty.textContent="Aucun résultat trouvé";
-            ppSSList.appendChild(empty);
-            return;
-        }
-
-        const fragment=document.createDocumentFragment();
-        rows.forEach(row=>{
-            const button=document.createElement("button");
-            button.type="button";
-            button.className="pp-search-select-panel__option";
-            button.dataset.optionIndex=String(row.index);
-            button.setAttribute("role","option");
-            button.setAttribute("aria-selected",row.index===ppSSActiveSelect.selectedIndex?"true":"false");
-            button.disabled=row.disabled;
-            if(row.index===ppSSActiveSelect.selectedIndex)button.classList.add("is-selected");
-
-            const text=document.createElement("span");
-            text.className="pp-search-select-panel__option-text";
-            text.textContent=row.text || "—";
-            button.appendChild(text);
-
-            if(row.index===ppSSActiveSelect.selectedIndex){
-                const check=document.createElement("span");
-                check.className="pp-search-select-panel__check";
-                check.textContent="✓";
-                check.setAttribute("aria-hidden","true");
-                button.appendChild(check);
-            }
-
-            button.addEventListener("click",()=>ppSSChoose(row.index));
-            fragment.appendChild(button);
-        });
-        ppSSList.appendChild(fragment);
-    }
-
-    function ppSSPlacePanel(){
-        if(!ppSSActiveSelect || !ppSSPanel)return;
-        const state=PP_SS_STATE.get(ppSSActiveSelect);
-        if(!state || !document.contains(state.trigger)){
-            ppSSClose();
-            return;
-        }
-
-        const rect=state.trigger.getBoundingClientRect();
-        if(rect.width===0 || rect.height===0){
-            ppSSClose();
-            return;
-        }
-
-        const viewportWidth=window.visualViewport?.width || window.innerWidth;
-        const viewportHeight=window.visualViewport?.height || window.innerHeight;
-        const viewportLeft=window.visualViewport?.offsetLeft || 0;
-        const viewportTop=window.visualViewport?.offsetTop || 0;
-        const mobile=viewportWidth<=600;
-        const margin=mobile?10:8;
-        const desiredWidth=mobile
-            ? Math.max(220,viewportWidth-(margin*2))
-            : Math.min(Math.max(rect.width,260),viewportWidth-(margin*2));
-
-        ppSSPanel.style.width=`${Math.round(desiredWidth)}px`;
-        ppSSPanel.style.maxWidth=`${Math.max(220,viewportWidth-(margin*2))}px`;
-        ppSSPanel.style.display="block";
-        ppSSPanel.style.visibility="hidden";
-
-        let left=mobile ? viewportLeft+margin : rect.left;
-        left=Math.max(viewportLeft+margin,Math.min(left,viewportLeft+viewportWidth-desiredWidth-margin));
-        ppSSPanel.style.left=`${Math.round(left)}px`;
-        ppSSPanel.style.right="auto";
-
-        const panelHeight=Math.min(ppSSPanel.offsetHeight||380,Math.max(180,viewportHeight-(margin*2)));
-        const roomBelow=(viewportTop+viewportHeight)-rect.bottom-margin;
-        const roomAbove=rect.top-viewportTop-margin;
-        let top;
-        if(roomBelow>=Math.min(panelHeight,250) || roomBelow>=roomAbove){
-            top=rect.bottom+6;
-        }else{
-            top=rect.top-panelHeight-6;
-        }
-        top=Math.max(viewportTop+margin,Math.min(top,viewportTop+viewportHeight-panelHeight-margin));
-        ppSSPanel.style.top=`${Math.round(top)}px`;
-        ppSSPanel.style.visibility="visible";
-    }
-
-    function ppSSOpen(select){
-        if(!ppSSShouldEnhance(select) || select.disabled)return;
-        ppSSEnsurePanel();
-        if(ppSSActiveSelect && ppSSActiveSelect!==select){
-            const old=PP_SS_STATE.get(ppSSActiveSelect);
-            old?.wrapper.classList.remove("is-open");
-            old?.trigger.setAttribute("aria-expanded","false");
-        }
-
-        ppSSActiveSelect=select;
-        ppSSSync(select);
-        const state=PP_SS_STATE.get(select);
-        state?.wrapper.classList.add("is-open");
-        state?.trigger.setAttribute("aria-expanded","true");
-
-        ppSSInput.value="";
-        ppSSRenderOptions("");
-        ppSSPlacePanel();
-        requestAnimationFrame(()=>{
-            ppSSPlacePanel();
-            ppSSInput.focus({preventScroll:true});
-            ppSSInput.select();
-            const selected=ppSSList.querySelector(".is-selected:not(:disabled)");
-            selected?.scrollIntoView({block:"nearest"});
-        });
-    }
-
-    function ppSSClose(restoreFocus=false){
-        if(!ppSSActiveSelect){
-            if(ppSSPanel)ppSSPanel.style.display="none";
-            return;
-        }
-        const current=ppSSActiveSelect;
-        const state=PP_SS_STATE.get(current);
-        state?.wrapper.classList.remove("is-open");
-        state?.trigger.setAttribute("aria-expanded","false");
-        ppSSActiveSelect=null;
-        if(ppSSPanel)ppSSPanel.style.display="none";
-        if(restoreFocus && state?.trigger && document.contains(state.trigger))state.trigger.focus();
-    }
-
-    function ppSSChoose(index){
-        const select=ppSSActiveSelect;
-        if(!select)return;
-        const option=select.options[index];
-        if(!option || option.disabled || option.parentElement?.disabled)return;
-        select.selectedIndex=index;
-        select.dispatchEvent(new Event("input",{bubbles:true}));
-        select.dispatchEvent(new Event("change",{bubbles:true}));
-        ppSSSync(select);
-        ppSSClose(true);
-    }
-
-    function ppSSFocusableOptions(){
-        return ppSSList ? Array.from(ppSSList.querySelectorAll(".pp-search-select-panel__option:not(:disabled)")) : [];
-    }
-
-    function ppSSHandleSearchKeyboard(event){
-        if(event.key==="Escape"){
-            event.preventDefault();
-            ppSSClose(true);
-            return;
-        }
-        if(event.key==="ArrowDown" || event.key==="ArrowUp"){
-            event.preventDefault();
-            const options=ppSSFocusableOptions();
-            const target=event.key==="ArrowDown" ? options[0] : options[options.length-1];
-            target?.focus();
-            return;
-        }
-        if(event.key==="Enter"){
-            const options=ppSSFocusableOptions();
-            if(options.length===1){
-                event.preventDefault();
-                options[0].click();
-            }
-        }
-    }
-
-    function ppSSHandleOptionKeyboard(event){
-        const option=event.target.closest?.(".pp-search-select-panel__option");
-        if(!option)return;
-        const options=ppSSFocusableOptions();
-        const index=options.indexOf(option);
-        if(event.key==="ArrowDown"){
-            event.preventDefault();
-            (options[index+1]||options[0])?.focus();
-        }else if(event.key==="ArrowUp"){
-            event.preventDefault();
-            (options[index-1]||options[options.length-1])?.focus();
-        }else if(event.key==="Home"){
-            event.preventDefault();
-            options[0]?.focus();
-        }else if(event.key==="End"){
-            event.preventDefault();
-            options[options.length-1]?.focus();
-        }else if(event.key==="Escape"){
-            event.preventDefault();
-            ppSSClose(true);
-        }else if(event.key.length===1 && !event.ctrlKey && !event.metaKey && !event.altKey){
-            ppSSInput.focus();
-            ppSSInput.value+=event.key;
-            ppSSRenderOptions(ppSSInput.value);
-        }
-    }
-
-    function ppSSRefreshAll(root=document){
-        if(root instanceof HTMLSelectElement)ppSSEnhance(root);
-        if(root?.querySelectorAll)root.querySelectorAll("select").forEach(ppSSEnhance);
-        document.querySelectorAll("select[data-pp-search-enhanced='true']").forEach(ppSSSync);
-    }
-
-    function ppSSScheduleRefresh(root=document){
-        ppSSPendingRoots.add(root||document);
-        if(ppSSRefreshFrame)return;
-        ppSSRefreshFrame=requestAnimationFrame(()=>{
-            ppSSRefreshFrame=0;
-            const roots=Array.from(ppSSPendingRoots);
-            ppSSPendingRoots.clear();
-            roots.forEach(ppSSRefreshAll);
-        });
-    }
-
-    function ppSSPatchNativeSetter(prototype,property){
-        const descriptor=Object.getOwnPropertyDescriptor(prototype,property);
-        if(!descriptor?.set || descriptor.set.__ppSearchablePatched)return;
-        const originalSet=descriptor.set;
-        const patched=function(value){
-            originalSet.call(this,value);
-            queueMicrotask(()=>{
-                if(this instanceof HTMLSelectElement)ppSSSync(this);
-                else if(this instanceof HTMLOptionElement && this.parentElement instanceof HTMLSelectElement)ppSSSync(this.parentElement);
-            });
-        };
-        patched.__ppSearchablePatched=true;
-        Object.defineProperty(prototype,property,{...descriptor,set:patched});
-    }
-
-    function ppSSInit(){
-        ppSSInjectStyles();
-        ppSSEnsurePanel();
-        ppSSPatchNativeSetter(HTMLSelectElement.prototype,"value");
-        ppSSPatchNativeSetter(HTMLSelectElement.prototype,"selectedIndex");
-        ppSSPatchNativeSetter(HTMLOptionElement.prototype,"selected");
-        ppSSRefreshAll(document);
-
-        const observer=new MutationObserver(records=>{
-            const roots=new Set();
-            let syncActive=false;
-            records.forEach(record=>{
-                if(record.type==="childList"){
-                    if(record.target instanceof HTMLSelectElement || record.target instanceof HTMLOptGroupElement || record.target instanceof HTMLOptionElement){
-                        const select=record.target.closest?.("select");
-                        if(select)roots.add(select);
-                    }
-                    record.addedNodes.forEach(node=>{
-                        if(node.nodeType!==1)return;
-                        if(node instanceof HTMLSelectElement)roots.add(node);
-                        else if(node.querySelector?.("select"))roots.add(node);
-                    });
-                }else if(record.type==="attributes"){
-                    const target=record.target;
-                    if(target instanceof HTMLSelectElement)roots.add(target);
-                    else if(target instanceof HTMLOptionElement || target instanceof HTMLOptGroupElement){
-                        const select=target.closest?.("select");
-                        if(select)roots.add(select);
-                    }
-                }
-                if(ppSSActiveSelect && (record.target===ppSSActiveSelect || ppSSActiveSelect.contains?.(record.target)))syncActive=true;
-            });
-            roots.forEach(root=>ppSSScheduleRefresh(root));
-            if(syncActive)ppSSScheduleRefresh(ppSSActiveSelect);
-        });
-        observer.observe(document.body,{
-            subtree:true,
-            childList:true,
-            attributes:true,
-            attributeFilter:["disabled","selected","value","label"]
-        });
-
-        document.addEventListener("pointerdown",event=>{
-            if(!ppSSActiveSelect)return;
-            const state=PP_SS_STATE.get(ppSSActiveSelect);
-            if(ppSSPanel?.contains(event.target) || state?.wrapper.contains(event.target))return;
-            ppSSClose();
-        },true);
-
-        document.addEventListener("keydown",event=>{
-            if(event.key==="Escape" && ppSSActiveSelect)ppSSClose(true);
-        },true);
-
-        document.addEventListener("reset",event=>{
-            setTimeout(()=>ppSSRefreshAll(event.target),0);
-        },true);
-
-        window.addEventListener("resize",()=>{
-            if(ppSSActiveSelect)ppSSPlacePanel();
-        },{passive:true});
-        window.addEventListener("scroll",()=>{
-            if(ppSSActiveSelect)ppSSPlacePanel();
-        },{passive:true,capture:true});
-        window.visualViewport?.addEventListener("resize",()=>{
-            if(ppSSActiveSelect)ppSSPlacePanel();
-        },{passive:true});
-        window.visualViewport?.addEventListener("scroll",()=>{
-            if(ppSSActiveSelect)ppSSPlacePanel();
-        },{passive:true});
-
-        window.ppRefreshSearchableSelects=ppSSRefreshAll;
-        window.ppCloseSearchableSelect=ppSSClose;
-    }
-
-    if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",ppSSInit,{once:true});
-    else ppSSInit();
-})();
