@@ -18225,3 +18225,638 @@ deleteProduct=function(id){
 
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",()=>{ppEnsureInventoryUI();ppRenderInventoryPagePP();});
 else {ppEnsureInventoryUI();ppRenderInventoryPagePP();}
+
+/* =========================================================
+   PAUSE & PLATE — BONS DE COMMANDE & RÉCEPTIONS
+========================================================= */
+
+const PP_PURCHASE_ORDERS_KEY = "pause_plate_purchase_orders";
+const PP_PURCHASE_RECEIPTS_KEY = "pause_plate_purchase_receipts";
+const PP_PO_PAGE_SIZE = 15;
+
+let purchaseOrdersPP = loadStorage(PP_PURCHASE_ORDERS_KEY, []);
+let purchaseReceiptsPP = loadStorage(PP_PURCHASE_RECEIPTS_KEY, []);
+let ppActivePurchaseOrderIdPP = null;
+let ppPOListSearchPP = "";
+let ppPOListStatusPP = "";
+let ppPOListFromPP = "";
+let ppPOListToPP = "";
+let ppPOListPagePP = 1;
+let ppPOFormLinesPP = [];
+let ppPOEditingIdPP = null;
+let ppReceiptEditingIdPP = null;
+let ppInvoiceReceiptContextPP = null;
+let ppOpeningInvoiceFromReceiptPP = false;
+
+function ppPONumberPP(value){
+    const number=Number(value||0);
+    return Number.isFinite(number)?number:0;
+}
+
+function ppPORoundPP(value){
+    return Math.round((ppPONumberPP(value)+Number.EPSILON)*1000000)/1000000;
+}
+
+function ppNormalizePOLinePP(line={}){
+    return {
+        id:line.id??createId(),
+        productId:line.productId??null,
+        productName:String(line.productName||line.name||""),
+        category:String(line.category||"Autre"),
+        unit:String(line.unit||"pièce"),
+        orderedQty:Math.max(ppPONumberPP(line.orderedQty??line.quantity),0),
+        orderedPrice:Math.max(ppPONumberPP(line.orderedPrice??line.price),0)
+    };
+}
+
+function ppNormalizePurchaseOrderPP(order={}){
+    const status=["draft","sent","partial","received","cancelled"].includes(order.status)?order.status:"draft";
+    return {
+        id:order.id??createId(),
+        number:String(order.number||""),
+        date:String(order.date||"").slice(0,10),
+        expectedDate:String(order.expectedDate||"").slice(0,10),
+        supplierId:order.supplierId??null,
+        supplierName:String(order.supplierName||""),
+        status,
+        lines:Array.isArray(order.lines)?order.lines.map(ppNormalizePOLinePP):[],
+        createdAt:order.createdAt||new Date().toISOString(),
+        updatedAt:order.updatedAt||new Date().toISOString(),
+        sentAt:order.sentAt||null,
+        cancelledAt:order.cancelledAt||null
+    };
+}
+
+function ppNormalizeReceiptLinePP(line={}){
+    return {
+        id:line.id??createId(),
+        orderLineId:line.orderLineId??null,
+        productId:line.productId??null,
+        productName:String(line.productName||line.name||""),
+        category:String(line.category||"Autre"),
+        unit:String(line.unit||"pièce"),
+        orderedQty:Math.max(ppPONumberPP(line.orderedQty),0),
+        receivedBefore:Math.max(ppPONumberPP(line.receivedBefore),0),
+        receivedQty:Math.max(ppPONumberPP(line.receivedQty??line.quantity),0),
+        purchasePrice:Math.max(ppPONumberPP(line.purchasePrice??line.price),0),
+        orderedPrice:Math.max(ppPONumberPP(line.orderedPrice),0)
+    };
+}
+
+function ppNormalizePurchaseReceiptPP(receipt={}){
+    return {
+        id:receipt.id??createId(),
+        number:String(receipt.number||""),
+        orderId:receipt.orderId??null,
+        orderNumber:String(receipt.orderNumber||""),
+        supplierId:receipt.supplierId??null,
+        supplierName:String(receipt.supplierName||""),
+        date:String(receipt.date||"").slice(0,10),
+        deliveryNote:String(receipt.deliveryNote||""),
+        status:receipt.status==="validated"?"validated":"draft",
+        lines:Array.isArray(receipt.lines)?receipt.lines.map(ppNormalizeReceiptLinePP):[],
+        movementIds:Array.isArray(receipt.movementIds)?receipt.movementIds:[],
+        invoiceId:receipt.invoiceId??null,
+        createdAt:receipt.createdAt||new Date().toISOString(),
+        updatedAt:receipt.updatedAt||new Date().toISOString(),
+        validatedAt:receipt.validatedAt||null,
+        devalidatedAt:receipt.devalidatedAt||null
+    };
+}
+
+purchaseOrdersPP=Array.isArray(purchaseOrdersPP)?purchaseOrdersPP.map(ppNormalizePurchaseOrderPP):[];
+purchaseReceiptsPP=Array.isArray(purchaseReceiptsPP)?purchaseReceiptsPP.map(ppNormalizePurchaseReceiptPP):[];
+
+function ppPOTodayPP(){return new Date().toISOString().slice(0,10);}
+
+function ppPONextNumberPP(prefix,date,items){
+    const compact=String(date||ppPOTodayPP()).replaceAll("-","");
+    const base=`${prefix}-${compact}-`;
+    const max=(Array.isArray(items)?items:[]).reduce((value,item)=>{
+        const match=String(item.number||"").match(new RegExp(`^${base}(\\d+)$`));
+        return match?Math.max(value,Number(match[1])):value;
+    },0);
+    return `${base}${String(max+1).padStart(3,"0")}`;
+}
+
+function ppPOReceivedQtyPP(orderId,orderLineId,excludedReceiptId=null){
+    return ppPORoundPP(purchaseReceiptsPP
+        .filter(receipt=>receipt.status==="validated"&&String(receipt.orderId)===String(orderId)&&String(receipt.id)!==String(excludedReceiptId||""))
+        .flatMap(receipt=>receipt.lines||[])
+        .filter(line=>String(line.orderLineId)===String(orderLineId))
+        .reduce((sum,line)=>sum+ppPONumberPP(line.receivedQty),0));
+}
+
+function ppPOOrderTotalsPP(order){
+    const lines=order?.lines||[];
+    const orderedQty=lines.reduce((sum,line)=>sum+ppPONumberPP(line.orderedQty),0);
+    const receivedQty=lines.reduce((sum,line)=>sum+ppPOReceivedQtyPP(order.id,line.id),0);
+    const totalHT=lines.reduce((sum,line)=>sum+ppPONumberPP(line.orderedQty)*ppPONumberPP(line.orderedPrice),0);
+    const fullyReceived=lines.length>0&&lines.every(line=>ppPOReceivedQtyPP(order.id,line.id)+0.0000001>=ppPONumberPP(line.orderedQty));
+    const hasReceived=receivedQty>0.0000001;
+    return {orderedQty,receivedQty,totalHT,fullyReceived,hasReceived};
+}
+
+function ppPORefreshOrderStatusPP(order){
+    if(!order||order.status==="cancelled")return;
+    const totals=ppPOOrderTotalsPP(order);
+    const nextStatus=totals.fullyReceived?"received":totals.hasReceived?"partial":order.sentAt?"sent":"draft";
+    if(order.status!==nextStatus){order.status=nextStatus;order.updatedAt=new Date().toISOString();}
+}
+
+function ppPOStatusLabelPP(status){
+    return ({draft:"Brouillon",sent:"Envoyé",partial:"Partiellement reçu",received:"Reçu",cancelled:"Annulé"})[status]||status;
+}
+
+function ppPOStatusBadgePP(status){
+    const cls=({draft:"warning",sent:"info",partial:"warning",received:"success",cancelled:"danger"})[status]||"";
+    return `<span class="status ${cls}">${escapeHTML(ppPOStatusLabelPP(status))}</span>`;
+}
+
+function ppPOReceiptBadgePP(status){
+    return status==="validated"?'<span class="status success">Validée</span>':'<span class="status warning">Brouillon</span>';
+}
+
+function ppPOEnsureStylesPP(){
+    if(document.getElementById("ppPOStyles"))return;
+    const style=document.createElement("style");
+    style.id="ppPOStyles";
+    style.textContent=`
+      #purchaseOrdersPage .pp-po-toolbar{display:grid;grid-template-columns:minmax(220px,1.5fr) repeat(3,minmax(145px,.7fr));gap:10px;align-items:end}
+      #purchaseOrdersPage .pp-po-actions{display:flex;gap:8px;flex-wrap:wrap}
+      #purchaseOrdersPage .pp-po-detail-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}
+      #purchaseOrdersPage .pp-po-card{cursor:pointer;transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease}
+      #purchaseOrdersPage .pp-po-card:hover{transform:translateY(-1px);border-color:#b8c9bf;box-shadow:0 8px 20px rgba(9,75,45,.06)}
+      #purchaseOrdersPage .pp-po-card.is-active{border-color:#094b2d;box-shadow:0 0 0 2px rgba(9,75,45,.08)}
+      #purchaseOrdersPage .pp-po-positive{color:#087443;font-weight:700}
+      #purchaseOrdersPage .pp-po-negative{color:#c73737;font-weight:700}
+      #purchaseOrdersPage .pp-po-pagination{display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:14px}
+      #purchaseOrdersPage .pp-po-pagination button{min-width:36px;height:36px;border:1px solid #dce4df;border-radius:8px;background:#fff;cursor:pointer}
+      #purchaseOrdersPage .pp-po-pagination button.active{background:#094b2d;color:#fff;border-color:#094b2d}
+      .pp-po-form-line,.pp-receipt-form-line{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(95px,.55fr) minmax(110px,.6fr) minmax(95px,.5fr) 44px;gap:8px;align-items:end;padding:10px 0;border-bottom:1px solid #edf1ee}
+      .pp-receipt-form-line{grid-template-columns:minmax(190px,1.4fr) minmax(90px,.55fr) minmax(90px,.55fr) minmax(105px,.6fr) minmax(105px,.6fr)}
+      .pp-po-line-unit{padding:10px 6px;color:#667085;white-space:nowrap}
+      @media(max-width:900px){#purchaseOrdersPage .pp-po-toolbar{grid-template-columns:1fr 1fr}.pp-po-form-line,.pp-receipt-form-line{grid-template-columns:1fr 1fr}}
+      @media(max-width:560px){#purchaseOrdersPage .pp-po-toolbar{grid-template-columns:1fr}.pp-po-form-line,.pp-receipt-form-line{grid-template-columns:1fr}}
+    `;
+    document.head.appendChild(style);
+}
+
+function ppPOEnsureUI(){
+    ppPOEnsureStylesPP();
+    let nav=document.querySelector('[data-page="purchaseOrders"]');
+    if(!nav){
+        const purchasesNav=document.querySelector('.sidebar [data-page="purchases"]');
+        if(purchasesNav){
+            nav=document.createElement("button");
+            nav.type="button";
+            nav.className="nav-item";
+            nav.dataset.page="purchaseOrders";
+            nav.innerHTML="🛒 <span>Commandes fournisseurs</span>";
+            purchasesNav.insertAdjacentElement("afterend",nav);
+            nav.addEventListener("click",()=>ppPOOpenPagePP(nav));
+        }
+    }
+    if(nav)nav.style.display=(typeof ppIsAdmin==="function"&&!ppIsAdmin())?"none":"";
+
+    if(!document.getElementById("purchaseOrdersPage")){
+        const content=document.querySelector("section.content");
+        if(content){
+            const page=document.createElement("div");
+            page.id="purchaseOrdersPage";
+            page.className="page";
+            page.innerHTML=`
+              <div class="page-actions"><div><h2>🛒 Commandes fournisseurs</h2></div><div><button type="button" class="btn primary" onclick="ppPOOpenOrderModalPP()">+ Nouveau bon de commande</button></div></div>
+              <div class="stats" id="ppPOStats"></div>
+              <div class="section" id="ppPODetail" hidden></div>
+              <div class="section">
+                <div class="pp-po-toolbar">
+                  <div><label>Recherche</label><input id="ppPOSearch" placeholder="N° commande, fournisseur, article…" oninput="ppPOSetFilterPP('search',this.value)"></div>
+                  <div><label>Du</label><input id="ppPOFrom" type="date" onchange="ppPOSetFilterPP('from',this.value)"></div>
+                  <div><label>Au</label><input id="ppPOTo" type="date" onchange="ppPOSetFilterPP('to',this.value)"></div>
+                  <div><label>Statut</label><select id="ppPOStatus" onchange="ppPOSetFilterPP('status',this.value)"><option value="">Tous</option><option value="draft">Brouillons</option><option value="sent">Envoyés</option><option value="partial">Partiellement reçus</option><option value="received">Reçus</option><option value="cancelled">Annulés</option></select></div>
+                </div>
+                <div class="table-wrapper" style="margin-top:14px"><table style="min-width:1080px"><thead><tr><th>Date</th><th>N° commande</th><th>Fournisseur</th><th>Livraison prévue</th><th>Montant HT</th><th>Réception</th><th>Statut</th><th>Actions</th></tr></thead><tbody id="ppPOTable"></tbody></table></div>
+                <div id="ppPOPagination" class="pp-po-pagination"></div>
+              </div>`;
+            content.appendChild(page);
+        }
+    }
+    ppPOEnsureOrderModalPP();
+    ppPOEnsureReceiptModalPP();
+}
+
+function ppPOEnsureOrderModalPP(){
+    if(document.getElementById("ppPOOrderModal"))return;
+    document.body.insertAdjacentHTML("beforeend",`
+      <div id="ppPOOrderModal" class="modal-overlay"><div class="modal" style="max-width:1050px">
+        <div class="modal-header"><h2 id="ppPOOrderModalTitle">Bon de commande</h2><button type="button" onclick="closeModal('ppPOOrderModal')">×</button></div>
+        <form id="ppPOOrderForm" onsubmit="event.preventDefault();ppPOSaveOrderPP()">
+          <div class="form-grid"><div><label>N° commande</label><input id="ppPONumber" required></div><div><label>Date</label><input id="ppPODate" type="date" required onchange="ppPORefreshNumberPP()"></div><div><label>Fournisseur</label><select id="ppPOSupplier" required onchange="ppPOApplySupplierPP()"></select></div><div><label>Livraison prévue</label><input id="ppPOExpectedDate" type="date"></div></div>
+          <div class="invoice-products-header"><h3>Articles</h3><button type="button" class="btn primary" onclick="ppPOAddFormLinePP()">+ Ajouter article</button></div>
+          <datalist id="ppPOProductDatalist"></datalist><div id="ppPOOrderLines"></div>
+          <div class="invoice-totals"><div><span>Total HT</span><strong id="ppPOFormTotal">0 DH</strong></div></div>
+          <div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppPOOrderModal')">Annuler</button><button type="submit" class="btn primary">Enregistrer</button></div>
+        </form>
+      </div>`);
+}
+
+function ppPOEnsureReceiptModalPP(){
+    if(document.getElementById("ppPOReceiptModal"))return;
+    document.body.insertAdjacentHTML("beforeend",`
+      <div id="ppPOReceiptModal" class="modal-overlay"><div class="modal" style="max-width:1100px">
+        <div class="modal-header"><h2 id="ppPOReceiptModalTitle">Réception marchandise</h2><button type="button" onclick="closeModal('ppPOReceiptModal')">×</button></div>
+        <form id="ppPOReceiptForm" onsubmit="event.preventDefault();ppPOSaveReceiptPP(false)">
+          <div class="form-grid"><div><label>N° réception</label><input id="ppPOReceiptNumber" required></div><div><label>Date</label><input id="ppPOReceiptDate" type="date" required></div><div><label>Bon de livraison</label><input id="ppPODeliveryNote"></div><div><label>Bon de commande</label><input id="ppPOReceiptOrder" disabled></div></div>
+          <div id="ppPOReceiptLines" style="margin-top:14px"></div>
+          <div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppPOReceiptModal')">Annuler</button><button type="submit" class="btn secondary">Enregistrer brouillon</button><button type="button" class="btn primary" onclick="ppPOSaveReceiptPP(true)">Valider réception</button></div>
+        </form>
+      </div>`);
+}
+
+function ppPOOpenPagePP(button){
+    document.querySelectorAll(".nav-item").forEach(item=>item.classList.remove("active"));
+    if(button)button.classList.add("active");
+    document.querySelectorAll(".page").forEach(page=>page.classList.remove("active-page"));
+    document.getElementById("purchaseOrdersPage")?.classList.add("active-page");
+    setText("pageTitle","Commandes fournisseurs");setText("pageSubtitle","");
+    ppPORenderPagePP();
+}
+
+function ppPORefreshNumberPP(){
+    if(ppPOEditingIdPP)return;
+    setValue("ppPONumber",ppPONextNumberPP("BC",getValue("ppPODate")||ppPOTodayPP(),purchaseOrdersPP));
+}
+
+function ppPOPopulateSupplierSelectPP(selected=null){
+    const select=document.getElementById("ppPOSupplier");if(!select)return;
+    select.innerHTML='<option value="">Sélectionner</option>'+suppliers.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name),"fr")).map(s=>`<option value="${escapeHTML(String(s.id))}">${escapeHTML(s.name)}</option>`).join("");
+    if(selected!==null)setValue("ppPOSupplier",selected);
+}
+
+function ppPOPopulateProductDatalistPP(){
+    const list=document.getElementById("ppPOProductDatalist");if(!list)return;
+    list.innerHTML=products.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name),"fr")).map(product=>`<option value="${escapeHTML(product.name)}">${escapeHTML(product.category||"")} · ${escapeHTML(product.unit||"")}</option>`).join("");
+}
+
+function ppPOOpenOrderModalPP(id=null){
+    ppPOEnsureUI();
+    const order=id?purchaseOrdersPP.find(item=>String(item.id)===String(id)):null;
+    if(order&&purchaseReceiptsPP.some(receipt=>String(receipt.orderId)===String(order.id)&&receipt.status==="validated")){alert("Dévalidez les réceptions avant de modifier le bon de commande.");return;}
+    ppPOEditingIdPP=order?.id||null;
+    ppPOPopulateSupplierSelectPP(order?.supplierId??null);ppPOPopulateProductDatalistPP();
+    setText("ppPOOrderModalTitle",order?"Modifier le bon de commande":"Nouveau bon de commande");
+    setValue("ppPODate",order?.date||ppPOTodayPP());
+    setValue("ppPONumber",order?.number||ppPONextNumberPP("BC",ppPOTodayPP(),purchaseOrdersPP));
+    setValue("ppPOExpectedDate",order?.expectedDate||"");
+    ppPOFormLinesPP=(order?.lines||[]).map(line=>({...ppNormalizePOLinePP(line)}));
+    if(!ppPOFormLinesPP.length)ppPOFormLinesPP=[ppNormalizePOLinePP({})];
+    ppPORenderOrderFormLinesPP();openModal("ppPOOrderModal");
+}
+
+function ppPOAddFormLinePP(){ppPOFormLinesPP.push(ppNormalizePOLinePP({}));ppPORenderOrderFormLinesPP();}
+function ppPORemoveFormLinePP(id){if(ppPOFormLinesPP.length<=1)return;ppPOFormLinesPP=ppPOFormLinesPP.filter(line=>String(line.id)!==String(id));ppPORenderOrderFormLinesPP();}
+
+function ppPOResolveProductPP(lineId,value){
+    const line=ppPOFormLinesPP.find(item=>String(item.id)===String(lineId));if(!line)return;
+    const product=products.find(item=>normalizeText(item.name)===normalizeText(value));
+    if(product){line.productId=product.id;line.productName=product.name;line.category=product.category||"Autre";line.unit=product.unit||"pièce";if(!line.orderedPrice)line.orderedPrice=ppPONumberPP(product.price);}
+    else {line.productId=null;line.productName=String(value||"");line.category="Autre";line.unit="pièce";}
+    ppPORenderOrderFormLinesPP();
+}
+
+function ppPOUpdateFormLinePP(id,key,value){
+    const line=ppPOFormLinesPP.find(item=>String(item.id)===String(id));if(!line)return;
+    if(key==="orderedQty"||key==="orderedPrice")line[key]=Math.max(ppPONumberPP(value),0);else line[key]=value;
+    ppPOUpdateFormTotalPP();
+}
+
+function ppPORenderOrderFormLinesPP(){
+    const box=document.getElementById("ppPOOrderLines");if(!box)return;
+    box.innerHTML=ppPOFormLinesPP.map(line=>`<div class="pp-po-form-line">
+      <div><label>Article</label><input list="ppPOProductDatalist" value="${escapeHTML(line.productName)}" onchange="ppPOResolveProductPP('${escapeHTML(String(line.id))}',this.value)" placeholder="Rechercher un article"></div>
+      <div><label>Quantité</label><input type="number" min="0" step="0.000001" value="${line.orderedQty||""}" oninput="ppPOUpdateFormLinePP('${escapeHTML(String(line.id))}','orderedQty',this.value)"></div>
+      <div><label>PU HT</label><input type="number" min="0" step="0.01" value="${line.orderedPrice||""}" oninput="ppPOUpdateFormLinePP('${escapeHTML(String(line.id))}','orderedPrice',this.value)"></div>
+      <div><label>Unité</label><div class="pp-po-line-unit">${escapeHTML(line.unit||"-")}</div></div>
+      <div><button type="button" class="btn small danger" onclick="ppPORemoveFormLinePP('${escapeHTML(String(line.id))}')">×</button></div>
+    </div>`).join("");ppPOUpdateFormTotalPP();
+}
+
+function ppPOUpdateFormTotalPP(){setText("ppPOFormTotal",formatMoney(ppPOFormLinesPP.reduce((sum,line)=>sum+ppPONumberPP(line.orderedQty)*ppPONumberPP(line.orderedPrice),0)));}
+function ppPOApplySupplierPP(){}
+
+function ppPOSaveOrderPP(){
+    const supplierId=Number(getValue("ppPOSupplier")),supplier=suppliers.find(item=>Number(item.id)===supplierId);
+    const number=getValue("ppPONumber").trim(),date=getValue("ppPODate");
+    if(!supplier){alert("Sélectionnez un fournisseur.");return;}if(!number||!date){alert("Saisissez le numéro et la date.");return;}
+    const duplicate=purchaseOrdersPP.find(item=>String(item.id)!==String(ppPOEditingIdPP||"")&&normalizeText(item.number)===normalizeText(number));if(duplicate){alert("Ce numéro de commande existe déjà.");return;}
+    const lines=[];
+    for(const raw of ppPOFormLinesPP){
+        const product=products.find(item=>String(item.id)===String(raw.productId))||products.find(item=>normalizeText(item.name)===normalizeText(raw.productName));
+        if(!product||!(ppPONumberPP(raw.orderedQty)>0)){continue;}
+        lines.push(ppNormalizePOLinePP({...raw,productId:product.id,productName:product.name,category:product.category,unit:product.unit}));
+    }
+    if(!lines.length){alert("Ajoutez au moins un article avec une quantité.");return;}
+    const existing=ppPOEditingIdPP?purchaseOrdersPP.find(item=>String(item.id)===String(ppPOEditingIdPP)):null;
+    const order=ppNormalizePurchaseOrderPP({
+        ...(existing||{}),id:existing?.id||createId(),number,date,expectedDate:getValue("ppPOExpectedDate"),supplierId:supplier.id,supplierName:supplier.name,
+        status:existing?.status||"draft",lines,createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()
+    });
+    if(existing){const index=purchaseOrdersPP.findIndex(item=>String(item.id)===String(existing.id));purchaseOrdersPP[index]=order;}else purchaseOrdersPP.unshift(order);
+    if(typeof ppWriteAudit==="function")ppWriteAudit("purchases",order.id,existing?"update":"create",existing?ppAuditSnapshot(existing):null,ppAuditSnapshot(order),"Bon de commande");
+    ppActivePurchaseOrderIdPP=order.id;ppPOEditingIdPP=null;saveData();closeModal("ppPOOrderModal");ppPORenderPagePP();ppPOOpenOrderDetailPP(order.id);
+}
+
+function ppPOMarkSentPP(id){
+    const order=purchaseOrdersPP.find(item=>String(item.id)===String(id));if(!order||order.status==="cancelled")return;
+    order.sentAt=new Date().toISOString();order.status="sent";order.updatedAt=new Date().toISOString();saveData();ppPORenderPagePP();ppPOOpenOrderDetailPP(id);
+}
+
+function ppPOCancelOrderPP(id){
+    const order=purchaseOrdersPP.find(item=>String(item.id)===String(id));if(!order)return;
+    if(purchaseReceiptsPP.some(receipt=>String(receipt.orderId)===String(id))){alert("Supprimez ou dévalidez les réceptions avant d'annuler la commande.");return;}
+    if(!confirm(`Annuler la commande ${order.number} ?`))return;order.status="cancelled";order.cancelledAt=new Date().toISOString();order.updatedAt=new Date().toISOString();saveData();ppPORenderPagePP();ppPOOpenOrderDetailPP(id);
+}
+
+function ppPOReactivateOrderPP(id){const order=purchaseOrdersPP.find(item=>String(item.id)===String(id));if(!order||order.status!=="cancelled")return;order.status=order.sentAt?"sent":"draft";order.cancelledAt=null;order.updatedAt=new Date().toISOString();saveData();ppPORenderPagePP();ppPOOpenOrderDetailPP(id);}
+
+function ppPODeleteOrderPP(id){
+    const order=purchaseOrdersPP.find(item=>String(item.id)===String(id));if(!order)return;
+    if(purchaseReceiptsPP.some(receipt=>String(receipt.orderId)===String(id))){alert("Supprimez d'abord les réceptions liées.");return;}
+    if(!confirm(`Supprimer la commande ${order.number} ?`))return;purchaseOrdersPP=purchaseOrdersPP.filter(item=>String(item.id)!==String(id));if(String(ppActivePurchaseOrderIdPP)===String(id))ppActivePurchaseOrderIdPP=null;saveData();ppPORenderPagePP();
+}
+
+function ppPOOpenReceiptModalPP(orderId,receiptId=null){
+    const order=purchaseOrdersPP.find(item=>String(item.id)===String(orderId));if(!order||order.status==="cancelled")return;
+    const receipt=receiptId?purchaseReceiptsPP.find(item=>String(item.id)===String(receiptId)):null;
+    if(receipt?.status==="validated"){alert("Dévalidez la réception avant modification.");return;}
+    ppReceiptEditingIdPP=receipt?.id||null;
+    setText("ppPOReceiptModalTitle",receipt?"Modifier la réception":"Nouvelle réception");
+    setValue("ppPOReceiptNumber",receipt?.number||ppPONextNumberPP("BR",ppPOTodayPP(),purchaseReceiptsPP));setValue("ppPOReceiptDate",receipt?.date||ppPOTodayPP());setValue("ppPODeliveryNote",receipt?.deliveryNote||"");setValue("ppPOReceiptOrder",order.number);
+    const existingMap=new Map((receipt?.lines||[]).map(line=>[String(line.orderLineId),line]));
+    const rows=order.lines.map(orderLine=>{
+        const existing=existingMap.get(String(orderLine.id));
+        return ppNormalizeReceiptLinePP(existing||{
+            orderLineId:orderLine.id,productId:orderLine.productId,productName:orderLine.productName,category:orderLine.category,unit:orderLine.unit,
+            orderedQty:orderLine.orderedQty,receivedBefore:ppPOReceivedQtyPP(order.id,orderLine.id,receipt?.id),receivedQty:0,purchasePrice:orderLine.orderedPrice,orderedPrice:orderLine.orderedPrice
+        });
+    });
+    const box=document.getElementById("ppPOReceiptLines");
+    box.dataset.orderId=String(order.id);box.dataset.rows=JSON.stringify(rows);
+    ppPORenderReceiptFormLinesPP();openModal("ppPOReceiptModal");
+}
+
+function ppPOReceiptRowsFromDOMPP(){
+    const box=document.getElementById("ppPOReceiptLines");if(!box)return [];
+    let rows=[];try{rows=JSON.parse(box.dataset.rows||"[]");}catch(_){rows=[];}
+    return rows.map(ppNormalizeReceiptLinePP);
+}
+
+function ppPOUpdateReceiptLinePP(lineId,key,value){
+    const box=document.getElementById("ppPOReceiptLines");if(!box)return;
+    const rows=ppPOReceiptRowsFromDOMPP(),line=rows.find(item=>String(item.id)===String(lineId));if(!line)return;
+    line[key]=Math.max(ppPONumberPP(value),0);box.dataset.rows=JSON.stringify(rows);
+}
+
+function ppPORenderReceiptFormLinesPP(){
+    const box=document.getElementById("ppPOReceiptLines");if(!box)return;
+    const rows=ppPOReceiptRowsFromDOMPP();
+    box.innerHTML=`<div class="table-wrapper"><table style="min-width:900px"><thead><tr><th>Article</th><th>Commandé</th><th>Déjà reçu</th><th>Reste</th><th>À recevoir</th><th>PU réception HT</th><th>Écart prix</th></tr></thead><tbody>${rows.map(line=>{
+        const remaining=ppPORoundPP(line.orderedQty-line.receivedBefore),priceDiff=ppPONumberPP(line.purchasePrice)-ppPONumberPP(line.orderedPrice);
+        return `<tr><td><strong>${escapeHTML(line.productName)}</strong><br><small>${escapeHTML(line.unit)}</small></td><td>${formatNumber(line.orderedQty)}</td><td>${formatNumber(line.receivedBefore)}</td><td>${formatNumber(remaining)}</td><td><input type="number" min="0" step="0.000001" value="${line.receivedQty||""}" onchange="ppPOUpdateReceiptLinePP('${escapeHTML(String(line.id))}','receivedQty',this.value)" style="min-width:110px"></td><td><input type="number" min="0" step="0.01" value="${line.purchasePrice||""}" onchange="ppPOUpdateReceiptLinePP('${escapeHTML(String(line.id))}','purchasePrice',this.value);ppPORenderReceiptFormLinesPP()" style="min-width:120px"></td><td class="${priceDiff>0?'pp-po-negative':priceDiff<0?'pp-po-positive':''}">${priceDiff?`${priceDiff>0?'+':''}${formatMoney(priceDiff)}`:'-'}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
+}
+
+function ppPOSaveReceiptPP(validateNow=false){
+    const box=document.getElementById("ppPOReceiptLines"),orderId=box?.dataset.orderId,order=purchaseOrdersPP.find(item=>String(item.id)===String(orderId));if(!order)return;
+    const number=getValue("ppPOReceiptNumber").trim(),date=getValue("ppPOReceiptDate");if(!number||!date){alert("Saisissez le numéro et la date.");return;}
+    const duplicate=purchaseReceiptsPP.find(item=>String(item.id)!==String(ppReceiptEditingIdPP||"")&&normalizeText(item.number)===normalizeText(number));if(duplicate){alert("Ce numéro de réception existe déjà.");return;}
+    const rows=ppPOReceiptRowsFromDOMPP().filter(line=>ppPONumberPP(line.receivedQty)>0).map(line=>{
+        const orderLine=order.lines.find(item=>String(item.id)===String(line.orderLineId));
+        return ppNormalizeReceiptLinePP({...line,orderedQty:orderLine?.orderedQty??line.orderedQty,orderedPrice:orderLine?.orderedPrice??line.orderedPrice,receivedBefore:ppPOReceivedQtyPP(order.id,line.orderLineId,ppReceiptEditingIdPP)});
+    });
+    if(!rows.length){alert("Saisissez au moins une quantité reçue.");return;}
+    const excess=rows.filter(line=>ppPONumberPP(line.receivedQty)>ppPORoundPP(line.orderedQty-line.receivedBefore)+0.0000001);
+    if(validateNow&&excess.length&&!confirm("Certaines quantités dépassent le reste à recevoir. Continuer ?"))return;
+    const existing=ppReceiptEditingIdPP?purchaseReceiptsPP.find(item=>String(item.id)===String(ppReceiptEditingIdPP)):null;
+    const receipt=ppNormalizePurchaseReceiptPP({
+        ...(existing||{}),id:existing?.id||createId(),number,orderId:order.id,orderNumber:order.number,supplierId:order.supplierId,supplierName:order.supplierName,date,deliveryNote:getValue("ppPODeliveryNote"),
+        status:"draft",lines:rows,createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()
+    });
+    if(existing){const index=purchaseReceiptsPP.findIndex(item=>String(item.id)===String(existing.id));purchaseReceiptsPP[index]=receipt;}else purchaseReceiptsPP.unshift(receipt);
+    ppReceiptEditingIdPP=null;saveData();closeModal("ppPOReceiptModal");
+    if(validateNow)ppPOValidateReceiptPP(receipt.id);else {ppPORenderPagePP();ppPOOpenOrderDetailPP(order.id);}
+}
+
+function ppPOValidateReceiptPP(id){
+    const receipt=purchaseReceiptsPP.find(item=>String(item.id)===String(id));if(!receipt||receipt.status==="validated")return;
+    const order=purchaseOrdersPP.find(item=>String(item.id)===String(receipt.orderId));if(!order)return;
+    if(!receipt.date){alert("Sélectionnez la date.");return;}
+    if(!confirm(`Valider la réception ${receipt.number} ?`))return;
+    const movementIds=[];
+    for(const line of receipt.lines){
+        let product=products.find(item=>String(item.id)===String(line.productId));
+        if(!product){alert(`Article introuvable : ${line.productName}`);return;}
+        const qty=ppPONumberPP(line.receivedQty),price=ppPONumberPP(line.purchasePrice);if(!(qty>0))continue;
+        const oldStock=ppPONumberPP(product.stock),oldPrice=ppPONumberPP(product.price),newStock=oldStock+qty;
+        if(newStock>0)product.price=((oldStock*oldPrice)+(qty*price))/newStock;
+        product.stock=ppPORoundPP(newStock);
+        product.lastPurchaseTVA=ppPONumberPP(product.lastPurchaseTVA); // keep known VAT unchanged until invoice.
+        const movement={id:createId(),date:receipt.date,productId:product.id,productName:product.name,type:"entry",quantity:qty,unit:product.unit,reason:`Réception ${receipt.number}`,note:receipt.deliveryNote?`BL ${receipt.deliveryNote}`:"",purchaseOrderId:order.id,purchaseReceiptId:receipt.id,createdAt:new Date().toISOString()};
+        movements.unshift(movement);movementIds.push(movement.id);
+    }
+    receipt.status="validated";receipt.movementIds=movementIds;receipt.validatedAt=new Date().toISOString();receipt.updatedAt=new Date().toISOString();
+    if(!order.sentAt)order.sentAt=new Date().toISOString();ppPORefreshOrderStatusPP(order);
+    if(typeof ppWriteAudit==="function")ppWriteAudit("purchases",receipt.id,"validate",null,ppAuditSnapshot(receipt),"Réception marchandise");
+    saveData();renderAll();ppActivePurchaseOrderIdPP=order.id;ppPORenderPagePP();ppPOOpenOrderDetailPP(order.id);
+}
+
+function ppPODevalidateReceiptPP(id){
+    const receipt=purchaseReceiptsPP.find(item=>String(item.id)===String(id));if(!receipt||receipt.status!=="validated")return;
+    const linkedInvoice=invoices.find(invoice=>String(invoice.purchaseReceiptId||"")===String(receipt.id))||invoices.find(invoice=>String(invoice.id)===String(receipt.invoiceId||""));
+    if(linkedInvoice){alert(`Supprimez d'abord la facture ${linkedInvoice.number}.`);return;}
+    const later=purchaseReceiptsPP.find(item=>item.status==="validated"&&String(item.id)!==String(receipt.id)&&String(item.validatedAt||"")>String(receipt.validatedAt||"")&&(item.lines||[]).some(line=>receipt.lines.some(current=>String(current.productId)===String(line.productId))));
+    if(later){alert(`Dévalidez d'abord la réception plus récente ${later.number}.`);return;}
+    if(!confirm(`Dévalider la réception ${receipt.number} ?`))return;
+    for(const line of receipt.lines){
+        const product=products.find(item=>String(item.id)===String(line.productId));if(!product)continue;
+        const qty=ppPONumberPP(line.receivedQty);if(ppPONumberPP(product.stock)+0.0000001<qty){alert(`Stock insuffisant pour dévalider ${line.productName}.`);return;}
+    }
+    for(const line of receipt.lines){
+        const product=products.find(item=>String(item.id)===String(line.productId));if(!product)continue;
+        const currentStock=ppPONumberPP(product.stock),currentPrice=ppPONumberPP(product.price),qty=ppPONumberPP(line.receivedQty),price=ppPONumberPP(line.purchasePrice),newStock=ppPORoundPP(currentStock-qty);
+        const remainingValue=Math.max((currentStock*currentPrice)-(qty*price),0);product.stock=newStock;product.price=newStock>0?remainingValue/newStock:0;
+    }
+    const movementIds=new Set((receipt.movementIds||[]).map(String));movements=movements.filter(movement=>String(movement.purchaseReceiptId)!==String(receipt.id)&&!movementIds.has(String(movement.id)));
+    receipt.status="draft";receipt.movementIds=[];receipt.validatedAt=null;receipt.devalidatedAt=new Date().toISOString();receipt.updatedAt=new Date().toISOString();
+    const order=purchaseOrdersPP.find(item=>String(item.id)===String(receipt.orderId));if(order)ppPORefreshOrderStatusPP(order);
+    saveData();renderAll();ppActivePurchaseOrderIdPP=receipt.orderId;ppPORenderPagePP();ppPOOpenOrderDetailPP(receipt.orderId);
+}
+
+function ppPODeleteReceiptPP(id){
+    const receipt=purchaseReceiptsPP.find(item=>String(item.id)===String(id));if(!receipt)return;if(receipt.status==="validated"){alert("Dévalidez la réception avant suppression.");return;}
+    if(!confirm(`Supprimer la réception ${receipt.number} ?`))return;purchaseReceiptsPP=purchaseReceiptsPP.filter(item=>String(item.id)!==String(id));saveData();ppPORenderPagePP();ppPOOpenOrderDetailPP(receipt.orderId);
+}
+
+function ppPOInvoiceForReceiptPP(receipt){return invoices.find(invoice=>String(invoice.purchaseReceiptId||"")===String(receipt.id))||invoices.find(invoice=>String(invoice.id)===String(receipt.invoiceId||""));}
+
+function ppPOCreateInvoiceFromReceiptPP(id){
+    const receipt=purchaseReceiptsPP.find(item=>String(item.id)===String(id));if(!receipt||receipt.status!=="validated")return;
+    const existing=ppPOInvoiceForReceiptPP(receipt);if(existing){openInvoiceModal(existing.id);return;}
+    ppInvoiceReceiptContextPP={receiptId:receipt.id,orderId:receipt.orderId};ppOpeningInvoiceFromReceiptPP=true;openInvoiceModal();ppOpeningInvoiceFromReceiptPP=false;
+    setValue("invoiceSupplier",receipt.supplierId);if(typeof ppApplySupplierTermToInvoicePP==="function")ppApplySupplierTermToInvoicePP();
+    setValue("invoiceDate",receipt.date||ppPOTodayPP());if(typeof ppUpdateInvoiceLegalDeadlinePP==="function")ppUpdateInvoiceLegalDeadlinePP(false);setValue("invoiceNumber",receipt.deliveryNote||"");setValue("invoicePaid",0);
+    const container=document.getElementById("invoiceLines");if(container)container.innerHTML="";
+    (receipt.lines||[]).forEach(line=>addInvoiceLine({productId:line.productId,name:line.productName,category:line.category,unit:line.unit,quantity:line.receivedQty,price:line.purchasePrice,sourceDesignation:line.productName}));
+    updateInvoiceTotals();
+}
+
+function ppPOReceiptComparisonRowsPP(receipt){
+    const invoice=ppPOInvoiceForReceiptPP(receipt);
+    return (receipt.lines||[]).map(line=>{
+        const invoiceLine=invoice?.lines?.find(item=>String(item.productId||"")===String(line.productId||"")||normalizeText(item.name)===normalizeText(line.productName));
+        const invoicePrice=invoiceLine?ppPONumberPP(invoiceLine.price):null,priceVariance=invoicePrice===null?null:invoicePrice-ppPONumberPP(line.orderedPrice),qtyVariance=ppPONumberPP(line.receivedQty)-Math.max(ppPONumberPP(line.orderedQty)-ppPONumberPP(line.receivedBefore),0);
+        return {line,invoicePrice,priceVariance,qtyVariance};
+    });
+}
+
+function ppPOOpenOrderDetailPP(id){ppActivePurchaseOrderIdPP=id;ppPORenderOrderDetailPP();document.getElementById("ppPODetail")?.scrollIntoView({behavior:"smooth",block:"start"});}
+
+function ppPORenderOrderDetailPP(){
+    const box=document.getElementById("ppPODetail"),order=purchaseOrdersPP.find(item=>String(item.id)===String(ppActivePurchaseOrderIdPP));if(!box)return;if(!order){box.hidden=true;box.innerHTML="";return;}
+    box.hidden=false;const totals=ppPOOrderTotalsPP(order),receipts=purchaseReceiptsPP.filter(item=>String(item.orderId)===String(order.id)).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    const canEdit=!receipts.some(receipt=>receipt.status==="validated");
+    box.innerHTML=`<div class="pp-po-detail-head"><div><h3 style="margin:0 0 6px">${escapeHTML(order.number)}</h3><div>${escapeHTML(order.supplierName)} · ${formatDate(order.date)} ${order.expectedDate?`· ${formatDate(order.expectedDate)}`:""}</div></div><div class="pp-po-actions">
+      ${canEdit&&order.status!=="cancelled"?`<button class="btn edit" onclick="ppPOOpenOrderModalPP('${escapeHTML(String(order.id))}')">Modifier</button>`:""}
+      ${order.status==="draft"?`<button class="btn secondary" onclick="ppPOMarkSentPP('${escapeHTML(String(order.id))}')">Marquer envoyé</button>`:""}
+      ${order.status!=="cancelled"&&order.status!=="received"?`<button class="btn primary" onclick="ppPOOpenReceiptModalPP('${escapeHTML(String(order.id))}')">Nouvelle réception</button>`:""}
+      <button class="btn print" onclick="ppPOPrintOrderPP('${escapeHTML(String(order.id))}')">Imprimer</button>
+      ${order.status==="cancelled"?`<button class="btn secondary" onclick="ppPOReactivateOrderPP('${escapeHTML(String(order.id))}')">Réactiver</button>`:(canEdit?`<button class="btn danger" onclick="ppPOCancelOrderPP('${escapeHTML(String(order.id))}')">Annuler</button>`:"")}
+    </div></div>
+    <div class="stats" style="margin-top:14px"><div class="stat-card"><span>Montant HT</span><strong>${formatMoney(totals.totalHT)}</strong></div><div class="stat-card"><span>Quantité commandée</span><strong>${formatNumber(totals.orderedQty)}</strong></div><div class="stat-card"><span>Quantité reçue</span><strong>${formatNumber(totals.receivedQty)}</strong></div><div class="stat-card"><span>Statut</span><strong style="font-size:16px">${ppPOStatusBadgePP(order.status)}</strong></div></div>
+    <div class="table-wrapper"><table style="min-width:900px"><thead><tr><th>Article</th><th>Unité</th><th>Commandé</th><th>Reçu</th><th>Reste</th><th>PU commandé</th><th>Total HT</th></tr></thead><tbody>${order.lines.map(line=>{const received=ppPOReceivedQtyPP(order.id,line.id),remaining=ppPORoundPP(line.orderedQty-received);return `<tr><td><strong>${escapeHTML(line.productName)}</strong></td><td>${escapeHTML(line.unit)}</td><td>${formatNumber(line.orderedQty)}</td><td>${formatNumber(received)}</td><td class="${remaining<0?'pp-po-negative':''}">${formatNumber(remaining)}</td><td>${formatMoney(line.orderedPrice)}</td><td>${formatMoney(line.orderedQty*line.orderedPrice)}</td></tr>`;}).join("")}</tbody></table></div>
+    <h3 style="margin-top:20px">Réceptions</h3><div class="table-wrapper"><table style="min-width:1050px"><thead><tr><th>Date</th><th>N° réception</th><th>Bon de livraison</th><th>Montant HT</th><th>Facture</th><th>Statut</th><th>Actions</th></tr></thead><tbody>${receipts.map(receipt=>{const invoice=ppPOInvoiceForReceiptPP(receipt),total=receipt.lines.reduce((sum,line)=>sum+line.receivedQty*line.purchasePrice,0);return `<tr><td>${formatDate(receipt.date)}</td><td>${escapeHTML(receipt.number)}</td><td>${escapeHTML(receipt.deliveryNote||"-")}</td><td>${formatMoney(total)}</td><td>${invoice?escapeHTML(invoice.number||"Créée"):"-"}</td><td>${ppPOReceiptBadgePP(receipt.status)}</td><td><div class="action-buttons"><button class="btn small view" onclick="ppPOViewReceiptPP('${escapeHTML(String(receipt.id))}')">👁️</button>${receipt.status==="draft"?`<button class="btn small edit" onclick="ppPOOpenReceiptModalPP('${escapeHTML(String(order.id))}','${escapeHTML(String(receipt.id))}')">✏️</button><button class="btn small primary" onclick="ppPOValidateReceiptPP('${escapeHTML(String(receipt.id))}')">✓</button><button class="btn small danger" onclick="ppPODeleteReceiptPP('${escapeHTML(String(receipt.id))}')">🗑️</button>`:`<button class="btn small print" onclick="ppPOPrintReceiptPP('${escapeHTML(String(receipt.id))}')">🖨️</button><button class="btn small secondary" onclick="ppPOCreateInvoiceFromReceiptPP('${escapeHTML(String(receipt.id))}')">${invoice?'Facture':'Créer facture'}</button><button class="btn small danger" onclick="ppPODevalidateReceiptPP('${escapeHTML(String(receipt.id))}')">Dévalider</button>`}</div></td></tr>`;}).join("")||'<tr><td colspan="7" class="empty">Aucune réception.</td></tr>'}</tbody></table></div>`;
+}
+
+function ppPOViewReceiptPP(id){
+    const receipt=purchaseReceiptsPP.find(item=>String(item.id)===String(id));if(!receipt)return;const invoice=ppPOInvoiceForReceiptPP(receipt),rows=ppPOReceiptComparisonRowsPP(receipt);
+    const table=`<div class="table-wrapper"><table><thead><tr><th>Article</th><th>Commandé</th><th>Déjà reçu</th><th>Reçu</th><th>PU commande</th><th>PU réception</th><th>PU facture</th><th>Écart prix facture</th></tr></thead><tbody>${rows.map(item=>`<tr><td>${escapeHTML(item.line.productName)}</td><td>${formatNumber(item.line.orderedQty)}</td><td>${formatNumber(item.line.receivedBefore)}</td><td>${formatNumber(item.line.receivedQty)}</td><td>${formatMoney(item.line.orderedPrice)}</td><td>${formatMoney(item.line.purchasePrice)}</td><td>${item.invoicePrice===null?'-':formatMoney(item.invoicePrice)}</td><td>${item.priceVariance===null?'-':`${item.priceVariance>0?'+':''}${formatMoney(item.priceVariance)}`}</td></tr>`).join("")}</tbody></table></div>`;
+    showDetailsModal(`Réception ${receipt.number}`,[['Commande',receipt.orderNumber],['Fournisseur',receipt.supplierName],['Date',formatDate(receipt.date)],['Bon de livraison',receipt.deliveryNote||'-'],['Facture',invoice?.number||'-'],['Statut',receipt.status==='validated'?'Validée':'Brouillon'],['Articles',table]],()=>ppPOPrintReceiptPP(id),true);
+}
+
+function ppPOPrintOrderPP(id){
+    const order=purchaseOrdersPP.find(item=>String(item.id)===String(id));if(!order)return;const rows=order.lines.map(line=>`<tr><td>${escapeHTML(line.productName)}</td><td>${formatNumber(line.orderedQty)} ${escapeHTML(line.unit)}</td><td>${formatMoney(line.orderedPrice)}</td><td>${formatMoney(line.orderedQty*line.orderedPrice)}</td></tr>`).join("");
+    printDocument(`Bon de commande ${order.number}`,`<div class="doc-head"><h1>Pause & Plate</h1><p>Bon de commande</p></div>${detailRowsHTML([['N° commande',order.number],['Date',formatDate(order.date)],['Fournisseur',order.supplierName],['Livraison prévue',order.expectedDate?formatDate(order.expectedDate):'-'],['Statut',ppPOStatusLabelPP(order.status)]])}<table><thead><tr><th>Article</th><th>Quantité</th><th>PU HT</th><th>Total HT</th></tr></thead><tbody>${rows}</tbody></table><div class="totals"><p>Total HT: <strong>${formatMoney(ppPOOrderTotalsPP(order).totalHT)}</strong></p></div>`);
+}
+
+function ppPOPrintReceiptPP(id){
+    const receipt=purchaseReceiptsPP.find(item=>String(item.id)===String(id));if(!receipt)return;const rows=receipt.lines.map(line=>`<tr><td>${escapeHTML(line.productName)}</td><td>${formatNumber(line.receivedQty)} ${escapeHTML(line.unit)}</td><td>${formatMoney(line.purchasePrice)}</td><td>${formatMoney(line.receivedQty*line.purchasePrice)}</td></tr>`).join("");
+    printDocument(`Réception ${receipt.number}`,`<div class="doc-head"><h1>Pause & Plate</h1><p>Réception marchandise</p></div>${detailRowsHTML([['N° réception',receipt.number],['Bon de commande',receipt.orderNumber],['Fournisseur',receipt.supplierName],['Date',formatDate(receipt.date)],['Bon de livraison',receipt.deliveryNote||'-'],['Statut',receipt.status==='validated'?'Validée':'Brouillon']])}<table><thead><tr><th>Article</th><th>Quantité reçue</th><th>PU HT</th><th>Total HT</th></tr></thead><tbody>${rows}</tbody></table>`);
+}
+
+function ppPOFilteredOrdersPP(){
+    const query=normalizeText(ppPOListSearchPP),from=ppPOListFromPP,to=ppPOListToPP,status=ppPOListStatusPP;
+    return purchaseOrdersPP.filter(order=>{
+        ppPORefreshOrderStatusPP(order);
+        if(from&&order.date<from)return false;if(to&&order.date>to)return false;if(status&&order.status!==status)return false;
+        if(query&&!normalizeText(`${order.number} ${order.supplierName} ${(order.lines||[]).map(line=>line.productName).join(" ")}`).includes(query))return false;return true;
+    }).sort((a,b)=>String(b.date).localeCompare(String(a.date))||String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+function ppPOSetFilterPP(key,value){if(key==="search")ppPOListSearchPP=String(value||"");if(key==="from")ppPOListFromPP=String(value||"");if(key==="to")ppPOListToPP=String(value||"");if(key==="status")ppPOListStatusPP=String(value||"");ppPOListPagePP=1;ppPORenderPagePP();}
+function ppPOCardFilterPP(status){ppPOListStatusPP=status||"";ppPOListPagePP=1;const select=document.getElementById("ppPOStatus");if(select)select.value=ppPOListStatusPP;ppPORenderPagePP();}
+function ppPOSetPagePP(page){ppPOListPagePP=Math.max(Number(page)||1,1);ppPORenderPagePP();}
+
+function ppPORenderStatsPP(){
+    const box=document.getElementById("ppPOStats");if(!box)return;purchaseOrdersPP.forEach(ppPORefreshOrderStatusPP);
+    const values=[['','Commandes',purchaseOrdersPP.length],['draft','Brouillons',purchaseOrdersPP.filter(item=>item.status==='draft').length],['sent','Envoyées',purchaseOrdersPP.filter(item=>item.status==='sent').length],['partial','Partielles',purchaseOrdersPP.filter(item=>item.status==='partial').length],['received','Reçues',purchaseOrdersPP.filter(item=>item.status==='received').length]];
+    box.innerHTML=values.map(([status,label,value])=>`<button type="button" class="stat-card pp-po-card ${ppPOListStatusPP===status?'is-active':''}" onclick="ppPOCardFilterPP('${status}')"><span>${label}</span><strong>${value}</strong></button>`).join("");
+}
+
+function ppPORenderTablePP(){
+    const table=document.getElementById("ppPOTable"),pagination=document.getElementById("ppPOPagination");if(!table||!pagination)return;const filtered=ppPOFilteredOrdersPP(),pages=Math.max(Math.ceil(filtered.length/PP_PO_PAGE_SIZE),1);ppPOListPagePP=Math.min(ppPOListPagePP,pages);const start=(ppPOListPagePP-1)*PP_PO_PAGE_SIZE,rows=filtered.slice(start,start+PP_PO_PAGE_SIZE);
+    table.innerHTML=rows.map(order=>{const totals=ppPOOrderTotalsPP(order),progress=totals.orderedQty>0?Math.min((totals.receivedQty/totals.orderedQty)*100,100):0;return `<tr><td>${formatDate(order.date)}</td><td><strong>${escapeHTML(order.number)}</strong></td><td>${escapeHTML(order.supplierName)}</td><td>${order.expectedDate?formatDate(order.expectedDate):'-'}</td><td>${formatMoney(totals.totalHT)}</td><td>${formatNumber(totals.receivedQty)} / ${formatNumber(totals.orderedQty)}<div style="height:5px;background:#edf1ee;border-radius:5px;margin-top:5px"><div style="height:100%;width:${progress}%;background:#094b2d;border-radius:5px"></div></div></td><td>${ppPOStatusBadgePP(order.status)}</td><td><div class="action-buttons"><button class="btn small view" onclick="ppPOOpenOrderDetailPP('${escapeHTML(String(order.id))}')">👁️</button><button class="btn small print" onclick="ppPOPrintOrderPP('${escapeHTML(String(order.id))}')">🖨️</button>${!purchaseReceiptsPP.some(receipt=>String(receipt.orderId)===String(order.id))?`<button class="btn small danger" onclick="ppPODeleteOrderPP('${escapeHTML(String(order.id))}')">🗑️</button>`:""}</div></td></tr>`;}).join("")||'<tr><td colspan="8" class="empty">Aucune commande.</td></tr>';
+    pagination.innerHTML=pages<=1?"":Array.from({length:pages},(_,i)=>`<button type="button" class="${i+1===ppPOListPagePP?'active':''}" onclick="ppPOSetPagePP(${i+1})">${i+1}</button>`).join("");
+}
+
+function ppPORenderPagePP(){
+    ppPOEnsureUI();
+    const search=document.getElementById("ppPOSearch");if(search&&search.value!==ppPOListSearchPP)search.value=ppPOListSearchPP;const from=document.getElementById("ppPOFrom");if(from)from.value=ppPOListFromPP;const to=document.getElementById("ppPOTo");if(to)to.value=ppPOListToPP;const status=document.getElementById("ppPOStatus");if(status)status.value=ppPOListStatusPP;
+    ppPORenderStatsPP();ppPORenderTablePP();ppPORenderOrderDetailPP();
+}
+
+// Invoice link: stock is already applied by the validated receipt.
+const ppPOBaseOpenInvoiceModalPP=openInvoiceModal;
+openInvoiceModal=function(id=null){
+    if(id){const invoice=invoices.find(item=>String(item.id)===String(id));ppInvoiceReceiptContextPP=invoice?.purchaseReceiptId?{receiptId:invoice.purchaseReceiptId,orderId:invoice.purchaseOrderId}:null;}
+    else if(!ppOpeningInvoiceFromReceiptPP)ppInvoiceReceiptContextPP=null;
+    return ppPOBaseOpenInvoiceModalPP.apply(this,arguments);
+};
+
+const ppPOBaseApplyInvoiceEffectsPP=applyInvoiceEffects;
+applyInvoiceEffects=function(invoice){
+    const context=ppInvoiceReceiptContextPP;
+    if(context){
+        const receipt=purchaseReceiptsPP.find(item=>String(item.id)===String(context.receiptId));
+        const order=purchaseOrdersPP.find(item=>String(item.id)===String(context.orderId));
+        invoice.purchaseReceiptId=context.receiptId;invoice.purchaseOrderId=context.orderId;invoice.purchaseReceiptNumber=receipt?.number||"";invoice.purchaseOrderNumber=order?.number||"";invoice.stockViaReceipt=true;
+    }
+    if(invoice?.stockViaReceipt){
+        const supplier=suppliers.find(item=>Number(item.id)===Number(invoice.supplierId));if(supplier){supplier.purchases=ppPONumberPP(supplier.purchases)+ppPONumberPP(invoice.totalTTC);supplier.paid=ppPONumberPP(supplier.paid)+ppPONumberPP(invoice.paid);}
+        (invoice.lines||[]).forEach(line=>{
+            const product=line.productId?products.find(item=>String(item.id)===String(line.productId)):findProductByName(line.name);
+            if(product&&(line.vatKnown===true||Number(line.vatRate)>0)){product.lastPurchaseTVA=Number(line.vatRate||0);product.lastPurchaseTVAKnown=true;}
+        });
+        return;
+    }
+    return ppPOBaseApplyInvoiceEffectsPP.apply(this,arguments);
+};
+
+const ppPOBaseReverseInvoiceEffectsPP=reverseInvoiceEffects;
+reverseInvoiceEffects=function(invoice){
+    if(invoice?.stockViaReceipt||invoice?.purchaseReceiptId){
+        const supplier=suppliers.find(item=>Number(item.id)===Number(invoice.supplierId));if(supplier){supplier.purchases=Math.max(0,ppPONumberPP(supplier.purchases)-ppPONumberPP(invoice.totalTTC));supplier.paid=Math.max(0,ppPONumberPP(supplier.paid)-ppPONumberPP(invoice.paid));}
+        const receipt=purchaseReceiptsPP.find(item=>String(item.id)===String(invoice.purchaseReceiptId||""));if(receipt&&String(receipt.invoiceId||"")===String(invoice.id))receipt.invoiceId=null;
+        return;
+    }
+    return ppPOBaseReverseInvoiceEffectsPP.apply(this,arguments);
+};
+
+const ppPOBaseSaveInvoicePP=saveInvoice;
+saveInvoice=function(){
+    const context=ppInvoiceReceiptContextPP?{...ppInvoiceReceiptContextPP}:null;
+    const result=ppPOBaseSaveInvoicePP.apply(this,arguments);
+    if(context){
+        const invoice=invoices.find(item=>String(item.purchaseReceiptId||"")===String(context.receiptId));const receipt=purchaseReceiptsPP.find(item=>String(item.id)===String(context.receiptId));
+        if(invoice&&receipt){receipt.invoiceId=invoice.id;receipt.updatedAt=new Date().toISOString();saveData();ppPORenderPagePP();}
+    }
+    return result;
+};
+
+// Protect reception movements from direct modification/deletion.
+const ppPOBaseOpenMovementModalPP=openMovementModal;
+openMovementModal=function(type,id=null){
+    if(id){const movement=movements.find(item=>String(item.id)===String(id));if(movement?.purchaseReceiptId){alert("Dévalidez la réception pour corriger ce mouvement.");return;}}
+    return ppPOBaseOpenMovementModalPP.apply(this,arguments);
+};
+const ppPOBaseDeleteMovementPP=deleteMovement;
+deleteMovement=function(id){const movement=movements.find(item=>String(item.id)===String(id));if(movement?.purchaseReceiptId){alert("Dévalidez la réception pour supprimer ce mouvement.");return;}return ppPOBaseDeleteMovementPP.apply(this,arguments);};
+
+// Local and Cloud persistence.
+PP_CLOUD_DATASETS.purchaseOrders=()=>purchaseOrdersPP;
+PP_CLOUD_DATASETS.purchaseReceipts=()=>purchaseReceiptsPP;
+
+const ppPOBaseSetDatasetPP=ppSetDataset;
+ppSetDataset=function(key,items){
+    if(key==="purchaseOrders"){purchaseOrdersPP=ppCloudEnsureRecordIdsPP(key,items).map(ppNormalizePurchaseOrderPP);return;}
+    if(key==="purchaseReceipts"){purchaseReceiptsPP=ppCloudEnsureRecordIdsPP(key,items).map(ppNormalizePurchaseReceiptPP);return;}
+    return ppPOBaseSetDatasetPP.apply(this,arguments);
+};
+
+const ppPOBaseSaveLocalOnlyPP=ppSaveLocalOnly;
+ppSaveLocalOnly=function(){const result=ppPOBaseSaveLocalOnlyPP.apply(this,arguments);localStorage.setItem(PP_PURCHASE_ORDERS_KEY,JSON.stringify(purchaseOrdersPP));localStorage.setItem(PP_PURCHASE_RECEIPTS_KEY,JSON.stringify(purchaseReceiptsPP));return result;};
+const ppPOBaseSaveDataPP=saveData;
+saveData=function(){localStorage.setItem(PP_PURCHASE_ORDERS_KEY,JSON.stringify(purchaseOrdersPP));localStorage.setItem(PP_PURCHASE_RECEIPTS_KEY,JSON.stringify(purchaseReceiptsPP));return ppPOBaseSaveDataPP.apply(this,arguments);};
+const ppPOBaseRenderAllPP=renderAll;
+renderAll=function(){const result=ppPOBaseRenderAllPP.apply(this,arguments);purchaseOrdersPP.forEach(ppPORefreshOrderStatusPP);ppPORenderPagePP();return result;};
+
