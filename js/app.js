@@ -998,7 +998,7 @@ function ppEnsureSupplierPaymentTermFieldsPP(){
     if(document.getElementById('supplierPaymentTermType'))return;
     const form=document.getElementById('supplierForm'),actions=form?.querySelector('.modal-actions');if(!form||!actions)return;
     const box=document.createElement('div');box.id='ppSupplierPaymentTermBox';box.style.cssText='margin:14px 0;padding:14px;border:1px solid #d0d5dd;border-radius:12px;background:#f8fafc';
-    box.innerHTML=`<h3 style="margin:0 0 10px">Délai de paiement fournisseur</h3><label>Délai applicable *</label><select id="supplierPaymentTermType" onchange="ppUpdateSupplierPaymentTermHelpPP()" style="width:100%;padding:10px"><option value="default">60 jours — délai légal sans accord</option><option value="agreed">120 jours — délai convenu avec le fournisseur</option><option value="exception">180 jours — dérogation sectorielle uniquement</option></select><div id="supplierPaymentTermHelp" style="margin:8px 0;color:#667085;font-size:12px;line-height:1.5"></div><label>Référence accord / dérogation</label><textarea id="supplierPaymentTermNote" rows="2" placeholder="Ex: accord contractuel, secteur et référence de la dérogation..."></textarea>`;
+    box.innerHTML=`<h3 style="margin:0 0 10px">Délai de paiement fournisseur</h3><label>Délai applicable *</label><select id="supplierPaymentTermType" onchange="ppUpdateSupplierPaymentTermHelpPP()" style="width:100%;padding:10px"><option value="default">60 jours — délai légal sans accord</option><option value="agreed">120 jours — délai convenu avec le fournisseur</option><option value="exception">180 jours — dérogation sectorielle uniquement</option></select><div id="supplierPaymentTermHelp" style="display:none"></div><label>Référence accord / dérogation</label><textarea id="supplierPaymentTermNote" rows="2" placeholder="Ex: accord contractuel, secteur et référence de la dérogation..."></textarea>`;
     form.insertBefore(box,actions);
 }
 function ppUpdateSupplierPaymentTermHelpPP(){
@@ -1142,7 +1142,7 @@ function ppEnsureInvoicePaymentDeadlineFieldsPP(){
     if(document.getElementById('invoicePaymentTermType'))return;
     const grid=document.querySelector('#invoiceForm .form-grid');if(!grid)return;
     const typeBox=document.createElement('div');typeBox.innerHTML=`<label>Base du délai (fiche fournisseur)</label><select id="invoicePaymentTermType" disabled><option value="default">60 jours — délai légal</option><option value="agreed">120 jours — délai convenu</option><option value="exception">180 jours — dérogation sectorielle</option></select>`;
-    const daysBox=document.createElement('div');daysBox.innerHTML=`<label>Nombre de jours</label><input id="invoicePaymentTermDays" type="number" min="0" max="180" step="1" value="60" oninput="ppUpdateInvoiceLegalDeadlinePP(false)"><small id="invoicePaymentTermNote" style="display:block;color:#667085;margin-top:4px"></small>`;
+    const daysBox=document.createElement('div');daysBox.innerHTML=`<label>Nombre de jours</label><input id="invoicePaymentTermDays" type="number" min="0" max="180" step="1" value="60" oninput="ppUpdateInvoiceLegalDeadlinePP(false)"><small id="invoicePaymentTermNote" style="display:none"></small>`;
     const dueBox=document.createElement('div');dueBox.innerHTML=`<label>Échéance légale calculée</label><input id="invoiceLegalDueDate" type="date" readonly>`;
     grid.append(typeBox,daysBox,dueBox);
     document.getElementById('invoiceDate')?.addEventListener('change',()=>ppUpdateInvoiceLegalDeadlinePP(false));
@@ -7630,7 +7630,8 @@ const PP_EXTRA_KEYS = {
     accountingEntries: "pause_plate_accounting_entries",
     accountingSettings: "pause_plate_accounting_settings",
     bankStatementTransactions: "pause_plate_bank_statement_transactions",
-    bankReconciliations: "pause_plate_bank_reconciliations"
+    bankReconciliations: "pause_plate_bank_reconciliations",
+    treasuryTransfers: "pause_plate_treasury_transfers"
 };
 
 let supplierPaymentsPP = loadStorage(PP_EXTRA_KEYS.supplierPayments, []);
@@ -7645,6 +7646,7 @@ let accountingEntriesPP = loadStorage(PP_EXTRA_KEYS.accountingEntries, []);
 let accountingSettingsPP = loadStorage(PP_EXTRA_KEYS.accountingSettings, []);
 let bankStatementTransactionsPP = loadStorage(PP_EXTRA_KEYS.bankStatementTransactions, []);
 let bankReconciliationsPP = loadStorage(PP_EXTRA_KEYS.bankReconciliations, []);
+let treasuryTransfersPP = loadStorage(PP_EXTRA_KEYS.treasuryTransfers, []);
 
 supplierPaymentsPP = Array.isArray(supplierPaymentsPP) ? supplierPaymentsPP : [];
 clientsPP = Array.isArray(clientsPP) ? clientsPP : [];
@@ -7661,6 +7663,7 @@ accountingEntriesPP = Array.isArray(accountingEntriesPP) ? accountingEntriesPP :
 accountingSettingsPP = Array.isArray(accountingSettingsPP) ? accountingSettingsPP : [];
 bankStatementTransactionsPP = Array.isArray(bankStatementTransactionsPP) ? bankStatementTransactionsPP.map(ppNormalizeBankTransactionPP) : [];
 bankReconciliationsPP = Array.isArray(bankReconciliationsPP) ? bankReconciliationsPP.map(ppNormalizeBankReconciliationPP) : [];
+treasuryTransfersPP = Array.isArray(treasuryTransfersPP) ? treasuryTransfersPP.map(ppNormalizeTreasuryTransferPP) : [];
 
 
 clientsPP = clientsPP.map(c => ({
@@ -7676,10 +7679,11 @@ clientInvoicesPP = clientInvoicesPP.map(inv => ({
     ...inv,
     totalTTC: Number(inv.totalTTC ?? 0),
     paid: Number(inv.paid ?? 0),
-    due: Number(inv.due ?? Math.max(Number(inv.totalTTC ?? 0)-Number(inv.paid ?? 0),0))
+    due: Number(inv.due ?? Math.max(Number(inv.totalTTC ?? 0)-Number(inv.paid ?? 0),0)),
+    dueDate: String(inv.dueDate || inv.date || '').slice(0,10)
 }));
 
-supplierPaymentsPP = supplierPaymentsPP.map(p => ({...p, amount:Number(p.amount ?? 0), allocations:Array.isArray(p.allocations)?p.allocations:[]}));
+supplierPaymentsPP = supplierPaymentsPP.map(ppNormalizeSupplierPaymentMaturityPP);
 clientPaymentsPP = clientPaymentsPP.map(p => ({...p, amount:Number(p.amount ?? 0), allocations:Array.isArray(p.allocations)?p.allocations:[]}));
 
 // Recover the latest REAL purchase VAT for every existing product from invoice history.
@@ -7712,6 +7716,7 @@ function saveData(){
     localStorage.setItem(PP_EXTRA_KEYS.accountingSettings, JSON.stringify(accountingSettingsPP));
     localStorage.setItem(PP_EXTRA_KEYS.bankStatementTransactions, JSON.stringify(bankStatementTransactionsPP));
     localStorage.setItem(PP_EXTRA_KEYS.bankReconciliations, JSON.stringify(bankReconciliationsPP));
+    localStorage.setItem(PP_EXTRA_KEYS.treasuryTransfers, JSON.stringify(treasuryTransfersPP));
 }
 
 
@@ -8302,7 +8307,7 @@ function printSupplier(id){printSupplierSituationPP(id);}
 function ensureSupplierPaymentModalPP(){
     if(document.getElementById('ppSupplierPaymentModal'))return;
     const m=document.createElement('div');m.id='ppSupplierPaymentModal';m.className='modal-overlay';
-    m.innerHTML=`<div class="modal"><div class="modal-header"><h2>💰 Règlement fournisseur</h2><button type="button" onclick="closeModal('ppSupplierPaymentModal')">×</button></div><form id="ppSupplierPaymentForm"><input type="hidden" id="ppSupplierPaymentId"><input type="hidden" id="ppSupplierPaymentSupplier"><div class="form-grid"><div><label>Fournisseur</label><input id="ppSupplierPaymentName" readonly></div><div><label>Date</label><input id="ppSupplierPaymentDate" type="date" required></div><div><label>Facture à affecter</label><select id="ppSupplierPaymentInvoice"></select></div><div><label>Montant</label><input id="ppSupplierPaymentAmount" type="number" min="0.01" step="0.01" required></div><div><label>Mode</label><select id="ppSupplierPaymentMode"><option>Espèces</option><option>Virement</option><option>Chèque</option><option>Carte</option><option>Autre</option></select></div><div><label>Référence</label><input id="ppSupplierPaymentRef" placeholder="N° chèque / virement..."></div></div><div><label>Observation</label><textarea id="ppSupplierPaymentNote"></textarea></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppSupplierPaymentModal')">Annuler</button><button type="submit" class="btn primary">Enregistrer</button></div></form></div>`;
+    m.innerHTML=`<div class="modal"><div class="modal-header"><h2>💰 Règlement fournisseur</h2><button type="button" onclick="closeModal('ppSupplierPaymentModal')">×</button></div><form id="ppSupplierPaymentForm"><input type="hidden" id="ppSupplierPaymentId"><input type="hidden" id="ppSupplierPaymentSupplier"><div class="form-grid"><div><label>Fournisseur</label><input id="ppSupplierPaymentName" readonly></div><div><label>Date</label><input id="ppSupplierPaymentDate" type="date" required></div><div><label>Facture à affecter</label><select id="ppSupplierPaymentInvoice"></select></div><div><label>Montant</label><input id="ppSupplierPaymentAmount" type="number" min="0.01" step="0.01" required></div><div><label>Mode</label><select id="ppSupplierPaymentMode"><option>Espèces</option><option>Virement</option><option>Chèque</option><option>Carte</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div><div><label>Référence</label><input id="ppSupplierPaymentRef" placeholder="N° chèque / virement..."></div></div><div><label>Observation</label><textarea id="ppSupplierPaymentNote"></textarea></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppSupplierPaymentModal')">Annuler</button><button type="submit" class="btn primary">Enregistrer</button></div></form></div>`;
     document.body.appendChild(m);document.getElementById('ppSupplierPaymentForm').addEventListener('submit',e=>{e.preventDefault();saveSupplierPaymentPP();});
 }
 
@@ -8384,7 +8389,7 @@ function deleteSupplierPaymentPP(id){
 function ensureClientsModulePP(){
     const page=document.getElementById('clientsPage');if(!page||document.getElementById('ppClientsModule'))return;
     const wrap=document.createElement('div');wrap.id='ppClientsModule';
-    wrap.innerHTML=`<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin:15px 0"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="openClientModalPP()">➕ Nouveau client</button><button class="btn" onclick="openClientInvoicePP()">🧾 Nouvelle facture client</button></div><input id="ppClientSearch" placeholder="Rechercher un client..." oninput="renderClientsPP()" style="max-width:320px;padding:9px"></div><div style="overflow:auto"><table style="width:100%"><thead><tr><th>Client</th><th>Téléphone</th><th>ICE</th><th>Total facturé</th><th>Encaissé</th><th>Solde</th><th>Situation</th><th>Actions</th></tr></thead><tbody id="ppClientsTable"></tbody></table></div>`;
+    wrap.innerHTML=`<h3 style="margin:15px 0 8px">Gestion des clients</h3><div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0 15px"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="openClientModalPP()">➕ Nouveau client</button><button class="btn" onclick="openClientInvoicePP()">🧾 Nouvelle facture client</button></div><input id="ppClientSearch" placeholder="Rechercher un client..." oninput="renderClientsPP()" style="max-width:320px;padding:9px"></div><div style="overflow:auto"><table style="width:100%"><thead><tr><th>Client</th><th>Téléphone</th><th>ICE</th><th>Total facturé</th><th>Encaissé</th><th>Solde</th><th>Situation</th><th>Actions</th></tr></thead><tbody id="ppClientsTable"></tbody></table></div>`;
     page.appendChild(wrap);
 }
 
@@ -8397,15 +8402,15 @@ function renderClientsPP(){
 
 function ensureClientModalsPP(){
     if(!document.getElementById('ppClientModal')){const m=document.createElement('div');m.id='ppClientModal';m.className='modal-overlay';m.innerHTML=`<div class="modal"><div class="modal-header"><h2 id="ppClientModalTitle">Client</h2><button onclick="closeModal('ppClientModal')">×</button></div><form id="ppClientForm"><input type="hidden" id="ppClientId"><div class="form-grid"><div><label>Nom</label><input id="ppClientName" required></div><div><label>Téléphone</label><input id="ppClientPhone"></div><div><label>Email</label><input id="ppClientEmail" type="email"></div><div><label>ICE</label><input id="ppClientIce"></div></div><div><label>Adresse</label><textarea id="ppClientAddress"></textarea></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppClientModal')">Annuler</button><button class="btn primary" type="submit">Enregistrer</button></div></form></div>`;document.body.appendChild(m);document.getElementById('ppClientForm').addEventListener('submit',e=>{e.preventDefault();saveClientPP();});}
-    if(!document.getElementById('ppClientInvoiceModal')){const m=document.createElement('div');m.id='ppClientInvoiceModal';m.className='modal-overlay';m.innerHTML=`<div class="modal"><div class="modal-header"><h2>🧾 Facture client</h2><button onclick="closeModal('ppClientInvoiceModal')">×</button></div><form id="ppClientInvoiceForm"><input type="hidden" id="ppClientInvoiceId"><div class="form-grid"><div><label>Client</label><select id="ppClientInvoiceClient" required></select></div><div><label>N° facture</label><input id="ppClientInvoiceNumber" required></div><div><label>Date</label><input id="ppClientInvoiceDate" type="date" required></div><div><label>Total TTC</label><input id="ppClientInvoiceTotal" type="number" min="0" step="0.01" required></div><div><label>Payé à la facture</label><input id="ppClientInvoicePaid" type="number" min="0" step="0.01" value="0"></div><div><label>Libellé</label><input id="ppClientInvoiceLabel"></div></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppClientInvoiceModal')">Annuler</button><button class="btn primary" type="submit">Enregistrer</button></div></form></div>`;document.body.appendChild(m);document.getElementById('ppClientInvoiceForm').addEventListener('submit',e=>{e.preventDefault();saveClientInvoicePP();});}
-    if(!document.getElementById('ppClientPaymentModal')){const m=document.createElement('div');m.id='ppClientPaymentModal';m.className='modal-overlay';m.innerHTML=`<div class="modal"><div class="modal-header"><h2>💰 Encaissement client</h2><button onclick="closeModal('ppClientPaymentModal')">×</button></div><form id="ppClientPaymentForm"><input type="hidden" id="ppClientPaymentId"><input type="hidden" id="ppClientPaymentClient"><div class="form-grid"><div><label>Client</label><input id="ppClientPaymentName" readonly></div><div><label>Date</label><input id="ppClientPaymentDate" type="date" required></div><div><label>Facture à affecter</label><select id="ppClientPaymentInvoice"></select></div><div><label>Montant</label><input id="ppClientPaymentAmount" type="number" min="0.01" step="0.01" required></div><div><label>Mode</label><select id="ppClientPaymentMode"><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Autre</option></select></div><div><label>Référence</label><input id="ppClientPaymentRef"></div></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppClientPaymentModal')">Annuler</button><button class="btn primary" type="submit">Enregistrer</button></div></form></div>`;document.body.appendChild(m);document.getElementById('ppClientPaymentForm').addEventListener('submit',e=>{e.preventDefault();saveClientPaymentPP();});}
+    if(!document.getElementById('ppClientInvoiceModal')){const m=document.createElement('div');m.id='ppClientInvoiceModal';m.className='modal-overlay';m.innerHTML=`<div class="modal"><div class="modal-header"><h2>🧾 Facture client</h2><button onclick="closeModal('ppClientInvoiceModal')">×</button></div><form id="ppClientInvoiceForm"><input type="hidden" id="ppClientInvoiceId"><div class="form-grid"><div><label>Client</label><select id="ppClientInvoiceClient" required></select></div><div><label>N° facture</label><input id="ppClientInvoiceNumber" required></div><div><label>Date</label><input id="ppClientInvoiceDate" type="date" required></div><div><label>Date d’échéance</label><input id="ppClientInvoiceDueDate" type="date" required></div><div><label>Total TTC</label><input id="ppClientInvoiceTotal" type="number" min="0" step="0.01" required></div><div><label>Payé à la facture</label><input id="ppClientInvoicePaid" type="number" min="0" step="0.01" value="0"></div><div><label>Libellé</label><input id="ppClientInvoiceLabel"></div></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppClientInvoiceModal')">Annuler</button><button class="btn primary" type="submit">Enregistrer</button></div></form></div>`;document.body.appendChild(m);document.getElementById('ppClientInvoiceForm').addEventListener('submit',e=>{e.preventDefault();saveClientInvoicePP();});}
+    if(!document.getElementById('ppClientPaymentModal')){const m=document.createElement('div');m.id='ppClientPaymentModal';m.className='modal-overlay';m.innerHTML=`<div class="modal"><div class="modal-header"><h2>💰 Encaissement client</h2><button onclick="closeModal('ppClientPaymentModal')">×</button></div><form id="ppClientPaymentForm"><input type="hidden" id="ppClientPaymentId"><input type="hidden" id="ppClientPaymentClient"><div class="form-grid"><div><label>Client</label><input id="ppClientPaymentName" readonly></div><div><label>Date</label><input id="ppClientPaymentDate" type="date" required></div><div><label>Facture à affecter</label><select id="ppClientPaymentInvoice"></select></div><div><label>Montant</label><input id="ppClientPaymentAmount" type="number" min="0.01" step="0.01" required></div><div><label>Mode</label><select id="ppClientPaymentMode"><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div><div><label>Référence</label><input id="ppClientPaymentRef"></div></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppClientPaymentModal')">Annuler</button><button class="btn primary" type="submit">Enregistrer</button></div></form></div>`;document.body.appendChild(m);document.getElementById('ppClientPaymentForm').addEventListener('submit',e=>{e.preventDefault();saveClientPaymentPP();});}
 }
 
 function openClientModalPP(id=null){ensureClientModalsPP();const c=id?clientsPP.find(x=>Number(x.id)===Number(id)):null;setValue('ppClientId',c?.id||'');setValue('ppClientName',c?.name||'');setValue('ppClientPhone',c?.phone||'');setValue('ppClientEmail',c?.email||'');setValue('ppClientIce',c?.ice||'');setValue('ppClientAddress',c?.address||'');setText('ppClientModalTitle',c?'Modifier le client':'Nouveau client');openModal('ppClientModal');}
 function saveClientPP(){const id=Number(getValue('ppClientId'))||null,name=getValue('ppClientName').trim();if(!name)return;const data={name,phone:getValue('ppClientPhone').trim(),email:getValue('ppClientEmail').trim(),ice:getValue('ppClientIce').trim(),address:getValue('ppClientAddress').trim()};if(id){const c=clientsPP.find(x=>Number(x.id)===id);if(c)Object.assign(c,data);clientInvoicesPP.forEach(i=>{if(Number(i.clientId)===id)i.clientName=name;});}else clientsPP.push({id:createId(),...data});saveData();closeModal('ppClientModal');renderAll();}
 function deleteClientPP(id){if(clientInvoicesPP.some(i=>Number(i.clientId)===Number(id))){alert('Impossible de supprimer ce client car il possède des factures.');return;}if(!confirm('Supprimer ce client ?'))return;clientsPP=clientsPP.filter(x=>Number(x.id)!==Number(id));saveData();renderAll();}
-function openClientInvoicePP(id=null){ensureClientModalsPP();if(!clientsPP.length){alert("Ajoutez d'abord un client.");return;}const inv=id?clientInvoicesPP.find(x=>Number(x.id)===Number(id)):null;const s=document.getElementById('ppClientInvoiceClient');s.innerHTML='<option value="">Sélectionner</option>'+clientsPP.map(c=>`<option value="${c.id}">${escapeHTML(c.name)}</option>`).join('');setValue('ppClientInvoiceId',inv?.id||'');setValue('ppClientInvoiceClient',inv?.clientId||'');setValue('ppClientInvoiceNumber',inv?.number||'');setValue('ppClientInvoiceDate',inv?.date||new Date().toISOString().slice(0,10));setValue('ppClientInvoiceTotal',inv?.totalTTC||'');setValue('ppClientInvoicePaid',inv?.paid||0);setValue('ppClientInvoiceLabel',inv?.label||'');openModal('ppClientInvoiceModal');}
-function saveClientInvoicePP(){const id=Number(getValue('ppClientInvoiceId'))||null,clientId=Number(getValue('ppClientInvoiceClient')),c=clientsPP.find(x=>Number(x.id)===clientId);if(!c)return;const total=Number(getValue('ppClientInvoiceTotal')||0),paid=Math.min(Number(getValue('ppClientInvoicePaid')||0),total);const obj={id:id||createId(),clientId,clientName:c.name,number:getValue('ppClientInvoiceNumber').trim(),date:getValue('ppClientInvoiceDate'),label:getValue('ppClientInvoiceLabel').trim(),totalTTC:total,paid,due:Math.max(total-paid,0),createdAt:new Date().toISOString()};if(id){const n=clientInvoicesPP.findIndex(x=>Number(x.id)===id);if(n>=0)clientInvoicesPP[n]=obj;}else clientInvoicesPP.unshift(obj);saveData();closeModal('ppClientInvoiceModal');renderAll();}
+function openClientInvoicePP(id=null){ensureClientModalsPP();if(!clientsPP.length){alert("Ajoutez d'abord un client.");return;}const inv=id?clientInvoicesPP.find(x=>Number(x.id)===Number(id)):null;const s=document.getElementById('ppClientInvoiceClient');s.innerHTML='<option value="">Sélectionner</option>'+clientsPP.map(c=>`<option value="${c.id}">${escapeHTML(c.name)}</option>`).join('');setValue('ppClientInvoiceId',inv?.id||'');setValue('ppClientInvoiceClient',inv?.clientId||'');setValue('ppClientInvoiceNumber',inv?.number||'');setValue('ppClientInvoiceDate',inv?.date||new Date().toISOString().slice(0,10));setValue('ppClientInvoiceDueDate',inv?.dueDate||inv?.date||new Date().toISOString().slice(0,10));setValue('ppClientInvoiceTotal',inv?.totalTTC||'');setValue('ppClientInvoicePaid',inv?.paid||0);setValue('ppClientInvoiceLabel',inv?.label||'');openModal('ppClientInvoiceModal');}
+function saveClientInvoicePP(){const id=Number(getValue('ppClientInvoiceId'))||null,clientId=Number(getValue('ppClientInvoiceClient')),c=clientsPP.find(x=>Number(x.id)===clientId);if(!c)return;const total=Number(getValue('ppClientInvoiceTotal')||0),paid=Math.min(Number(getValue('ppClientInvoicePaid')||0),total);const obj={id:id||createId(),clientId,clientName:c.name,number:getValue('ppClientInvoiceNumber').trim(),date:getValue('ppClientInvoiceDate'),dueDate:getValue('ppClientInvoiceDueDate')||getValue('ppClientInvoiceDate'),label:getValue('ppClientInvoiceLabel').trim(),totalTTC:total,paid,due:Math.max(total-paid,0),createdAt:(id?clientInvoicesPP.find(x=>Number(x.id)===id)?.createdAt:null)||new Date().toISOString(),updatedAt:new Date().toISOString()};if(id){const n=clientInvoicesPP.findIndex(x=>Number(x.id)===id);if(n>=0)clientInvoicesPP[n]=obj;}else clientInvoicesPP.unshift(obj);saveData();closeModal('ppClientInvoiceModal');renderAll();}
 function rollbackClientPaymentPP(p){
     if(!p)return;
     (p.allocations||[]).forEach(a=>{
@@ -9062,7 +9067,7 @@ function ensureTVACollecteeUIPP(){
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:16px">
                 <div><label style="display:block;font-weight:700;margin-bottom:5px">Du</label><input id="ppTVACFrom" type="date" onchange="renderTVACollecteePP()" style="width:100%;padding:9px"></div>
                 <div><label style="display:block;font-weight:700;margin-bottom:5px">Au</label><input id="ppTVACTo" type="date" onchange="renderTVACollecteePP()" style="width:100%;padding:9px"></div>
-                <div><label style="display:block;font-weight:700;margin-bottom:5px">Mode encaissement</label><select id="ppTVACMode" onchange="renderTVACollecteePP()" style="width:100%;padding:9px"><option value="">Tous</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Autre</option></select></div>
+                <div><label style="display:block;font-weight:700;margin-bottom:5px">Mode encaissement</label><select id="ppTVACMode" onchange="renderTVACollecteePP()" style="width:100%;padding:9px"><option value="">Tous</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div>
                 <div style="display:flex;align-items:end"><button class="btn" type="button" onclick="resetTVACollecteeFiltersPP()" style="width:100%">Réinitialiser</button></div>
             </div>
 
@@ -9099,7 +9104,7 @@ function ensureSaleModalPP(){
                 <div><label>N° pièce</label><input id="ppSaleNumber" required></div>
                 <div><label>Client / Vente</label><input id="ppSaleClient" placeholder="Ventes comptoir"></div>
                 <div><label>Montant TTC</label><input id="ppSaleTTC" type="number" min="0.01" step="0.01" required></div>
-                <div><label>Mode encaissement</label><select id="ppSaleMode"><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Autre</option></select></div>
+                <div><label>Mode encaissement</label><select id="ppSaleMode"><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div>
                 <div><label>Date encaissement</label><input id="ppSalePaymentDate" type="date" required></div>
             </div>
             <div style="margin-top:12px;padding:12px;border-radius:10px;background:#f8fafc">
@@ -9503,7 +9508,7 @@ function ensureSupplierSubmenuPP(){
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:14px">
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Du</label><input id="ppSupplierPayFrom" type="date" onchange="renderSupplierPaymentsPP()" style="width:100%;padding:9px"></div>
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Au</label><input id="ppSupplierPayTo" type="date" onchange="renderSupplierPaymentsPP()" style="width:100%;padding:9px"></div>
-        <div><label style="display:block;font-weight:700;margin-bottom:5px">Mode</label><select id="ppSupplierPayMode" onchange="renderSupplierPaymentsPP()" style="width:100%;padding:9px"><option value="">Tous</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Autre</option></select></div>
+        <div><label style="display:block;font-weight:700;margin-bottom:5px">Mode</label><select id="ppSupplierPayMode" onchange="renderSupplierPaymentsPP()" style="width:100%;padding:9px"><option value="">Tous</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div>
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Recherche</label><input id="ppSupplierPaySearch" placeholder="Fournisseur, référence, facture..." oninput="renderSupplierPaymentsPP()" style="width:100%;padding:9px"></div>
       </div>
       <div class="stat-card" style="padding:15px;margin-bottom:14px"><div style="color:#667085">Total règlements affichés</div><strong id="ppSupplierPaymentsTotal" style="font-size:22px">0 DH</strong></div>
@@ -9602,7 +9607,7 @@ function ensureClientSubmenuPP(){
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:14px">
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Du</label><input id="ppClientPayFrom" type="date" onchange="renderClientPaymentsPP()" style="width:100%;padding:9px"></div>
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Au</label><input id="ppClientPayTo" type="date" onchange="renderClientPaymentsPP()" style="width:100%;padding:9px"></div>
-        <div><label style="display:block;font-weight:700;margin-bottom:5px">Mode</label><select id="ppClientPayMode" onchange="renderClientPaymentsPP()" style="width:100%;padding:9px"><option value="">Tous</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Autre</option></select></div>
+        <div><label style="display:block;font-weight:700;margin-bottom:5px">Mode</label><select id="ppClientPayMode" onchange="renderClientPaymentsPP()" style="width:100%;padding:9px"><option value="">Tous</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div>
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Recherche</label><input id="ppClientPaySearch" placeholder="Client, référence, facture..." oninput="renderClientPaymentsPP()" style="width:100%;padding:9px"></div>
       </div>
       <div class="stat-card" style="padding:15px;margin-bottom:14px"><div style="color:#667085">Total encaissements affichés</div><strong id="ppClientPaymentsTotal" style="font-size:22px">0 DH</strong></div>
@@ -9693,7 +9698,7 @@ function ensureSalesModulePP(){
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:15px">
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Du</label><input id="ppSalesFrom" type="date" onchange="renderSalesPP()" style="width:100%;padding:9px"></div>
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Au</label><input id="ppSalesTo" type="date" onchange="renderSalesPP()" style="width:100%;padding:9px"></div>
-        <div><label style="display:block;font-weight:700;margin-bottom:5px">Mode</label><select id="ppSalesMode" onchange="renderSalesPP()" style="width:100%;padding:9px"><option value="">Tous</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Autre</option></select></div>
+        <div><label style="display:block;font-weight:700;margin-bottom:5px">Mode</label><select id="ppSalesMode" onchange="renderSalesPP()" style="width:100%;padding:9px"><option value="">Tous</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div>
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Recherche</label><input id="ppSalesSearch" placeholder="N° pièce / client..." oninput="renderSalesPP()" style="width:100%;padding:9px"></div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:15px">
@@ -10316,7 +10321,7 @@ function ensureSaleModalPP(){
                 <div><label>N° pièce</label><input id="ppSaleNumber" required></div>
                 <div><label>Client / Vente</label><input id="ppSaleClient" placeholder="Ventes comptoir"></div>
                 <div><label>Montant TTC</label><input id="ppSaleTTC" type="number" min="0.01" step="0.01" required></div>
-                <div><label>Mode encaissement</label><select id="ppSaleMode"><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Autre</option></select></div>
+                <div><label>Mode encaissement</label><select id="ppSaleMode"><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div>
                 <div><label>Date encaissement</label><input id="ppSalePaymentDate" type="date" required></div>
             </div>
 
@@ -10517,7 +10522,7 @@ function ensureSalesModulePP(){
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:15px">
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Du</label><input id="ppSalesFrom" type="date" onchange="renderSalesPP()" style="width:100%;padding:9px"></div>
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Au</label><input id="ppSalesTo" type="date" onchange="renderSalesPP()" style="width:100%;padding:9px"></div>
-        <div><label style="display:block;font-weight:700;margin-bottom:5px">Mode</label><select id="ppSalesMode" onchange="renderSalesPP()" style="width:100%;padding:9px"><option value="">Tous</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Autre</option></select></div>
+        <div><label style="display:block;font-weight:700;margin-bottom:5px">Mode</label><select id="ppSalesMode" onchange="renderSalesPP()" style="width:100%;padding:9px"><option value="">Tous</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div>
         <div><label style="display:block;font-weight:700;margin-bottom:5px">Recherche</label><input id="ppSalesSearch" placeholder="N° pièce / client..." oninput="renderSalesPP()" style="width:100%;padding:9px"></div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:15px">
@@ -12021,6 +12026,12 @@ function ppAccountingGeneratedJournalPP(){
             lines:[ppAccountingLinePP('4411',payment.amount,0),ppAccountingLinePP(ppAccountingModeAccountPP(payment.mode),0,payment.amount)]}));
     });
 
+    treasuryTransfersPP.forEach(transfer=>{
+        const amount=Math.max(Number(transfer.amount||0),0);if(!(amount>0))return;
+        add({id:`cash-deposit-${transfer.id}`,date:transfer.date,journal:'BQ',piece:transfer.reference||`VERS-${transfer.id}`,label:`Versement espèces en banque${transfer.bankName?` — ${transfer.bankName}`:''}`,source:'cash-deposit',sourceId:transfer.id,
+            lines:[ppAccountingLinePP('5141',amount,0,'Entrée banque'),ppAccountingLinePP('5161',0,amount,'Sortie caisse')]});
+    });
+
     return entries.sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.piece).localeCompare(String(b.piece),'fr'));
 }
 
@@ -12115,19 +12126,20 @@ function ensureAccountingModulePP(){
     }
     const now=new Date(),first=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`,today=now.toISOString().slice(0,10);
     const wrap=document.createElement('div');wrap.id='ppAccountingModule';wrap.innerHTML=`
-      <div class="pp-acc-toolbar"><div><h2 style="margin:0 0 4px">🧮 Comptabilité</h2><p style="margin:0;color:#667085">Pré-comptabilité alimentée automatiquement par vos opérations.</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="openAccountingEntryPP()">➕ Écriture manuelle</button><button class="btn" onclick="openAccountingSettingsPP()">⚙️ Soldes d’ouverture</button><button class="btn print" onclick="printAccountingPP()">🖨️ Imprimer</button></div></div>
+      <div class="pp-acc-toolbar"><div><h2 style="margin:0">🧮 Comptabilité</h2></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="openAccountingEntryPP()">➕ Écriture manuelle</button><button class="btn" onclick="openAccountingSettingsPP()">⚙️ Soldes d’ouverture</button><button class="btn print" onclick="printAccountingPP()">🖨️ Imprimer</button></div></div>
       <div class="pp-acc-tabs">
         <button class="btn pp-acc-tab" data-tab="summary" onclick="showAccountingTabPP('summary')">📊 Synthèse</button>
         <button class="btn pp-acc-tab" data-tab="result" onclick="showAccountingTabPP('result')">📈 Compte de résultat</button>
         <button class="btn pp-acc-tab" data-tab="treasury" onclick="showAccountingTabPP('treasury')">💳 Trésorerie</button>
+        <button class="btn pp-acc-tab" data-tab="bankJournal" onclick="showAccountingTabPP('bankJournal')">🏦 Journal banque</button>
+        <button class="btn pp-acc-tab" data-tab="schedule" onclick="showAccountingTabPP('schedule')">📅 Échéancier</button>
         <button class="btn pp-acc-tab" data-tab="journal" onclick="showAccountingTabPP('journal')">📒 Journal</button>
         <button class="btn pp-acc-tab" data-tab="ledger" onclick="showAccountingTabPP('ledger')">📚 Grand livre</button>
         <button class="btn pp-acc-tab" data-tab="balance" onclick="showAccountingTabPP('balance')">⚖️ Balance</button>
         <button class="btn pp-acc-tab" data-tab="bank" onclick="showAccountingTabPP('bank')">🏦 Rapprochement bancaire</button>
       </div>
       <div class="pp-acc-filters"><div><label>Du</label><input id="ppAccFrom" type="date" value="${first}" onchange="renderAccountingPP()"></div><div><label>Au</label><input id="ppAccTo" type="date" value="${today}" onchange="renderAccountingPP()"></div><div><label>Recherche</label><input id="ppAccSearch" placeholder="Pièce, compte, libellé…" oninput="renderAccountingPP()"></div><div style="display:flex;align-items:end"><button class="btn" style="width:100%" onclick="resetAccountingPeriodPP()">Mois en cours</button></div></div>
-      <div id="ppAccountingContent"></div>
-      <div style="font-size:12px;color:#667085;background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px">ℹ️ Situation interne de pré-comptabilité. Les déclarations et états comptables officiels doivent être contrôlés et validés par votre comptable.</div>`;
+      <div id="ppAccountingContent"></div>`;
     page.appendChild(wrap);ensureAccountingModalsPP();ensureBankReconciliationModalPP();
 }
 
@@ -12200,8 +12212,10 @@ function renderAccountingPP(){
     document.querySelectorAll('#ppAccountingModule .pp-acc-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===ppActiveAccountingTab));
     const stats=ppAccountingStatsPP();
     const commonFilters=document.querySelector('#ppAccountingModule .pp-acc-filters');
-    if(commonFilters)commonFilters.style.display=ppActiveAccountingTab==='bank'?'none':'grid';
+    if(commonFilters)commonFilters.style.display=['bank','schedule'].includes(ppActiveAccountingTab)?'none':'grid';
     if(ppActiveAccountingTab==='bank')content.innerHTML=renderBankReconciliationPP();
+    else if(ppActiveAccountingTab==='bankJournal')content.innerHTML=renderLinkedBankJournalPP();
+    else if(ppActiveAccountingTab==='schedule')content.innerHTML=renderUnifiedSchedulePP();
     else if(ppActiveAccountingTab==='result')content.innerHTML=renderAccountingResultPP(stats);
     else if(ppActiveAccountingTab==='treasury')content.innerHTML=renderAccountingTreasuryPP(stats);
     else if(ppActiveAccountingTab==='journal')content.innerHTML=renderAccountingJournalPP(stats);
@@ -12393,7 +12407,7 @@ function renderBankReconciliationPP(){
     const ordered=[...bankReconciliationsPP].sort((a,b)=>String(b.to||b.createdAt).localeCompare(String(a.to||a.createdAt)));
     const drafts=ordered.filter(r=>r.status!=='validated').length,validated=ordered.length-drafts;
     const unmatched=ordered.reduce((sum,r)=>{const stats=ppBankReconciliationStatsPP(r);return sum+stats.unmatched+stats.unmatchedAccounting.length;},0);
-    return `<div class="pp-acc-toolbar"><div><h3 style="margin:0 0 4px">🏦 États de rapprochement bancaire</h3><p style="margin:0;color:#667085">Importez le relevé par Excel/CSV ou PDF, ou saisissez les lignes manuellement.</p></div><button class="btn primary" onclick="openBankReconciliationPP()">➕ Nouveau rapprochement</button></div>
+    return `<div class="pp-acc-toolbar"><div><h3 style="margin:0">🏦 États de rapprochement bancaire</h3></div><button class="btn primary" onclick="openBankReconciliationPP()">➕ Nouveau rapprochement</button></div>
       <div class="pp-acc-cards">
         ${ppAccountingCardPP('Dossiers',String(ordered.length),'bank','📁','#0b6b45','Tous les rapprochements')}
         ${ppAccountingCardPP('Brouillons',String(drafts),'bank','🟠','#f59e0b','À terminer')}
@@ -12537,6 +12551,174 @@ const PP_FIREBASE_CONFIG = {
 const PP_COMPANY_ID = "pause-plate-manager";
 const PP_ADMIN_EMAIL = "asmaabd1987@gmail.com";
 let ppFirebaseApp = null;
+
+/* =========================================================
+   BANQUE LIÉE AUX OPÉRATIONS + VERSEMENTS ESPÈCES
+   ÉCHÉANCIER UNIFIÉ FOURNISSEURS / DÉPENSES / CLIENTS
+========================================================= */
+
+function ppNormalizeTreasuryTransferPP(raw={}){
+    return {
+        id:raw.id??createId(),
+        type:'cash-deposit',
+        date:String(raw.date||'').slice(0,10),
+        amount:Math.max(Number(raw.amount||0),0),
+        reference:String(raw.reference||''),
+        bankName:String(raw.bankName||''),
+        note:String(raw.note||''),
+        createdAt:raw.createdAt||new Date().toISOString(),
+        updatedAt:raw.updatedAt||raw.createdAt||new Date().toISOString()
+    };
+}
+
+function ppBankModeLabelPP(mode){
+    const value=String(mode||'').trim();
+    return value||'Opération bancaire';
+}
+
+function ppBankSourceLabelDetailedPP(source){
+    const labels={
+        'supplier-payment':'Règlement fournisseur',
+        'client-payment':'Encaissement client',
+        'sale-payment':'Encaissement vente',
+        'expense-payment':'Règlement dépense',
+        'cash-deposit':'Versement espèces',
+        'manual':'Écriture manuelle',
+        'opening':'Solde d’ouverture'
+    };
+    return labels[source]||'Opération banque';
+}
+
+function ppLinkedBankRowsPP(){
+    const matchedKeys=new Set(bankStatementTransactionsPP.filter(tx=>tx.matchedAccountingKey).map(tx=>String(tx.matchedAccountingKey)));
+    const rows=[];
+    ppAccountingJournalPP().forEach(entry=>{
+        entry.lines.forEach((line,index)=>{
+            if(String(line.account)!=='5141')return;
+            const amount=Number(line.debit||0)-Number(line.credit||0);
+            if(Math.abs(amount)<0.005)return;
+            const key=`${String(entry.id)}::${index}`;
+            rows.push({
+                key,date:entry.date,journal:entry.journal||'BQ',piece:entry.piece||'',label:line.label||entry.label||'',
+                entryLabel:entry.label||'',source:entry.source||'manual',sourceId:entry.sourceId,amount,
+                matched:matchedKeys.has(key)
+            });
+        });
+    });
+    return rows.sort((a,b)=>String(b.date).localeCompare(String(a.date))||String(b.piece).localeCompare(String(a.piece),'fr'));
+}
+
+let ppBankJournalStatusFilterPP='';
+function ppSetBankJournalStatusPP(value){ppBankJournalStatusFilterPP=String(value||'');renderAccountingPP();}
+
+function ppFilteredLinkedBankRowsPP(){
+    const {from,to}=ppAccountingRangePP(),query=normalizeText(getValue('ppAccSearch'));
+    const status=ppBankJournalStatusFilterPP;
+    return ppLinkedBankRowsPP().filter(row=>{
+        if(from&&row.date<from)return false;if(to&&row.date>to)return false;
+        if(status==='matched'&&!row.matched)return false;if(status==='unmatched'&&row.matched)return false;
+        if(query&&!normalizeText(`${row.piece} ${row.label} ${row.entryLabel} ${ppBankSourceLabelDetailedPP(row.source)}`).includes(query))return false;
+        return true;
+    });
+}
+
+function renderLinkedBankJournalPP(){
+    ensureTreasuryTransferModalPP();
+    const rows=ppFilteredLinkedBankRowsPP(),incoming=rows.filter(r=>r.amount>0).reduce((s,r)=>s+r.amount,0),outgoing=-rows.filter(r=>r.amount<0).reduce((s,r)=>s+r.amount,0),unmatched=rows.filter(r=>!r.matched);
+    const balance=ppAccountingTreasuryBalancePP('5141',ppAccountingRangePP().to);
+    return `<div class="pp-acc-toolbar"><div><h3 style="margin:0">🏦 Journal banque</h3></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="openTreasuryTransferPP()">➕ Versement espèces</button><button class="btn print" onclick="printLinkedBankJournalPP()">🖨️ Imprimer</button></div></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px">
+        <div class="stat-card" style="padding:15px"><small>Solde banque actuel</small><strong style="display:block;font-size:22px">${formatMoney(balance)}</strong></div>
+        <div class="stat-card" style="padding:15px"><small>Entrées période</small><strong class="pp-acc-positive" style="display:block;font-size:22px">${formatMoney(incoming)}</strong></div>
+        <div class="stat-card" style="padding:15px"><small>Sorties période</small><strong class="pp-acc-negative" style="display:block;font-size:22px">${formatMoney(outgoing)}</strong></div>
+        <div class="stat-card" style="padding:15px"><small>À rapprocher</small><strong style="display:block;font-size:22px">${unmatched.length}</strong></div>
+      </div>
+      <div class="pp-acc-panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px"><h3 style="margin:0">Toutes les opérations liées</h3><select id="ppBankJournalStatus" onchange="ppSetBankJournalStatusPP(this.value)" style="max-width:240px"><option value="" ${!ppBankJournalStatusFilterPP?'selected':''}>Tous les statuts</option><option value="unmatched" ${ppBankJournalStatusFilterPP==='unmatched'?'selected':''}>À rapprocher</option><option value="matched" ${ppBankJournalStatusFilterPP==='matched'?'selected':''}>Rapprochées</option></select></div><table style="min-width:1050px"><thead><tr><th>Date</th><th>Origine</th><th>Pièce / Référence</th><th>Libellé</th><th>Entrée</th><th>Sortie</th><th>Rapprochement</th><th></th></tr></thead><tbody>${rows.map(row=>`<tr><td>${formatDate(row.date)}</td><td><strong>${escapeHTML(ppBankSourceLabelDetailedPP(row.source))}</strong></td><td>${escapeHTML(row.piece||'-')}</td><td>${escapeHTML(row.entryLabel||row.label||'-')}</td><td class="pp-acc-positive">${row.amount>0?formatMoney(row.amount):'-'}</td><td class="pp-acc-negative">${row.amount<0?formatMoney(-row.amount):'-'}</td><td>${row.matched?'<span class="pp-bank-status matched">✓ Rapprochée</span>':'<span class="pp-bank-status unmatched">À rapprocher</span>'}</td><td>${row.source==='cash-deposit'?`<div class="action-buttons"><button class="btn small edit" onclick="openTreasuryTransferPP('${row.sourceId}')">✏️</button><button class="btn small danger" onclick="deleteTreasuryTransferPP('${row.sourceId}')">🗑️</button></div>`:''}</td></tr>`).join('')||'<tr><td colspan="8" class="empty">Aucune opération bancaire sur cette période.</td></tr>'}</tbody></table></div>
+      <div style="font-size:12px;color:#667085;background:#f8fafc;border:1px solid #e4e7ec;border-radius:12px;padding:12px">Les paiements en espèces restent dans la caisse. Seul le versement espèces transfère le montant de la caisse vers la banque, sans créer de produit ni de charge.</div>`;
+}
+
+function ensureTreasuryTransferModalPP(){
+    if(document.getElementById('ppTreasuryTransferModal'))return;
+    const modal=document.createElement('div');modal.id='ppTreasuryTransferModal';modal.className='modal-overlay';
+    modal.innerHTML=`<div class="modal"><div class="modal-header"><h2 id="ppTreasuryTransferTitle">🏦 Versement espèces en banque</h2><button onclick="closeModal('ppTreasuryTransferModal')">×</button></div><form id="ppTreasuryTransferForm"><input type="hidden" id="ppTreasuryTransferId"><div class="form-grid"><div><label>Date *</label><input id="ppTreasuryTransferDate" type="date" required></div><div><label>Montant *</label><input id="ppTreasuryTransferAmount" type="number" min="0.01" step="0.01" required></div><div><label>Banque / compte</label><input id="ppTreasuryTransferBank" placeholder="Ex. Attijariwafa bank"></div><div><label>Référence bordereau</label><input id="ppTreasuryTransferRef" placeholder="N° bordereau / remise"></div></div><div><label>Observation</label><textarea id="ppTreasuryTransferNote" rows="2"></textarea></div><div style="padding:10px 12px;background:#f4faf7;border:1px solid #cfe6da;border-radius:10px;margin-top:12px;font-size:13px">Écriture automatique : <strong>Débit Banque 5141 / Crédit Caisse 5161</strong>.</div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppTreasuryTransferModal')">Annuler</button><button type="submit" class="btn primary">Enregistrer le versement</button></div></form></div>`;
+    document.body.appendChild(modal);document.getElementById('ppTreasuryTransferForm').addEventListener('submit',event=>{event.preventDefault();saveTreasuryTransferPP();});
+}
+
+function openTreasuryTransferPP(id=null){
+    ensureTreasuryTransferModalPP();const item=id?treasuryTransfersPP.find(x=>String(x.id)===String(id)):null;
+    setText('ppTreasuryTransferTitle',item?'✏️ Modifier le versement':'🏦 Versement espèces en banque');
+    setValue('ppTreasuryTransferId',item?.id||'');setValue('ppTreasuryTransferDate',item?.date||new Date().toISOString().slice(0,10));setValue('ppTreasuryTransferAmount',item?.amount||'');setValue('ppTreasuryTransferBank',item?.bankName||'');setValue('ppTreasuryTransferRef',item?.reference||'');setValue('ppTreasuryTransferNote',item?.note||'');openModal('ppTreasuryTransferModal');
+}
+
+function saveTreasuryTransferPP(){
+    const id=getValue('ppTreasuryTransferId')||null,amount=Math.max(Number(getValue('ppTreasuryTransferAmount')||0),0),date=getValue('ppTreasuryTransferDate');
+    if(!date||!(amount>0)){alert('Saisissez la date et un montant supérieur à 0.');return;}
+    const old=id?treasuryTransfersPP.find(x=>String(x.id)===String(id)):null,now=new Date().toISOString();
+    const item=ppNormalizeTreasuryTransferPP({id:old?.id||createId(),date,amount,bankName:getValue('ppTreasuryTransferBank').trim(),reference:getValue('ppTreasuryTransferRef').trim(),note:getValue('ppTreasuryTransferNote').trim(),createdAt:old?.createdAt||now,updatedAt:now});
+    if(old){const index=treasuryTransfersPP.findIndex(x=>String(x.id)===String(id));treasuryTransfersPP[index]=item;}else treasuryTransfersPP.unshift(item);
+    saveData();closeModal('ppTreasuryTransferModal');renderAccountingPP();
+}
+
+function deleteTreasuryTransferPP(id){
+    const item=treasuryTransfersPP.find(x=>String(x.id)===String(id));if(!item||!confirm('Supprimer ce versement espèces ? La banque et la caisse seront recalculées automatiquement.'))return;
+    treasuryTransfersPP=treasuryTransfersPP.filter(x=>String(x.id)!==String(id));saveData();renderAccountingPP();
+}
+
+function printLinkedBankJournalPP(){
+    const rows=ppFilteredLinkedBankRowsPP(),body=rows.map(row=>`<tr><td>${formatDate(row.date)}</td><td>${escapeHTML(ppBankSourceLabelDetailedPP(row.source))}</td><td>${escapeHTML(row.piece||'-')}</td><td>${escapeHTML(row.entryLabel||row.label||'-')}</td><td>${row.amount>0?formatMoney(row.amount):'-'}</td><td>${row.amount<0?formatMoney(-row.amount):'-'}</td><td>${row.matched?'Rapprochée':'À rapprocher'}</td></tr>`).join('');
+    printDocument('Journal banque lié',`<div class="doc-head"><h1>Pause & Plate</h1><p>Journal banque</p></div><table><thead><tr><th>Date</th><th>Origine</th><th>Pièce</th><th>Libellé</th><th>Entrée</th><th>Sortie</th><th>Statut</th></tr></thead><tbody>${body||'<tr><td colspan="7">Aucune opération.</td></tr>'}</tbody></table>`);
+}
+
+function ppScheduleStatusPP(dueDate,remaining){
+    const date=String(dueDate||'').slice(0,10),today=ppTodayISOPP();if(remaining<=0.005)return {code:'paid',label:'Soldée',days:0};
+    if(!date)return {code:'undated',label:'Sans échéance',days:null};
+    if(date<today){const days=ppDaysBetweenISOPP(date,today);return {code:'overdue',label:`En retard de ${days} j`,days:-days};}
+    if(date===today)return {code:'today',label:"Échéance aujourd’hui",days:0};
+    const days=ppDaysBetweenISOPP(today,date);return days<=7?{code:'soon',label:`Dans ${days} j`,days}:{code:'upcoming',label:`Dans ${days} j`,days};
+}
+
+function ppScheduleRowsPP(){
+    const rows=[];
+    invoices.forEach(inv=>{const info=ppInvoiceDeadlineInfoPP(inv),status=ppScheduleStatusPP(info.dueDate,info.remaining);rows.push({id:`supplier:${inv.id}`,kind:'supplier',flow:'payable',type:'Facture fournisseur',party:inv.supplierName||'-',number:inv.number||'-',date:inv.date,dueDate:info.dueDate,total:info.total,paid:info.paid,remaining:info.remaining,status,sourceId:inv.id});});
+    expensesPP.forEach(expense=>{const totals=ppExpensePaymentTotalsPP(expense),dueDate=String(expense.dueDate||expense.date||'').slice(0,10),status=ppScheduleStatusPP(dueDate,totals.due);rows.push({id:`expense:${expense.id}`,kind:'expense',flow:'payable',type:'Dépense / charge',party:expense.beneficiary||expense.category||'-',number:expense.reference||`DEP-${expense.id}`,date:expense.date,dueDate,total:totals.total,paid:totals.paid,remaining:totals.due,status,sourceId:expense.id});});
+    clientInvoicesPP.forEach(inv=>{const total=Math.max(Number(inv.totalTTC||0),0),paid=Math.min(Math.max(Number(inv.paid||0),0),total),remaining=Math.max(total-paid,0),dueDate=String(inv.dueDate||inv.date||'').slice(0,10),status=ppScheduleStatusPP(dueDate,remaining);rows.push({id:`client:${inv.id}`,kind:'client',flow:'receivable',type:'Facture client',party:inv.clientName||'-',number:inv.number||'-',date:inv.date,dueDate,total,paid,remaining,status,sourceId:inv.id});});
+    return rows.sort((a,b)=>String(a.dueDate||'9999').localeCompare(String(b.dueDate||'9999'))||String(a.party).localeCompare(String(b.party),'fr'));
+}
+
+let ppScheduleFiltersPP={flow:'',kind:'',status:'',from:'',to:'',search:''};
+function ppSetScheduleFilterPP(field,value){if(Object.prototype.hasOwnProperty.call(ppScheduleFiltersPP,field))ppScheduleFiltersPP[field]=String(value||'');renderAccountingPP();}
+
+function ppFilteredScheduleRowsPP(){
+    const {flow,kind,status,from,to,search}=ppScheduleFiltersPP,q=normalizeText(search);
+    return ppScheduleRowsPP().filter(row=>{
+        if(flow&&row.flow!==flow)return false;if(kind&&row.kind!==kind)return false;if(status&&row.status.code!==status)return false;
+        if(from&&row.dueDate&&row.dueDate<from)return false;if(to&&row.dueDate&&row.dueDate>to)return false;
+        if(q&&!normalizeText(`${row.party} ${row.number} ${row.type}`).includes(q))return false;return true;
+    });
+}
+
+function ppScheduleBadgePP(status){
+    const classes={paid:'success',overdue:'danger',today:'warning',soon:'warning',upcoming:'info',undated:'warning'};return `<span class="status ${classes[status.code]||'info'}">${escapeHTML(status.label)}</span>`;
+}
+
+function renderUnifiedSchedulePP(){
+    const rows=ppFilteredScheduleRowsPP(),open=rows.filter(r=>r.remaining>0.005),payables=open.filter(r=>r.flow==='payable'),receivables=open.filter(r=>r.flow==='receivable'),overduePay=payables.filter(r=>r.status.code==='overdue'),overdueReceive=receivables.filter(r=>r.status.code==='overdue'),soon=open.filter(r=>['today','soon'].includes(r.status.code));
+    return `<div class="pp-acc-toolbar"><div><h3 style="margin:0">📅 État d’échéancier</h3></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn print" onclick="printUnifiedSchedulePP()">🖨️ Imprimer</button><button class="btn" onclick="exportUnifiedScheduleExcelPP()">📊 Excel</button></div></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px"><div class="stat-card" style="padding:15px"><small>À décaisser</small><strong class="pp-acc-negative" style="display:block;font-size:21px">${formatMoney(payables.reduce((s,r)=>s+r.remaining,0))}</strong></div><div class="stat-card" style="padding:15px"><small>À encaisser</small><strong class="pp-acc-positive" style="display:block;font-size:21px">${formatMoney(receivables.reduce((s,r)=>s+r.remaining,0))}</strong></div><div class="stat-card" style="padding:15px"><small>Retards fournisseurs / charges</small><strong style="display:block;font-size:21px;color:#b42318">${formatMoney(overduePay.reduce((s,r)=>s+r.remaining,0))}</strong></div><div class="stat-card" style="padding:15px"><small>Retards clients</small><strong style="display:block;font-size:21px;color:#b42318">${formatMoney(overdueReceive.reduce((s,r)=>s+r.remaining,0))}</strong></div><div class="stat-card" style="padding:15px"><small>Échéances ≤ 7 jours</small><strong style="display:block;font-size:21px">${soon.length}</strong></div></div>
+      <div class="pp-acc-filters" style="display:grid"><div><label>Flux</label><select id="ppScheduleFlow" onchange="ppSetScheduleFilterPP('flow',this.value)"><option value="" ${!ppScheduleFiltersPP.flow?'selected':''}>À payer + à encaisser</option><option value="payable" ${ppScheduleFiltersPP.flow==='payable'?'selected':''}>À décaisser</option><option value="receivable" ${ppScheduleFiltersPP.flow==='receivable'?'selected':''}>À encaisser</option></select></div><div><label>Nature</label><select id="ppScheduleKind" onchange="ppSetScheduleFilterPP('kind',this.value)"><option value="" ${!ppScheduleFiltersPP.kind?'selected':''}>Toutes</option><option value="supplier" ${ppScheduleFiltersPP.kind==='supplier'?'selected':''}>Factures fournisseurs</option><option value="expense" ${ppScheduleFiltersPP.kind==='expense'?'selected':''}>Dépenses / charges</option><option value="client" ${ppScheduleFiltersPP.kind==='client'?'selected':''}>Factures clients</option></select></div><div><label>Situation</label><select id="ppScheduleStatus" onchange="ppSetScheduleFilterPP('status',this.value)"><option value="" ${!ppScheduleFiltersPP.status?'selected':''}>Toutes</option><option value="overdue" ${ppScheduleFiltersPP.status==='overdue'?'selected':''}>En retard</option><option value="today" ${ppScheduleFiltersPP.status==='today'?'selected':''}>Aujourd’hui</option><option value="soon" ${ppScheduleFiltersPP.status==='soon'?'selected':''}>≤ 7 jours</option><option value="upcoming" ${ppScheduleFiltersPP.status==='upcoming'?'selected':''}>À venir</option><option value="paid" ${ppScheduleFiltersPP.status==='paid'?'selected':''}>Soldées</option><option value="undated" ${ppScheduleFiltersPP.status==='undated'?'selected':''}>Sans échéance</option></select></div><div><label>Échéance du</label><input id="ppScheduleFrom" type="date" value="${escapeHTML(ppScheduleFiltersPP.from)}" onchange="ppSetScheduleFilterPP('from',this.value)"></div><div><label>Au</label><input id="ppScheduleTo" type="date" value="${escapeHTML(ppScheduleFiltersPP.to)}" onchange="ppSetScheduleFilterPP('to',this.value)"></div><div><label>Recherche</label><input id="ppScheduleSearch" value="${escapeHTML(ppScheduleFiltersPP.search)}" placeholder="Tiers, facture, référence…" oninput="ppSetScheduleFilterPP('search',this.value)"></div></div>
+      <div class="pp-acc-panel"><table style="min-width:1250px"><thead><tr><th>Flux</th><th>Nature</th><th>Tiers</th><th>Pièce</th><th>Date</th><th>Échéance</th><th>Total</th><th>Réglé / encaissé</th><th>Reste</th><th>Situation</th><th>Action</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${row.flow==='payable'?'<span class="status danger">À décaisser</span>':'<span class="status success">À encaisser</span>'}</td><td>${escapeHTML(row.type)}</td><td><strong>${escapeHTML(row.party)}</strong></td><td>${escapeHTML(row.number)}</td><td>${formatDate(row.date)}</td><td><strong>${row.dueDate?formatDate(row.dueDate):'-'}</strong></td><td>${formatMoney(row.total)}</td><td>${formatMoney(row.paid)}</td><td class="${row.flow==='payable'?'pp-acc-negative':'pp-acc-positive'}"><strong>${formatMoney(row.remaining)}</strong></td><td>${ppScheduleBadgePP(row.status)}</td><td>${row.kind==='supplier'?`<button class="btn small view" onclick="viewInvoice(${row.sourceId})">👁️</button>`:row.kind==='expense'?`<button class="btn small edit" onclick="openExpensePP(${row.sourceId})">✏️</button>`:`<button class="btn small edit" onclick="openClientInvoicePP(${row.sourceId})">✏️</button>`}</td></tr>`).join('')||'<tr><td colspan="11" class="empty">Aucune échéance pour les filtres sélectionnés.</td></tr>'}</tbody></table></div>`;
+}
+
+function printUnifiedSchedulePP(){
+    const rows=ppFilteredScheduleRowsPP(),body=rows.map(row=>`<tr><td>${row.flow==='payable'?'À décaisser':'À encaisser'}</td><td>${escapeHTML(row.type)}</td><td>${escapeHTML(row.party)}</td><td>${escapeHTML(row.number)}</td><td>${formatDate(row.date)}</td><td>${row.dueDate?formatDate(row.dueDate):'-'}</td><td>${formatMoney(row.total)}</td><td>${formatMoney(row.paid)}</td><td>${formatMoney(row.remaining)}</td><td>${escapeHTML(row.status.label)}</td></tr>`).join('');
+    printDocument('État d’échéancier',`<div class="doc-head"><h1>Pause & Plate</h1><p>État d’échéancier</p></div><table><thead><tr><th>Flux</th><th>Nature</th><th>Tiers</th><th>Pièce</th><th>Date</th><th>Échéance</th><th>Total</th><th>Réglé</th><th>Reste</th><th>Situation</th></tr></thead><tbody>${body||'<tr><td colspan="10">Aucune échéance.</td></tr>'}</tbody></table>`);
+}
+
+function exportUnifiedScheduleExcelPP(){
+    if(typeof XLSX==='undefined'){alert('La bibliothèque Excel n’est pas chargée.');return;}const rows=ppFilteredScheduleRowsPP().map(row=>({Flux:row.flow==='payable'?'À décaisser':'À encaisser',Nature:row.type,Tiers:row.party,Piece:row.number,Date:row.date,Echeance:row.dueDate,Total:row.total,Regle_Encaisse:row.paid,Reste:row.remaining,Situation:row.status.label}));
+    const sheet=XLSX.utils.json_to_sheet(rows),book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,sheet,'Echeancier');XLSX.writeFile(book,`echeancier-${ppTodayISOPP()}.xlsx`);
+}
+
 let ppAuth = null;
 let ppDb = null;
 let ppCurrentUser = null;
@@ -12568,7 +12750,8 @@ const PP_CLOUD_DATASETS = {
     accountingEntries: () => accountingEntriesPP,
     accountingSettings: () => accountingSettingsPP,
     bankStatementTransactions: () => bankStatementTransactionsPP,
-    bankReconciliations: () => bankReconciliationsPP
+    bankReconciliations: () => bankReconciliationsPP,
+    treasuryTransfers: () => treasuryTransfersPP
 };
 
 // Employees only receive the datasets required by the two modules that can be
@@ -12876,7 +13059,7 @@ function ppSetDataset(key,items){
         case "movements": movements=safe; break;
         case "suppliers": suppliers=safe.map(ppNormalizeSupplierPaymentTermPP); break;
         case "invoices": invoices=safe.map(ppNormalizeInvoiceDeadlinePP); break;
-        case "supplierPayments": supplierPaymentsPP=safe; break;
+        case "supplierPayments": supplierPaymentsPP=safe.map(ppNormalizeSupplierPaymentMaturityPP); break;
         case "clients": clientsPP=safe; break;
         case "clientInvoices": clientInvoicesPP=safe; break;
         case "clientPayments": clientPaymentsPP=safe; break;
@@ -12888,6 +13071,7 @@ function ppSetDataset(key,items){
         case "accountingSettings": accountingSettingsPP=safe; break;
         case "bankStatementTransactions": bankStatementTransactionsPP=safe.map(ppNormalizeBankTransactionPP); break;
         case "bankReconciliations": bankReconciliationsPP=safe.map(ppNormalizeBankReconciliationPP); break;
+        case "treasuryTransfers": treasuryTransfersPP=safe.map(ppNormalizeTreasuryTransferPP); break;
     }
 }
 
@@ -12908,10 +13092,11 @@ function ppSaveLocalOnly(){
     localStorage.setItem(PP_EXTRA_KEYS.accountingSettings,JSON.stringify(accountingSettingsPP));
     localStorage.setItem(PP_EXTRA_KEYS.bankStatementTransactions,JSON.stringify(bankStatementTransactionsPP));
     localStorage.setItem(PP_EXTRA_KEYS.bankReconciliations,JSON.stringify(bankReconciliationsPP));
+    localStorage.setItem(PP_EXTRA_KEYS.treasuryTransfers,JSON.stringify(treasuryTransfersPP));
 }
 
 function ppLocalHasData(){
-    return products.length||movements.length||suppliers.length||invoices.length||supplierPaymentsPP.length||clientsPP.length||clientInvoicesPP.length||clientPaymentsPP.length||salesPP.length||expensesPP.length||recipesPP.length||dailySalesScansPP.length||accountingEntriesPP.length||accountingSettingsPP.length||bankStatementTransactionsPP.length||bankReconciliationsPP.length;
+    return products.length||movements.length||suppliers.length||invoices.length||supplierPaymentsPP.length||clientsPP.length||clientInvoicesPP.length||clientPaymentsPP.length||salesPP.length||expensesPP.length||recipesPP.length||dailySalesScansPP.length||accountingEntriesPP.length||accountingSettingsPP.length||bankStatementTransactionsPP.length||bankReconciliationsPP.length||treasuryTransfersPP.length;
 }
 
 async function ppCloudHasData(){
@@ -15031,3 +15216,2325 @@ openClientPaymentPP=function(id,paymentId=null){
     ppOpenClientPaymentBeforeSearchPP(id,paymentId);
     ppUpgradeClientPaymentInvoiceSearchPP();
 };
+
+
+/* =========================================================
+   ÉCHÉANCIER CHÈQUES / EFFETS FOURNISSEURS — 2026-08-05
+   Date d'échéance + délai de paiement + situation mensuelle
+========================================================= */
+
+function ppIsSupplierInstrumentModePP(mode){
+    return /cheque|effet|lcr/i.test(normalizeText(String(mode||'')));
+}
+
+function ppSupplierPaymentAllocatedInvoicePP(payment={}){
+    const first=(Array.isArray(payment.allocations)?payment.allocations:[])[0];
+    return first?invoices.find(inv=>Number(inv.id)===Number(first.invoiceId)):null;
+}
+
+function ppSupplierPaymentTermDaysPP(payment={},supplier=null,invoice=null){
+    const explicit=Number(payment.paymentTermDays);
+    if(Number.isFinite(explicit)&&explicit>=0)return Math.round(explicit);
+    const invDays=Number(invoice?.paymentTermDays);
+    if(Number.isFinite(invDays)&&invDays>=0)return Math.round(invDays);
+    const linkedSupplier=supplier||suppliers.find(item=>Number(item.id)===Number(payment.supplierId));
+    return Math.max(Number(ppSupplierLegalTermPP(linkedSupplier||{}).days||0),0);
+}
+
+function ppNormalizeSupplierPaymentMaturityPP(raw={}){
+    const payment={...raw,amount:Number(raw.amount??0),allocations:Array.isArray(raw.allocations)?raw.allocations:[]};
+    const supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId));
+    const invoice=ppSupplierPaymentAllocatedInvoicePP(payment);
+    const paymentTermDays=ppSupplierPaymentTermDaysPP(payment,supplier,invoice);
+    const baseDate=String(invoice?.date||payment.date||'').slice(0,10);
+    const dueDate=String(payment.dueDate||invoice?.dueDate||ppAddCalendarDaysPP(baseDate,paymentTermDays)||'').slice(0,10);
+    const instrument=ppIsSupplierInstrumentModePP(payment.mode);
+    const allowed=new Set(['planned','cleared']);
+    const instrumentStatus=instrument?(allowed.has(String(payment.instrumentStatus))?String(payment.instrumentStatus):'planned'):'cleared';
+    return {...payment,paymentTermDays,dueDate,instrumentStatus};
+}
+
+function ppSupplierPaymentInstrumentStatusLabelPP(status){
+    return status==='cleared'?'Débité / passé en banque':'En circulation / à débiter';
+}
+
+function ppSupplierPaymentInstrumentBadgePP(payment={}){
+    if(!ppIsSupplierInstrumentModePP(payment.mode))return '<span class="status success">Réglé</span>';
+    const status=String(payment.instrumentStatus||'planned');
+    if(status==='cleared')return '<span class="status success">Débité</span>';
+    return '<span class="status warning">En circulation</span>';
+}
+
+function ensureSupplierPaymentModalPP(){
+    if(document.getElementById('ppSupplierPaymentModal'))return;
+    const modal=document.createElement('div');
+    modal.id='ppSupplierPaymentModal';
+    modal.className='modal-overlay';
+    modal.innerHTML=`<div class="modal"><div class="modal-header"><h2>💰 Règlement fournisseur</h2><button type="button" onclick="closeModal('ppSupplierPaymentModal')">×</button></div><form id="ppSupplierPaymentForm"><input type="hidden" id="ppSupplierPaymentId"><input type="hidden" id="ppSupplierPaymentSupplier"><div class="form-grid"><div><label>Fournisseur</label><input id="ppSupplierPaymentName" readonly></div><div><label>Date du règlement *</label><input id="ppSupplierPaymentDate" type="date" required onchange="ppSupplierPaymentDateChangedPP()"></div><div><label>Facture à affecter</label><select id="ppSupplierPaymentInvoice" onchange="ppSupplierPaymentInvoiceChangedPP()"></select></div><div><label>Montant *</label><input id="ppSupplierPaymentAmount" type="number" min="0.01" step="0.01" required></div><div><label>Mode</label><select id="ppSupplierPaymentMode" onchange="ppSupplierPaymentModeChangedPP()"><option>Espèces</option><option>Virement</option><option>Chèque</option><option>Carte</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div><div><label>Référence</label><input id="ppSupplierPaymentRef" placeholder="N° chèque / effet / virement..."></div><div><label>Délai de paiement (jours)</label><input id="ppSupplierPaymentTermDays" type="number" min="0" max="365" step="1" onchange="ppSupplierPaymentTermChangedPP()"></div><div><label>Date d'échéance *</label><input id="ppSupplierPaymentDueDate" type="date" required onchange="ppSupplierPaymentDueDateChangedPP()"></div><div id="ppSupplierInstrumentStatusBox" style="display:none"><label>Situation chèque / effet</label><select id="ppSupplierPaymentInstrumentStatus"><option value="planned">En circulation / à débiter</option><option value="cleared">Débité / passé en banque</option></select></div></div><div id="ppSupplierPaymentMaturityHelp" style="display:none"></div><div><label>Observation</label><textarea id="ppSupplierPaymentNote"></textarea></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppSupplierPaymentModal')">Annuler</button><button type="submit" class="btn primary">Enregistrer</button></div></form></div>`;
+    document.body.appendChild(modal);
+    document.getElementById('ppSupplierPaymentForm').addEventListener('submit',event=>{event.preventDefault();saveSupplierPaymentPP();});
+}
+
+function ppSupplierPaymentSelectedInvoicePP(){
+    const select=document.getElementById('ppSupplierPaymentInvoice');
+    const invoiceId=Number(select?.value)||Number(select?.dataset.defaultInvoiceId)||0;
+    return invoiceId?invoices.find(inv=>Number(inv.id)===invoiceId):null;
+}
+
+function ppSupplierPaymentDateChangedPP(){
+    const invoice=ppSupplierPaymentSelectedInvoicePP();
+    if(invoice)return;
+    const date=getValue('ppSupplierPaymentDate'),days=Math.max(Number(getValue('ppSupplierPaymentTermDays'))||0,0);
+    if(date)setValue('ppSupplierPaymentDueDate',ppAddCalendarDaysPP(date,days));
+}
+
+function ppSupplierPaymentInvoiceChangedPP(){
+    const invoice=ppSupplierPaymentSelectedInvoicePP();
+    const supplier=suppliers.find(item=>Number(item.id)===Number(getValue('ppSupplierPaymentSupplier')));
+    const days=invoice?Math.max(Number(invoice.paymentTermDays??ppSupplierLegalTermPP(supplier||{}).days)||0,0):Math.max(Number(ppSupplierLegalTermPP(supplier||{}).days)||0,0);
+    setValue('ppSupplierPaymentTermDays',days);
+    const base=String(invoice?.date||getValue('ppSupplierPaymentDate')||'').slice(0,10);
+    setValue('ppSupplierPaymentDueDate',String(invoice?.dueDate||ppAddCalendarDaysPP(base,days)||'').slice(0,10));
+    ppUpdateSupplierPaymentMaturityHelpPP();
+}
+
+function ppSupplierPaymentTermChangedPP(){
+    const invoice=ppSupplierPaymentSelectedInvoicePP();
+    const days=Math.max(Math.round(Number(getValue('ppSupplierPaymentTermDays'))||0),0);
+    setValue('ppSupplierPaymentTermDays',days);
+    const base=String(invoice?.date||getValue('ppSupplierPaymentDate')||'').slice(0,10);
+    if(base)setValue('ppSupplierPaymentDueDate',ppAddCalendarDaysPP(base,days));
+    ppUpdateSupplierPaymentMaturityHelpPP();
+}
+
+function ppSupplierPaymentDueDateChangedPP(){
+    const invoice=ppSupplierPaymentSelectedInvoicePP();
+    const base=String(invoice?.date||getValue('ppSupplierPaymentDate')||'').slice(0,10),due=String(getValue('ppSupplierPaymentDueDate')||'').slice(0,10);
+    if(base&&due){
+        const days=Math.max(ppDaysBetweenISOPP(base,due),0);
+        setValue('ppSupplierPaymentTermDays',days);
+    }
+    ppUpdateSupplierPaymentMaturityHelpPP();
+}
+
+function ppUpdateSupplierPaymentMaturityHelpPP(){
+    const mode=getValue('ppSupplierPaymentMode'),instrument=ppIsSupplierInstrumentModePP(mode),help=document.getElementById('ppSupplierPaymentMaturityHelp');
+    const statusBox=document.getElementById('ppSupplierInstrumentStatusBox');
+    if(statusBox)statusBox.style.display=instrument?'block':'none';
+    const dueInput=document.getElementById('ppSupplierPaymentDueDate');
+    if(dueInput)dueInput.required=true;
+    if(help)help.innerHTML=instrument?`La date d'échéance alimente automatiquement la <strong>situation mensuelle des ${normalizeText(mode).includes('effet')?'effets':'chèques'}</strong> dans l'Échéancier. Le délai est repris de la facture ou de la fiche fournisseur, puis reste modifiable.`:`Le délai et la date d'échéance sont repris de la facture ou de la fiche fournisseur. Seuls les chèques et effets apparaissent dans la situation mensuelle des titres à débiter.`;
+}
+
+function ppUpdateSupplierPaymentMaturityVisibilityPP(){
+    ppUpdateSupplierPaymentMaturityHelpPP();
+}
+
+function ppSupplierPaymentModeChangedPP(){
+    const instrument=ppIsSupplierInstrumentModePP(getValue('ppSupplierPaymentMode'));
+    const box=document.getElementById('ppSupplierInstrumentStatusBox');
+    const wasInstrument=box?.dataset.wasInstrument==='1';
+    if(instrument&&!wasInstrument)setValue('ppSupplierPaymentInstrumentStatus','planned');
+    if(!instrument)setValue('ppSupplierPaymentInstrumentStatus','cleared');
+    if(box)box.dataset.wasInstrument=instrument?'1':'0';
+    ppUpdateSupplierPaymentMaturityHelpPP();
+}
+
+function openSupplierPaymentPP(id,paymentId=null){
+    ensureSupplierPaymentModalPP();
+    const raw=paymentId?supplierPaymentsPP.find(item=>Number(item.id)===Number(paymentId)):null;
+    const payment=raw?ppNormalizeSupplierPaymentMaturityPP(raw):null;
+    const supplierId=payment?Number(payment.supplierId):Number(id);
+    const supplier=suppliers.find(item=>Number(item.id)===supplierId);if(!supplier)return;
+    setValue('ppSupplierPaymentId',payment?.id||'');
+    setValue('ppSupplierPaymentSupplier',supplier.id);
+    setValue('ppSupplierPaymentName',supplier.name);
+    setValue('ppSupplierPaymentDate',payment?.date||new Date().toISOString().slice(0,10));
+    setValue('ppSupplierPaymentAmount',payment?.amount||'');
+    setValue('ppSupplierPaymentMode',payment?.mode||'Espèces');
+    setValue('ppSupplierPaymentRef',payment?.reference||'');
+    setValue('ppSupplierPaymentNote',payment?.note||'');
+    const allocatedIds=new Set((payment?.allocations||[]).map(allocation=>Number(allocation.invoiceId)));
+    const supplierInvoices=supplierInvoicesPP(supplierId).filter(invoice=>Number(invoice.due||0)>0||allocatedIds.has(Number(invoice.id))).sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));
+    const select=document.getElementById('ppSupplierPaymentInvoice');
+    select.innerHTML='<option value="">Affectation automatique — plus anciennes factures</option>'+supplierInvoices.map(invoice=>`<option value="${invoice.id}">${escapeHTML(invoice.number)} — échéance ${invoice.dueDate?formatDate(invoice.dueDate):'-'} — reste ${formatMoney(invoice.due)}</option>`).join('');
+    const allocatedInvoice=ppSupplierPaymentAllocatedInvoicePP(payment||{});
+    select.dataset.defaultInvoiceId=String(allocatedInvoice?.id||supplierInvoices[0]?.id||'');
+    if(payment&&(payment.allocations||[]).length===1)setValue('ppSupplierPaymentInvoice',payment.allocations[0].invoiceId);
+    const selectedInvoice=ppSupplierPaymentSelectedInvoicePP()||allocatedInvoice;
+    const termDays=payment?payment.paymentTermDays:ppSupplierPaymentTermDaysPP({},supplier,selectedInvoice);
+    const base=String(selectedInvoice?.date||getValue('ppSupplierPaymentDate')||'').slice(0,10);
+    setValue('ppSupplierPaymentTermDays',termDays);
+    setValue('ppSupplierPaymentDueDate',payment?.dueDate||selectedInvoice?.dueDate||ppAddCalendarDaysPP(base,termDays));
+    setValue('ppSupplierPaymentInstrumentStatus',payment?.instrumentStatus||(ppIsSupplierInstrumentModePP(payment?.mode)?'planned':'cleared'));
+    const statusBox=document.getElementById('ppSupplierInstrumentStatusBox');
+    if(statusBox)statusBox.dataset.wasInstrument=ppIsSupplierInstrumentModePP(getValue('ppSupplierPaymentMode'))?'1':'0';
+    ppUpdateSupplierPaymentMaturityVisibilityPP();
+    openModal('ppSupplierPaymentModal');
+}
+
+function saveSupplierPaymentPP(){
+    const paymentId=Number(getValue('ppSupplierPaymentId'))||null;
+    const supplierId=Number(getValue('ppSupplierPaymentSupplier')),amount=Number(getValue('ppSupplierPaymentAmount'));
+    if(!(amount>0)){alert('Veuillez saisir un montant valide.');return;}
+    const supplier=suppliers.find(item=>Number(item.id)===supplierId);if(!supplier)return;
+    const date=String(getValue('ppSupplierPaymentDate')||'').slice(0,10),dueDate=String(getValue('ppSupplierPaymentDueDate')||'').slice(0,10);
+    const paymentTermDays=Math.max(Math.round(Number(getValue('ppSupplierPaymentTermDays'))||0),0),mode=getValue('ppSupplierPaymentMode');
+    if(!date){alert('Veuillez sélectionner la date du règlement.');return;}
+    if(!dueDate){alert("Veuillez sélectionner la date d'échéance.");return;}
+    if(dueDate<date&&!ppSupplierPaymentSelectedInvoicePP()){if(!confirm("La date d'échéance est antérieure à la date du règlement. Continuer ?"))return;}
+    if(ppIsSupplierInstrumentModePP(mode)&&!getValue('ppSupplierPaymentRef').trim()){alert('Veuillez saisir le numéro du chèque ou de l’effet.');return;}
+    const old=paymentId?supplierPaymentsPP.find(item=>Number(item.id)===paymentId):null;
+    if(old)rollbackSupplierPaymentPP(old);
+    let remaining=amount;const allocations=[];const selected=Number(getValue('ppSupplierPaymentInvoice'))||0;
+    const targets=selected?invoices.filter(invoice=>Number(invoice.id)===selected):supplierInvoicesPP(supplierId).filter(invoice=>Number(invoice.due||0)>0).sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));
+    for(const invoice of targets){
+        if(remaining<=0)break;
+        const due=Math.max(Number(invoice.totalTTC||0)-Number(invoice.paid||0),0),part=Math.min(remaining,due);if(part<=0)continue;
+        invoice.paid=Number(invoice.paid||0)+part;invoice.due=Math.max(Number(invoice.totalTTC||0)-Number(invoice.paid||0),0);
+        allocations.push({invoiceId:invoice.id,amount:part});remaining-=part;
+    }
+    const instrument=ppIsSupplierInstrumentModePP(mode);
+    const obj=ppNormalizeSupplierPaymentMaturityPP({id:paymentId||createId(),supplierId,amount,date,dueDate,paymentTermDays,mode,reference:getValue('ppSupplierPaymentRef').trim(),note:getValue('ppSupplierPaymentNote').trim(),instrumentStatus:instrument?(getValue('ppSupplierPaymentInstrumentStatus')||'planned'):'cleared',allocations,createdAt:old?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()});
+    if(paymentId){const index=supplierPaymentsPP.findIndex(item=>Number(item.id)===paymentId);if(index>=0)supplierPaymentsPP[index]=obj;}else supplierPaymentsPP.push(obj);
+    supplier.paid=Number(supplier.paid||0)+amount;
+    saveData();closeModal('ppSupplierPaymentModal');renderAll();renderPaymentsCenterPP();
+}
+
+function ppEnsureSupplierPaymentScheduleColumnsPP(){
+    const table=document.getElementById('ppSupplierPaymentsTable')?.closest('table');if(!table)return;
+    table.style.minWidth='1320px';
+    const head=table.querySelector('thead tr');
+    if(head)head.innerHTML='<th>Date règlement</th><th>Fournisseur</th><th>Montant</th><th>Mode</th><th>Référence</th><th>Délai</th><th>Échéance</th><th>Situation</th><th>Facture(s) affectée(s)</th><th>Actions</th>';
+}
+
+function filteredSupplierPaymentsPP(){
+    const from=getValue('ppSupplierPayFrom'),to=getValue('ppSupplierPayTo'),mode=getValue('ppSupplierPayMode'),query=normalizeText(getValue('ppSupplierPaySearch'));
+    return supplierPaymentsPP.map(ppNormalizeSupplierPaymentMaturityPP).filter(payment=>{
+        const date=String(payment.date||'').slice(0,10);if(from&&date<from)return false;if(to&&date>to)return false;if(mode&&String(payment.mode)!==mode)return false;
+        const supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId));
+        const hay=normalizeText(`${supplier?.name||''} ${payment.reference||''} ${payment.dueDate||''} ${payment.paymentTermDays||0} ${supplierPaymentInvoiceLabelsPP(payment)}`);
+        return !query||hay.includes(query);
+    });
+}
+
+function renderSupplierPaymentsPP(){
+    ensureSupplierSubmenuPP();ppEnsureSupplierPaymentScheduleColumnsPP();
+    const table=document.getElementById('ppSupplierPaymentsTable');if(!table)return;
+    const rows=filteredSupplierPaymentsPP().slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+    setText('ppSupplierPaymentsTotal',formatMoney(rows.reduce((sum,payment)=>sum+Number(payment.amount||0),0)));
+    if(!rows.length){table.innerHTML='<tr><td colspan="10" class="empty">Aucun règlement fournisseur enregistré.</td></tr>';return;}
+    table.innerHTML=rows.map(payment=>{const supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId));return `<tr><td>${formatDate(payment.date)}</td><td><strong>${escapeHTML(supplier?.name||'-')}</strong></td><td>${formatMoney(payment.amount)}</td><td>${escapeHTML(payment.mode||'-')}</td><td>${escapeHTML(payment.reference||'-')}</td><td>${formatNumber(payment.paymentTermDays||0)} j</td><td><strong>${payment.dueDate?formatDate(payment.dueDate):'-'}</strong></td><td>${ppSupplierPaymentInstrumentBadgePP(payment)}</td><td>${escapeHTML(supplierPaymentInvoiceLabelsPP(payment))}</td><td><div class="action-buttons"><button class="btn small edit" onclick="openSupplierPaymentPP(${payment.supplierId},${payment.id})">✏️</button><button class="btn small print" onclick="printSingleSupplierPaymentPP(${payment.id})">🖨️</button><button class="btn small danger" onclick="deleteSupplierPaymentPP(${payment.id})">🗑️</button></div></td></tr>`;}).join('');
+}
+
+function printSingleSupplierPaymentPP(id){
+    const raw=supplierPaymentsPP.find(item=>Number(item.id)===Number(id));if(!raw)return;const payment=ppNormalizeSupplierPaymentMaturityPP(raw),supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId));
+    printDocument('Règlement fournisseur',`<div class="doc-head"><h1>Pause & Plate</h1><p>Règlement fournisseur</p></div>${detailRowsHTML([['Date du règlement',formatDate(payment.date)],['Fournisseur',supplier?.name||'-'],['Montant',formatMoney(payment.amount)],['Mode',payment.mode||'-'],['Référence',payment.reference||'-'],['Délai de paiement',`${formatNumber(payment.paymentTermDays||0)} jours`],['Date d’échéance',payment.dueDate?formatDate(payment.dueDate):'-'],['Situation',ppIsSupplierInstrumentModePP(payment.mode)?ppSupplierPaymentInstrumentStatusLabelPP(payment.instrumentStatus):'Réglé'],['Facture(s)',supplierPaymentInvoiceLabelsPP(payment)],['Observation',payment.note||'-']])}`);
+}
+
+function printSupplierPaymentsListPP(){
+    const rows=filteredSupplierPaymentsPP().slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+    const body=rows.map(payment=>{const supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId));return `<tr><td>${formatDate(payment.date)}</td><td>${escapeHTML(supplier?.name||'-')}</td><td>${formatMoney(payment.amount)}</td><td>${escapeHTML(payment.mode||'-')}</td><td>${escapeHTML(payment.reference||'-')}</td><td>${formatNumber(payment.paymentTermDays||0)} j</td><td>${payment.dueDate?formatDate(payment.dueDate):'-'}</td><td>${escapeHTML(ppIsSupplierInstrumentModePP(payment.mode)?ppSupplierPaymentInstrumentStatusLabelPP(payment.instrumentStatus):'Réglé')}</td><td>${escapeHTML(supplierPaymentInvoiceLabelsPP(payment))}</td></tr>`;}).join('');
+    printDocument('Règlements fournisseurs',`<div class="doc-head"><h1>Pause & Plate</h1><p>Règlements fournisseurs</p></div><p><strong>Total :</strong> ${formatMoney(rows.reduce((sum,payment)=>sum+Number(payment.amount||0),0))}</p><table><thead><tr><th>Date</th><th>Fournisseur</th><th>Montant</th><th>Mode</th><th>Référence</th><th>Délai</th><th>Échéance</th><th>Situation</th><th>Facture(s)</th></tr></thead><tbody>${body||'<tr><td colspan="9">Aucune donnée</td></tr>'}</tbody></table>`);
+}
+
+function ppSupplierInstrumentScheduleStatusPP(payment={}){
+    const instrumentStatus=String(payment.instrumentStatus||'planned');
+    if(instrumentStatus==='cleared')return {code:'paid',label:'Débité / passé en banque',days:0};
+        const date=String(payment.dueDate||'').slice(0,10),today=ppTodayISOPP();
+    if(!date)return {code:'undated',label:'Sans échéance',days:null};
+    if(date<today){const days=ppDaysBetweenISOPP(date,today);return {code:'overdue',label:`Échu depuis ${days} j — à vérifier`,days:-days};}
+    if(date===today)return {code:'today',label:"À débiter aujourd’hui",days:0};
+    const days=ppDaysBetweenISOPP(today,date);return days<=7?{code:'soon',label:`À débiter dans ${days} j`,days}:{code:'upcoming',label:`À débiter dans ${days} j`,days};
+}
+
+function ppSupplierInstrumentRowsPP(){
+    return supplierPaymentsPP.map(ppNormalizeSupplierPaymentMaturityPP).filter(payment=>ppIsSupplierInstrumentModePP(payment.mode)).map(payment=>{
+        const supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId)),status=ppSupplierInstrumentScheduleStatusPP(payment),closed=String(payment.instrumentStatus)==='cleared';
+        return {id:`instrument:${payment.id}`,kind:'instrument',flow:'payable',type:normalizeText(payment.mode).includes('effet')?'Effet / LCR fournisseur':'Chèque fournisseur',mode:payment.mode||'',party:supplier?.name||'-',number:payment.reference||`REG-${payment.id}`,date:payment.date,dueDate:payment.dueDate,total:Number(payment.amount||0),paid:closed?Number(payment.amount||0):0,remaining:closed?0:Number(payment.amount||0),status,sourceId:payment.id,supplierId:payment.supplierId,paymentTermDays:Number(payment.paymentTermDays||0),instrumentStatus:payment.instrumentStatus||'planned'};
+    });
+}
+
+function ppScheduleRowsPP(){
+    const rows=[];
+    invoices.forEach(inv=>{const info=ppInvoiceDeadlineInfoPP(inv),supplier=suppliers.find(item=>Number(item.id)===Number(inv.supplierId)),days=Number(inv.paymentTermDays??ppSupplierLegalTermPP(supplier||{}).days)||0,status=ppScheduleStatusPP(info.dueDate,info.remaining);rows.push({id:`supplier:${inv.id}`,kind:'supplier',flow:'payable',type:'Facture fournisseur',mode:`Délai ${days} j`,party:inv.supplierName||'-',number:inv.number||'-',date:inv.date,dueDate:info.dueDate,total:info.total,paid:info.paid,remaining:info.remaining,status,sourceId:inv.id,paymentTermDays:days});});
+    expensesPP.forEach(expense=>{const totals=ppExpensePaymentTotalsPP(expense),dueDate=String(expense.dueDate||expense.date||'').slice(0,10),status=ppScheduleStatusPP(dueDate,totals.due);rows.push({id:`expense:${expense.id}`,kind:'expense',flow:'payable',type:'Dépense / charge',mode:'-',party:expense.beneficiary||expense.category||'-',number:expense.reference||`DEP-${expense.id}`,date:expense.date,dueDate,total:totals.total,paid:totals.paid,remaining:totals.due,status,sourceId:expense.id});});
+    clientInvoicesPP.forEach(inv=>{const total=Math.max(Number(inv.totalTTC||0),0),paid=Math.min(Math.max(Number(inv.paid||0),0),total),remaining=Math.max(total-paid,0),dueDate=String(inv.dueDate||inv.date||'').slice(0,10),status=ppScheduleStatusPP(dueDate,remaining);rows.push({id:`client:${inv.id}`,kind:'client',flow:'receivable',type:'Facture client',mode:'-',party:inv.clientName||'-',number:inv.number||'-',date:inv.date,dueDate,total,paid,remaining,status,sourceId:inv.id});});
+    rows.push(...ppSupplierInstrumentRowsPP());
+    return rows.sort((a,b)=>String(a.dueDate||'9999').localeCompare(String(b.dueDate||'9999'))||String(a.party).localeCompare(String(b.party),'fr'));
+}
+
+function ppFilteredScheduleRowsPP(){
+    const {flow,kind,status,from,to,search}=ppScheduleFiltersPP,query=normalizeText(search);
+    return ppScheduleRowsPP().filter(row=>{if(flow&&row.flow!==flow)return false;if(kind&&row.kind!==kind)return false;if(status&&row.status.code!==status)return false;if(from&&row.dueDate&&row.dueDate<from)return false;if(to&&row.dueDate&&row.dueDate>to)return false;if(query&&!normalizeText(`${row.party} ${row.number} ${row.type} ${row.mode||''} ${row.paymentTermDays||''}`).includes(query))return false;return true;});
+}
+
+function ppScheduleBadgePP(status){
+    const classes={paid:'success',overdue:'danger',today:'warning',soon:'warning',upcoming:'info',undated:'warning'};
+    return `<span class="status ${classes[status.code]||'info'}">${escapeHTML(status.label)}</span>`;
+}
+
+function ppMonthKeyLabelPP(key){
+    if(key==='undated')return 'Sans date';
+    const parts=String(key).split('-').map(Number);if(parts.length!==2||!parts[0]||!parts[1])return key;
+    const label=new Intl.DateTimeFormat('fr-FR',{month:'long',year:'numeric'}).format(new Date(parts[0],parts[1]-1,1));
+    return label.charAt(0).toUpperCase()+label.slice(1);
+}
+
+function ppSupplierInstrumentMonthlyGroupsPP(){
+    const firstCurrentMonth=ppTodayISOPP().slice(0,7)+'-01',groups=new Map();
+    ppSupplierInstrumentRowsPP().filter(row=>row.remaining>0.005&&(!row.dueDate||row.dueDate>=firstCurrentMonth)).forEach(row=>{
+        const key=row.dueDate?row.dueDate.slice(0,7):'undated';
+        if(!groups.has(key))groups.set(key,{key,chequeCount:0,chequeAmount:0,effectCount:0,effectAmount:0,total:0});
+        const group=groups.get(key),effect=normalizeText(row.mode).includes('effet');
+        if(effect){group.effectCount++;group.effectAmount+=row.remaining;}else{group.chequeCount++;group.chequeAmount+=row.remaining;}
+        group.total+=row.remaining;
+    });
+    return [...groups.values()].sort((a,b)=>a.key==='undated'?1:b.key==='undated'?-1:a.key.localeCompare(b.key));
+}
+
+function ppScheduleMonthBoundsPP(key){
+    const [year,month]=String(key).split('-').map(Number);if(!year||!month)return {from:'',to:''};
+    const last=new Date(year,month,0).getDate();return {from:`${year}-${String(month).padStart(2,'0')}-01`,to:`${year}-${String(month).padStart(2,'0')}-${String(last).padStart(2,'0')}`};
+}
+
+function ppFilterInstrumentMonthPP(key){
+    const bounds=ppScheduleMonthBoundsPP(key);ppScheduleFiltersPP={...ppScheduleFiltersPP,flow:'payable',kind:'instrument',status:'',from:bounds.from,to:bounds.to};renderAccountingPP();
+}
+
+function ppInstrumentMonthlySituationHTMLPP(){
+    const groups=ppSupplierInstrumentMonthlyGroupsPP(),overdue=ppSupplierInstrumentRowsPP().filter(row=>row.remaining>0.005&&row.dueDate&&row.dueDate<ppTodayISOPP());
+    return `<div class="pp-acc-panel" style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px"><div><h3 style="margin:0">🧾 Situation mensuelle des chèques et effets</h3><p style="margin:4px 0 0;color:#667085">Titres fournisseurs encore en circulation, regroupés selon leur date d'échéance.</p></div><div class="stat-card" style="padding:10px 14px;min-width:190px"><small>Échus à vérifier</small><strong style="display:block;color:#b42318">${overdue.length} · ${formatMoney(overdue.reduce((sum,row)=>sum+row.remaining,0))}</strong></div></div><div style="overflow:auto"><table style="min-width:760px"><thead><tr><th>Mois de passage</th><th>Chèques</th><th>Montant chèques</th><th>Effets / LCR</th><th>Montant effets</th><th>Total prévu</th><th></th></tr></thead><tbody>${groups.map(group=>`<tr><td><strong>${escapeHTML(ppMonthKeyLabelPP(group.key))}</strong></td><td>${group.chequeCount}</td><td>${formatMoney(group.chequeAmount)}</td><td>${group.effectCount}</td><td>${formatMoney(group.effectAmount)}</td><td class="pp-acc-negative"><strong>${formatMoney(group.total)}</strong></td><td>${group.key!=='undated'?`<button class="btn small view" onclick="ppFilterInstrumentMonthPP('${group.key}')">Voir le mois</button>`:''}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">Aucun chèque ou effet fournisseur en circulation.</td></tr>'}</tbody></table></div></div>`;
+}
+
+function ppScheduleActionHTMLPP(row){
+    if(row.kind==='supplier')return `<button class="btn small view" onclick="viewInvoice(${row.sourceId})">👁️</button>`;
+    if(row.kind==='expense')return `<button class="btn small edit" onclick="openExpensePP(${row.sourceId})">✏️</button>`;
+    if(row.kind==='client')return `<button class="btn small edit" onclick="openClientInvoicePP(${row.sourceId})">✏️</button>`;
+    if(row.kind==='instrument')return `<button class="btn small edit" onclick="openSupplierPaymentPP(${row.supplierId},${row.sourceId})">✏️</button>`;
+    return '';
+}
+
+function renderUnifiedSchedulePP(){
+    const rows=ppFilteredScheduleRowsPP(),open=rows.filter(row=>row.remaining>0.005),payables=open.filter(row=>row.flow==='payable'),receivables=open.filter(row=>row.flow==='receivable'),overduePay=payables.filter(row=>row.status.code==='overdue'),overdueReceive=receivables.filter(row=>row.status.code==='overdue'),soon=open.filter(row=>['today','soon'].includes(row.status.code));
+    return `<div class="pp-acc-toolbar"><div><h3 style="margin:0">📅 État d’échéancier</h3></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn print" onclick="printUnifiedSchedulePP()">🖨️ Imprimer</button><button class="btn" onclick="exportUnifiedScheduleExcelPP()">📊 Excel</button></div></div>
+      ${ppInstrumentMonthlySituationHTMLPP()}
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px"><div class="stat-card" style="padding:15px"><small>À décaisser</small><strong class="pp-acc-negative" style="display:block;font-size:21px">${formatMoney(payables.reduce((sum,row)=>sum+row.remaining,0))}</strong></div><div class="stat-card" style="padding:15px"><small>À encaisser</small><strong class="pp-acc-positive" style="display:block;font-size:21px">${formatMoney(receivables.reduce((sum,row)=>sum+row.remaining,0))}</strong></div><div class="stat-card" style="padding:15px"><small>Retards fournisseurs / charges / titres</small><strong style="display:block;font-size:21px;color:#b42318">${formatMoney(overduePay.reduce((sum,row)=>sum+row.remaining,0))}</strong></div><div class="stat-card" style="padding:15px"><small>Retards clients</small><strong style="display:block;font-size:21px;color:#b42318">${formatMoney(overdueReceive.reduce((sum,row)=>sum+row.remaining,0))}</strong></div><div class="stat-card" style="padding:15px"><small>Échéances ≤ 7 jours</small><strong style="display:block;font-size:21px">${soon.length}</strong></div></div>
+      <div class="pp-acc-filters" style="display:grid"><div><label>Flux</label><select id="ppScheduleFlow" onchange="ppSetScheduleFilterPP('flow',this.value)"><option value="" ${!ppScheduleFiltersPP.flow?'selected':''}>À payer + à encaisser</option><option value="payable" ${ppScheduleFiltersPP.flow==='payable'?'selected':''}>À décaisser</option><option value="receivable" ${ppScheduleFiltersPP.flow==='receivable'?'selected':''}>À encaisser</option></select></div><div><label>Nature</label><select id="ppScheduleKind" onchange="ppSetScheduleFilterPP('kind',this.value)"><option value="" ${!ppScheduleFiltersPP.kind?'selected':''}>Toutes</option><option value="supplier" ${ppScheduleFiltersPP.kind==='supplier'?'selected':''}>Factures fournisseurs</option><option value="instrument" ${ppScheduleFiltersPP.kind==='instrument'?'selected':''}>Chèques / effets fournisseurs</option><option value="expense" ${ppScheduleFiltersPP.kind==='expense'?'selected':''}>Dépenses / charges</option><option value="client" ${ppScheduleFiltersPP.kind==='client'?'selected':''}>Factures clients</option></select></div><div><label>Situation</label><select id="ppScheduleStatus" onchange="ppSetScheduleFilterPP('status',this.value)"><option value="" ${!ppScheduleFiltersPP.status?'selected':''}>Toutes</option><option value="overdue" ${ppScheduleFiltersPP.status==='overdue'?'selected':''}>En retard / échu</option><option value="today" ${ppScheduleFiltersPP.status==='today'?'selected':''}>Aujourd’hui</option><option value="soon" ${ppScheduleFiltersPP.status==='soon'?'selected':''}>≤ 7 jours</option><option value="upcoming" ${ppScheduleFiltersPP.status==='upcoming'?'selected':''}>À venir</option><option value="paid" ${ppScheduleFiltersPP.status==='paid'?'selected':''}>Soldées / débitée</option><option value="undated" ${ppScheduleFiltersPP.status==='undated'?'selected':''}>Sans échéance</option></select></div><div><label>Échéance du</label><input id="ppScheduleFrom" type="date" value="${escapeHTML(ppScheduleFiltersPP.from)}" onchange="ppSetScheduleFilterPP('from',this.value)"></div><div><label>Au</label><input id="ppScheduleTo" type="date" value="${escapeHTML(ppScheduleFiltersPP.to)}" onchange="ppSetScheduleFilterPP('to',this.value)"></div><div><label>Recherche</label><input id="ppScheduleSearch" value="${escapeHTML(ppScheduleFiltersPP.search)}" placeholder="Tiers, facture, chèque, référence…" oninput="ppSetScheduleFilterPP('search',this.value)"></div></div>
+      <div class="pp-acc-panel"><table style="min-width:1420px"><thead><tr><th>Flux</th><th>Nature</th><th>Mode / délai</th><th>Tiers</th><th>Pièce / référence</th><th>Date</th><th>Échéance</th><th>Total</th><th>Réglé / passé</th><th>Reste prévu</th><th>Situation</th><th>Action</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${row.flow==='payable'?'<span class="status danger">À décaisser</span>':'<span class="status success">À encaisser</span>'}</td><td>${escapeHTML(row.type)}</td><td>${escapeHTML(row.mode||'-')}${row.kind==='instrument'?`<br><small>${formatNumber(row.paymentTermDays||0)} j</small>`:''}</td><td><strong>${escapeHTML(row.party)}</strong></td><td>${escapeHTML(row.number)}</td><td>${formatDate(row.date)}</td><td><strong>${row.dueDate?formatDate(row.dueDate):'-'}</strong></td><td>${formatMoney(row.total)}</td><td>${formatMoney(row.paid)}</td><td class="${row.flow==='payable'?'pp-acc-negative':'pp-acc-positive'}"><strong>${formatMoney(row.remaining)}</strong></td><td>${ppScheduleBadgePP(row.status)}</td><td>${ppScheduleActionHTMLPP(row)}</td></tr>`).join('')||'<tr><td colspan="12" class="empty">Aucune échéance pour les filtres sélectionnés.</td></tr>'}</tbody></table></div>`;
+}
+
+function printUnifiedSchedulePP(){
+    const rows=ppFilteredScheduleRowsPP(),groups=ppSupplierInstrumentMonthlyGroupsPP();
+    const monthRows=groups.map(group=>`<tr><td>${escapeHTML(ppMonthKeyLabelPP(group.key))}</td><td>${group.chequeCount}</td><td>${formatMoney(group.chequeAmount)}</td><td>${group.effectCount}</td><td>${formatMoney(group.effectAmount)}</td><td>${formatMoney(group.total)}</td></tr>`).join('');
+    const body=rows.map(row=>`<tr><td>${row.flow==='payable'?'À décaisser':'À encaisser'}</td><td>${escapeHTML(row.type)}</td><td>${escapeHTML(row.mode||'-')}</td><td>${escapeHTML(row.party)}</td><td>${escapeHTML(row.number)}</td><td>${formatDate(row.date)}</td><td>${row.dueDate?formatDate(row.dueDate):'-'}</td><td>${formatMoney(row.total)}</td><td>${formatMoney(row.paid)}</td><td>${formatMoney(row.remaining)}</td><td>${escapeHTML(row.status.label)}</td></tr>`).join('');
+    printDocument('État d’échéancier',`<div class="doc-head"><h1>Pause & Plate</h1><p>État d’échéancier</p></div><h2>Situation mensuelle des chèques et effets</h2><table><thead><tr><th>Mois</th><th>Nb chèques</th><th>Montant chèques</th><th>Nb effets</th><th>Montant effets</th><th>Total</th></tr></thead><tbody>${monthRows||'<tr><td colspan="6">Aucun titre en circulation.</td></tr>'}</tbody></table><h2>Détail de l'échéancier</h2><table><thead><tr><th>Flux</th><th>Nature</th><th>Mode / délai</th><th>Tiers</th><th>Pièce</th><th>Date</th><th>Échéance</th><th>Total</th><th>Réglé</th><th>Reste</th><th>Situation</th></tr></thead><tbody>${body||'<tr><td colspan="11">Aucune échéance.</td></tr>'}</tbody></table>`);
+}
+
+function exportUnifiedScheduleExcelPP(){
+    if(typeof XLSX==='undefined'){alert('La bibliothèque Excel n’est pas chargée.');return;}
+    const detail=ppFilteredScheduleRowsPP().map(row=>({Flux:row.flow==='payable'?'À décaisser':'À encaisser',Nature:row.type,Mode_Delai:row.mode||'',Tiers:row.party,Piece_Reference:row.number,Date:row.date,Echeance:row.dueDate,Total:row.total,Regle_Passe:row.paid,Reste_Prevu:row.remaining,Situation:row.status.label}));
+    const monthly=ppSupplierInstrumentMonthlyGroupsPP().map(group=>({Mois:ppMonthKeyLabelPP(group.key),Nombre_cheques:group.chequeCount,Montant_cheques:group.chequeAmount,Nombre_effets_LCR:group.effectCount,Montant_effets_LCR:group.effectAmount,Total_prevu:group.total}));
+    const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,XLSX.utils.json_to_sheet(detail),'Echeancier');XLSX.utils.book_append_sheet(book,XLSX.utils.json_to_sheet(monthly),'Cheques_Effets_Mois');XLSX.writeFile(book,`echeancier-cheques-effets-${ppTodayISOPP()}.xlsx`);
+}
+
+supplierPaymentsPP=supplierPaymentsPP.map(ppNormalizeSupplierPaymentMaturityPP);
+
+/* =========================================================
+   VALIDATION BANCAIRE DES RÈGLEMENTS FOURNISSEURS — 2026-08-05
+   Un règlement différé ne solde la facture qu'après validation banque.
+   Virement et espèces restent immédiatement réglés.
+========================================================= */
+
+function ppIsChequeEffectModePP(mode){
+    return /cheque|effet|lcr/i.test(normalizeText(String(mode||'')));
+}
+
+function ppIsSupplierInstrumentModePP(mode){
+    const value=normalizeText(String(mode||''));
+    return /cheque|effet|lcr|carte|prelevement|autre bancaire/i.test(value);
+}
+
+function ppSupplierPaymentIsSettledPP(payment={}){
+    return !ppIsSupplierInstrumentModePP(payment.mode)||String(payment.instrumentStatus||'planned')==='cleared';
+}
+
+function ppNormalizeSupplierPaymentMaturityPP(raw={}){
+    const payment={...raw,amount:Number(raw.amount??0),allocations:Array.isArray(raw.allocations)?raw.allocations:[]};
+    const supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId));
+    const invoice=ppSupplierPaymentAllocatedInvoicePP(payment);
+    const paymentTermDays=ppSupplierPaymentTermDaysPP(payment,supplier,invoice);
+    const baseDate=String(invoice?.date||payment.date||'').slice(0,10);
+    const dueDate=String(payment.dueDate||invoice?.dueDate||ppAddCalendarDaysPP(baseDate,paymentTermDays)||'').slice(0,10);
+    const needsValidation=ppIsSupplierInstrumentModePP(payment.mode);
+    const allowed=new Set(['planned','cleared']);
+    const instrumentStatus=needsValidation?(allowed.has(String(payment.instrumentStatus))?String(payment.instrumentStatus):'planned'):'cleared';
+    const bankValidationDate=instrumentStatus==='cleared'&&needsValidation
+        ? String(payment.bankValidationDate||payment.clearedDate||payment.dueDate||payment.date||'').slice(0,10)
+        : '';
+    return {...payment,paymentTermDays,dueDate,instrumentStatus,bankValidationDate};
+}
+
+function ppSupplierPaymentInstrumentStatusLabelPP(status){
+    return status==='cleared'?'Validé / débité par la banque':'En attente de validation bancaire';
+}
+
+function ppSupplierPaymentInstrumentBadgePP(payment={}){
+    if(!ppIsSupplierInstrumentModePP(payment.mode))return '<span class="status success">Réglé</span>';
+    const normalized=ppNormalizeSupplierPaymentMaturityPP(payment);
+    if(normalized.instrumentStatus==='cleared'){
+        return `<span class="status success">Validé banque</span>${normalized.bankValidationDate?`<br><small>${formatDate(normalized.bankValidationDate)}</small>`:''}`;
+    }
+    return '<span class="status warning">En attente banque</span>';
+}
+
+function ppEnsureSupplierSettlementBasesPP(){
+    invoices.forEach(invoice=>{
+        if(Object.prototype.hasOwnProperty.call(invoice,'ppDirectPaidBase'))return;
+        const allocated=supplierPaymentsPP.reduce((sum,payment)=>sum+(payment.allocations||[])
+            .filter(allocation=>Number(allocation.invoiceId)===Number(invoice.id))
+            .reduce((subtotal,allocation)=>subtotal+Math.max(Number(allocation.amount||0),0),0),0);
+        invoice.ppDirectPaidBase=Math.max(Number(invoice.paid||0)-allocated,0);
+    });
+    suppliers.forEach(supplier=>{
+        if(Object.prototype.hasOwnProperty.call(supplier,'ppDirectPaidBase'))return;
+        const payments=supplierPaymentsPP
+            .filter(payment=>Number(payment.supplierId)===Number(supplier.id))
+            .reduce((sum,payment)=>sum+Math.max(Number(payment.amount||0),0),0);
+        supplier.ppDirectPaidBase=Math.max(Number(supplier.paid||0)-payments,0);
+    });
+}
+
+function ppRebuildSupplierSettlementStatePP(){
+    supplierPaymentsPP=supplierPaymentsPP.map(ppNormalizeSupplierPaymentMaturityPP);
+    ppEnsureSupplierSettlementBasesPP();
+    invoices.forEach(invoice=>{
+        const settledAllocated=supplierPaymentsPP.filter(ppSupplierPaymentIsSettledPP).reduce((sum,payment)=>sum+(payment.allocations||[])
+            .filter(allocation=>Number(allocation.invoiceId)===Number(invoice.id))
+            .reduce((subtotal,allocation)=>subtotal+Math.max(Number(allocation.amount||0),0),0),0);
+        const total=Math.max(Number(invoice.totalTTC||0),0);
+        invoice.paid=Math.min(Math.max(Number(invoice.ppDirectPaidBase||0)+settledAllocated,0),total);
+        invoice.due=Math.max(total-invoice.paid,0);
+    });
+    suppliers.forEach(supplier=>{
+        const settledPayments=supplierPaymentsPP
+            .filter(payment=>Number(payment.supplierId)===Number(supplier.id)&&ppSupplierPaymentIsSettledPP(payment))
+            .reduce((sum,payment)=>sum+Math.max(Number(payment.amount||0),0),0);
+        supplier.paid=Math.max(Number(supplier.ppDirectPaidBase||0)+settledPayments,0);
+    });
+}
+
+function paymentAllocatedToInvoicePP(invoiceId){
+    return supplierPaymentsPP.filter(ppSupplierPaymentIsSettledPP).reduce((total,payment)=>total+(payment.allocations||[])
+        .filter(allocation=>Number(allocation.invoiceId)===Number(invoiceId))
+        .reduce((sum,allocation)=>sum+Number(allocation.amount||0),0),0);
+}
+
+function ppPendingAllocatedToInvoicePP(invoiceId){
+    return supplierPaymentsPP.filter(payment=>ppIsSupplierInstrumentModePP(payment.mode)&&!ppSupplierPaymentIsSettledPP(payment)).reduce((total,payment)=>total+(payment.allocations||[])
+        .filter(allocation=>Number(allocation.invoiceId)===Number(invoiceId))
+        .reduce((sum,allocation)=>sum+Math.max(Number(allocation.amount||0),0),0),0);
+}
+
+function ppInvoicePaymentEventsTVA(inv){
+    const invoiceId=Number(inv?.id),events=[];
+    let settledAllocated=0;
+    supplierPaymentsPP.filter(ppSupplierPaymentIsSettledPP).forEach(payment=>{
+        (payment.allocations||[]).forEach(allocation=>{
+            if(Number(allocation.invoiceId)!==invoiceId)return;
+            const amount=Math.max(Number(allocation.amount||0),0);if(!(amount>0))return;
+            settledAllocated+=amount;
+            events.push({
+                date:String(ppIsSupplierInstrumentModePP(payment.mode)?payment.bankValidationDate||payment.date:payment.date||'').slice(0,10),
+                amount,mode:String(payment.mode||'Règlement'),reference:String(payment.reference||'')
+            });
+        });
+    });
+    const directPaid=Math.max(Number(inv?.ppDirectPaidBase??(Number(inv?.paid||0)-settledAllocated)),0);
+    if(directPaid>0){
+        events.push({
+            date:String(inv?.paymentDate||inv?.dateReglement||inv?.payment_date||inv?.date||'').slice(0,10),
+            amount:directPaid,
+            mode:String(inv?.paymentMode||inv?.modeReglement||inv?.paymentMethod||'Saisi avec facture'),
+            reference:String(inv?.paymentReference||inv?.referenceReglement||'')
+        });
+    }
+    return events.filter(event=>event.date||event.amount).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+}
+
+function ppInvoicePaymentInfoTVA(inv){
+    const invoiceId=Number(inv?.id);
+    const settled=supplierPaymentsPP.filter(payment=>ppSupplierPaymentIsSettledPP(payment)&&(payment.allocations||[]).some(allocation=>Number(allocation.invoiceId)===invoiceId));
+    if(settled.length){
+        const modes=[...new Set(settled.map(payment=>String(payment.mode||'').trim()).filter(Boolean))];
+        const dates=[...new Set(settled.map(payment=>String(ppIsSupplierInstrumentModePP(payment.mode)?payment.bankValidationDate||payment.date:payment.date||'').slice(0,10)).filter(Boolean))].sort();
+        return {mode:modes.join(' / ')||'Règlement',date:dates.join(' / '),status:Number(inv?.due||0)>0?'Partiel':'Réglée'};
+    }
+    const pending=supplierPaymentsPP.filter(payment=>!ppSupplierPaymentIsSettledPP(payment)&&(payment.allocations||[]).some(allocation=>Number(allocation.invoiceId)===invoiceId));
+    if(pending.length)return {mode:'En attente banque — '+[...new Set(pending.map(payment=>payment.mode))].join(' / '),date:'',status:'En attente banque'};
+    if(Number(inv?.ppDirectPaidBase ?? inv?.paid ?? 0)>0)return {mode:String(inv.paymentMode||inv.modeReglement||inv.paymentMethod||'Saisi avec facture'),date:String(inv.paymentDate||inv.dateReglement||inv.date||'').slice(0,10),status:Number(inv?.due||0)>0?'Partiel':'Réglée'};
+    return {mode:'Non réglée',date:'',status:'Non réglée'};
+}
+
+function supplierLedgerPP(id){
+    ppRebuildSupplierSettlementStatePP();
+    const supplier=suppliers.find(item=>Number(item.id)===Number(id));if(!supplier)return [];
+    const supplierInvoices=supplierInvoicesPP(id),events=[];
+    supplierInvoices.forEach(invoice=>{
+        events.push({date:invoice.date||invoice.createdAt,piece:invoice.number||'',label:'Facture achat',debit:Number(invoice.totalTTC||0),credit:0});
+        const direct=Math.max(Number(invoice.ppDirectPaidBase||0),0);
+        if(direct>0)events.push({date:invoice.paymentDate||invoice.date||invoice.createdAt,piece:invoice.number||'',label:'Paiement saisi avec facture',debit:0,credit:direct});
+    });
+    supplierPaymentsPP.filter(payment=>Number(payment.supplierId)===Number(id)).forEach(payment=>{
+        const settled=ppSupplierPaymentIsSettledPP(payment);
+        events.push({
+            date:settled&&ppIsSupplierInstrumentModePP(payment.mode)?payment.bankValidationDate||payment.date:payment.date||payment.createdAt,
+            piece:payment.reference||payment.id,
+            label:`Règlement ${payment.mode||''}${settled?'':' — en attente banque'}`,
+            debit:0,credit:settled?Number(payment.amount||0):0,paymentId:payment.id
+        });
+    });
+    const directInvoices=supplierInvoices.reduce((sum,invoice)=>sum+Math.max(Number(invoice.ppDirectPaidBase||0),0),0);
+    const opening=Math.max(Number(supplier.ppDirectPaidBase||0)-directInvoices,0);
+    if(opening>0)events.push({date:'1900-01-01',piece:'SOLDE',label:'Solde / règlement antérieur',debit:0,credit:opening});
+    events.sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));
+    let balance=0;
+    return events.map(event=>{balance+=Number(event.debit||0)-Number(event.credit||0);return {...event,balance};});
+}
+
+function ensureSupplierPaymentModalPP(){
+    if(document.getElementById('ppSupplierPaymentModal'))return;
+    const modal=document.createElement('div');
+    modal.id='ppSupplierPaymentModal';modal.className='modal-overlay';
+    modal.innerHTML=`<div class="modal"><div class="modal-header"><h2>💰 Règlement fournisseur</h2><button type="button" onclick="closeModal('ppSupplierPaymentModal')">×</button></div><form id="ppSupplierPaymentForm"><input type="hidden" id="ppSupplierPaymentId"><input type="hidden" id="ppSupplierPaymentSupplier"><div class="form-grid"><div><label>Fournisseur</label><input id="ppSupplierPaymentName" readonly></div><div><label>Date du règlement *</label><input id="ppSupplierPaymentDate" type="date" required onchange="ppSupplierPaymentDateChangedPP()"></div><div><label>Facture à affecter</label><select id="ppSupplierPaymentInvoice" onchange="ppSupplierPaymentInvoiceChangedPP()"></select></div><div><label>Montant *</label><input id="ppSupplierPaymentAmount" type="number" min="0.01" step="0.01" required></div><div><label>Mode</label><select id="ppSupplierPaymentMode" onchange="ppSupplierPaymentModeChangedPP()"><option>Espèces</option><option>Virement</option><option>Chèque</option><option>Carte</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div><div><label>Référence</label><input id="ppSupplierPaymentRef" placeholder="N° chèque / effet / opération..."></div><div><label>Délai de paiement (jours)</label><input id="ppSupplierPaymentTermDays" type="number" min="0" max="365" step="1" onchange="ppSupplierPaymentTermChangedPP()"></div><div><label>Date d'échéance *</label><input id="ppSupplierPaymentDueDate" type="date" required onchange="ppSupplierPaymentDueDateChangedPP()"></div><div id="ppSupplierInstrumentStatusBox" style="display:none"><label>Validation bancaire</label><select id="ppSupplierPaymentInstrumentStatus" onchange="ppSupplierPaymentBankStatusChangedPP()"><option value="planned">En attente de validation bancaire</option><option value="cleared">Validé / débité par la banque</option></select><div id="ppSupplierPaymentBankDateBox" style="margin-top:8px;display:none"><label>Date de validation banque *</label><input id="ppSupplierPaymentBankValidationDate" type="date"></div></div></div><div id="ppSupplierPaymentMaturityHelp" style="display:none"></div><div><label>Observation</label><textarea id="ppSupplierPaymentNote"></textarea></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppSupplierPaymentModal')">Annuler</button><button type="submit" class="btn primary">Enregistrer</button></div></form></div>`;
+    document.body.appendChild(modal);
+    document.getElementById('ppSupplierPaymentForm').addEventListener('submit',event=>{event.preventDefault();saveSupplierPaymentPP();});
+}
+
+function ppSupplierPaymentBankStatusChangedPP(){
+    const needsValidation=ppIsSupplierInstrumentModePP(getValue('ppSupplierPaymentMode'));
+    const cleared=getValue('ppSupplierPaymentInstrumentStatus')==='cleared';
+    const box=document.getElementById('ppSupplierPaymentBankDateBox'),input=document.getElementById('ppSupplierPaymentBankValidationDate');
+    if(box)box.style.display=needsValidation&&cleared?'block':'none';
+    if(input){input.required=needsValidation&&cleared;if(needsValidation&&cleared&&!input.value)input.value=ppTodayISOPP();if(!cleared)input.value='';}
+}
+
+function ppUpdateSupplierPaymentMaturityHelpPP(){
+    const mode=getValue('ppSupplierPaymentMode'),needsValidation=ppIsSupplierInstrumentModePP(mode),help=document.getElementById('ppSupplierPaymentMaturityHelp');
+    const statusBox=document.getElementById('ppSupplierInstrumentStatusBox');if(statusBox)statusBox.style.display=needsValidation?'block':'none';
+    const dueInput=document.getElementById('ppSupplierPaymentDueDate');if(dueInput)dueInput.required=true;
+    if(help)help.innerHTML=needsValidation
+        ? `Ce règlement reste <strong>non soldé dans l’Échéancier</strong> tant qu’il n’est pas validé par la banque. La facture ne sera soldée qu’après sélection de « Validé / débité par la banque ».`
+        : `Le règlement par <strong>${escapeHTML(mode||'-')}</strong> est considéré comme réglé immédiatement. Le délai et la date d’échéance restent liés à la facture fournisseur.`;
+    ppSupplierPaymentBankStatusChangedPP();
+}
+
+function ppSupplierPaymentModeChangedPP(){
+    const needsValidation=ppIsSupplierInstrumentModePP(getValue('ppSupplierPaymentMode'));
+    const statusBox=document.getElementById('ppSupplierInstrumentStatusBox');
+    const wasPendingMode=statusBox?.dataset.wasInstrument==='1';
+    if(needsValidation&&!wasPendingMode)setValue('ppSupplierPaymentInstrumentStatus','planned');
+    if(!needsValidation)setValue('ppSupplierPaymentInstrumentStatus','cleared');
+    if(statusBox)statusBox.dataset.wasInstrument=needsValidation?'1':'0';
+    ppUpdateSupplierPaymentMaturityHelpPP();
+}
+
+function openSupplierPaymentPP(id,paymentId=null){
+    ppRebuildSupplierSettlementStatePP();
+    ensureSupplierPaymentModalPP();
+    const raw=paymentId?supplierPaymentsPP.find(item=>Number(item.id)===Number(paymentId)):null;
+    const payment=raw?ppNormalizeSupplierPaymentMaturityPP(raw):null;
+    const supplierId=payment?Number(payment.supplierId):Number(id);
+    const supplier=suppliers.find(item=>Number(item.id)===supplierId);if(!supplier)return;
+    setValue('ppSupplierPaymentId',payment?.id||'');setValue('ppSupplierPaymentSupplier',supplier.id);setValue('ppSupplierPaymentName',supplier.name);
+    setValue('ppSupplierPaymentDate',payment?.date||ppTodayISOPP());setValue('ppSupplierPaymentAmount',payment?.amount||'');setValue('ppSupplierPaymentMode',payment?.mode||'Espèces');
+    setValue('ppSupplierPaymentRef',payment?.reference||'');setValue('ppSupplierPaymentNote',payment?.note||'');
+    const allocatedIds=new Set((payment?.allocations||[]).map(allocation=>Number(allocation.invoiceId)));
+    const supplierInvoices=supplierInvoicesPP(supplierId).filter(invoice=>Number(invoice.due||0)>0||allocatedIds.has(Number(invoice.id))).sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));
+    const select=document.getElementById('ppSupplierPaymentInvoice');
+    select.innerHTML='<option value="">Affectation automatique — plus anciennes factures</option>'+supplierInvoices.map(invoice=>`<option value="${invoice.id}">${escapeHTML(invoice.number)} — échéance ${invoice.dueDate?formatDate(invoice.dueDate):'-'} — reste ${formatMoney(invoice.due)}</option>`).join('');
+    const allocatedInvoice=ppSupplierPaymentAllocatedInvoicePP(payment||{});select.dataset.defaultInvoiceId=String(allocatedInvoice?.id||supplierInvoices[0]?.id||'');
+    if(payment&&(payment.allocations||[]).length===1)setValue('ppSupplierPaymentInvoice',payment.allocations[0].invoiceId);
+    const selectedInvoice=ppSupplierPaymentSelectedInvoicePP()||allocatedInvoice;
+    const termDays=payment?payment.paymentTermDays:ppSupplierPaymentTermDaysPP({},supplier,selectedInvoice);
+    const base=String(selectedInvoice?.date||getValue('ppSupplierPaymentDate')||'').slice(0,10);
+    setValue('ppSupplierPaymentTermDays',termDays);setValue('ppSupplierPaymentDueDate',payment?.dueDate||selectedInvoice?.dueDate||ppAddCalendarDaysPP(base,termDays));
+    setValue('ppSupplierPaymentInstrumentStatus',payment?.instrumentStatus||(ppIsSupplierInstrumentModePP(payment?.mode)?'planned':'cleared'));
+    setValue('ppSupplierPaymentBankValidationDate',payment?.bankValidationDate||'');
+    const statusBox=document.getElementById('ppSupplierInstrumentStatusBox');if(statusBox)statusBox.dataset.wasInstrument=ppIsSupplierInstrumentModePP(getValue('ppSupplierPaymentMode'))?'1':'0';
+    ppUpdateSupplierPaymentMaturityVisibilityPP();openModal('ppSupplierPaymentModal');
+}
+
+function saveSupplierPaymentPP(){
+    ppRebuildSupplierSettlementStatePP();
+    const paymentId=Number(getValue('ppSupplierPaymentId'))||null,supplierId=Number(getValue('ppSupplierPaymentSupplier')),amount=Number(getValue('ppSupplierPaymentAmount'));
+    if(!(amount>0)){alert('Veuillez saisir un montant valide.');return;}
+    const supplier=suppliers.find(item=>Number(item.id)===supplierId);if(!supplier)return;
+    const date=String(getValue('ppSupplierPaymentDate')||'').slice(0,10),dueDate=String(getValue('ppSupplierPaymentDueDate')||'').slice(0,10);
+    const paymentTermDays=Math.max(Math.round(Number(getValue('ppSupplierPaymentTermDays'))||0),0),mode=getValue('ppSupplierPaymentMode');
+    const needsValidation=ppIsSupplierInstrumentModePP(mode),instrumentStatus=needsValidation?(getValue('ppSupplierPaymentInstrumentStatus')||'planned'):'cleared';
+    const bankValidationDate=needsValidation&&instrumentStatus==='cleared'?String(getValue('ppSupplierPaymentBankValidationDate')||'').slice(0,10):'';
+    if(!date){alert('Veuillez sélectionner la date du règlement.');return;}if(!dueDate){alert("Veuillez sélectionner la date d'échéance.");return;}
+    if(dueDate<date&&!ppSupplierPaymentSelectedInvoicePP()&&!confirm("La date d'échéance est antérieure à la date du règlement. Continuer ?"))return;
+    if(needsValidation&&!getValue('ppSupplierPaymentRef').trim()){alert('Veuillez saisir la référence du règlement bancaire.');return;}
+    if(needsValidation&&instrumentStatus==='cleared'&&!bankValidationDate){alert('Veuillez sélectionner la date de validation bancaire.');return;}
+    const old=paymentId?supplierPaymentsPP.find(item=>Number(item.id)===paymentId):null;
+    if(old)supplierPaymentsPP=supplierPaymentsPP.filter(item=>Number(item.id)!==paymentId);
+    ppRebuildSupplierSettlementStatePP();
+    let remaining=amount;const allocations=[],selected=Number(getValue('ppSupplierPaymentInvoice'))||0;
+    const targets=selected?invoices.filter(invoice=>Number(invoice.id)===selected):supplierInvoicesPP(supplierId).filter(invoice=>Number(invoice.due||0)>0).sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));
+    for(const invoice of targets){
+        if(remaining<=0)break;
+        const due=Math.max(Number(invoice.totalTTC||0)-Number(invoice.paid||0)-ppPendingAllocatedToInvoicePP(invoice.id),0),part=Math.min(remaining,due);if(part<=0)continue;
+        allocations.push({invoiceId:invoice.id,amount:part});remaining-=part;
+    }
+    const obj=ppNormalizeSupplierPaymentMaturityPP({id:paymentId||createId(),supplierId,amount,date,dueDate,paymentTermDays,mode,reference:getValue('ppSupplierPaymentRef').trim(),note:getValue('ppSupplierPaymentNote').trim(),instrumentStatus,bankValidationDate,allocations,createdAt:old?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()});
+    supplierPaymentsPP.push(obj);ppRebuildSupplierSettlementStatePP();saveData();closeModal('ppSupplierPaymentModal');renderAll();renderPaymentsCenterPP();
+}
+
+function rollbackSupplierPaymentPP(){ppRebuildSupplierSettlementStatePP();}
+
+function deleteSupplierPaymentPP(id){
+    const payment=supplierPaymentsPP.find(item=>Number(item.id)===Number(id));if(!payment||!confirm('Supprimer ce règlement ?'))return;
+    supplierPaymentsPP=supplierPaymentsPP.filter(item=>Number(item.id)!==Number(id));ppRebuildSupplierSettlementStatePP();saveData();renderAll();renderPaymentsCenterPP();
+}
+
+function ppSupplierInstrumentScheduleStatusPP(payment={}){
+    if(ppSupplierPaymentIsSettledPP(payment))return {code:'paid',label:`Validé banque${payment.bankValidationDate?' le '+formatDate(payment.bankValidationDate):''}`,days:0};
+    const date=String(payment.dueDate||'').slice(0,10),today=ppTodayISOPP();
+    if(!date)return {code:'undated',label:'En attente banque — sans échéance',days:null};
+    if(date<today){const days=ppDaysBetweenISOPP(date,today);return {code:'overdue',label:`En attente banque — échu depuis ${days} j`,days:-days};}
+    if(date===today)return {code:'today',label:'En attente de validation banque aujourd’hui',days:0};
+    const days=ppDaysBetweenISOPP(today,date);return days<=7?{code:'soon',label:`En attente banque — échéance dans ${days} j`,days}:{code:'upcoming',label:`En attente banque — échéance dans ${days} j`,days};
+}
+
+function ppSupplierInstrumentRowsPP(){
+    return supplierPaymentsPP.map(ppNormalizeSupplierPaymentMaturityPP).filter(payment=>ppIsSupplierInstrumentModePP(payment.mode)).map(payment=>{
+        const supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId)),status=ppSupplierInstrumentScheduleStatusPP(payment),closed=ppSupplierPaymentIsSettledPP(payment);
+        const normalizedMode=normalizeText(payment.mode),type=normalizedMode.includes('effet')||normalizedMode.includes('lcr')?'Effet / LCR fournisseur':normalizedMode.includes('cheque')?'Chèque fournisseur':`${payment.mode||'Règlement'} fournisseur`;
+        return {id:`instrument:${payment.id}`,kind:'instrument',flow:'payable',type,mode:payment.mode||'',party:supplier?.name||'-',number:payment.reference||`REG-${payment.id}`,date:payment.date,dueDate:payment.dueDate,total:Number(payment.amount||0),paid:closed?Number(payment.amount||0):0,remaining:closed?0:Number(payment.amount||0),status,sourceId:payment.id,supplierId:payment.supplierId,paymentTermDays:Number(payment.paymentTermDays||0),instrumentStatus:payment.instrumentStatus||'planned',bankValidationDate:payment.bankValidationDate||''};
+    });
+}
+
+function ppScheduleRowsPP(){
+    ppRebuildSupplierSettlementStatePP();
+    const rows=[];
+    invoices.forEach(invoice=>{
+        const info=ppInvoiceDeadlineInfoPP(invoice),supplier=suppliers.find(item=>Number(item.id)===Number(invoice.supplierId)),days=Number(invoice.paymentTermDays??ppSupplierLegalTermPP(supplier||{}).days)||0;
+        const pending=Math.min(ppPendingAllocatedToInvoicePP(invoice.id),info.remaining),uncovered=Math.max(info.remaining-pending,0);
+        let status=ppScheduleStatusPP(info.dueDate,uncovered);
+        if(pending>0&&uncovered<=0.005)status={code:'bank_pending',label:`Règlement en attente banque — ${formatMoney(pending)}`,days:status.days};
+        else if(pending>0)status={...status,label:`${status.label} · ${formatMoney(pending)} en attente banque`};
+        rows.push({id:`supplier:${invoice.id}`,kind:'supplier',flow:'payable',type:'Facture fournisseur',mode:`Délai ${days} j${pending>0?` · ${formatMoney(pending)} en attente banque`:''}`,party:invoice.supplierName||'-',number:invoice.number||'-',date:invoice.date,dueDate:info.dueDate,total:info.total,paid:info.paid,pendingBank:pending,remaining:uncovered,status,sourceId:invoice.id,paymentTermDays:days});
+    });
+    expensesPP.forEach(expense=>{const totals=ppExpensePaymentTotalsPP(expense),dueDate=String(expense.dueDate||expense.date||'').slice(0,10),status=ppScheduleStatusPP(dueDate,totals.due);rows.push({id:`expense:${expense.id}`,kind:'expense',flow:'payable',type:'Dépense / charge',mode:'-',party:expense.beneficiary||expense.category||'-',number:expense.reference||`DEP-${expense.id}`,date:expense.date,dueDate,total:totals.total,paid:totals.paid,pendingBank:0,remaining:totals.due,status,sourceId:expense.id});});
+    clientInvoicesPP.forEach(invoice=>{const total=Math.max(Number(invoice.totalTTC||0),0),paid=Math.min(Math.max(Number(invoice.paid||0),0),total),remaining=Math.max(total-paid,0),dueDate=String(invoice.dueDate||invoice.date||'').slice(0,10),status=ppScheduleStatusPP(dueDate,remaining);rows.push({id:`client:${invoice.id}`,kind:'client',flow:'receivable',type:'Facture client',mode:'-',party:invoice.clientName||'-',number:invoice.number||'-',date:invoice.date,dueDate,total,paid,pendingBank:0,remaining,status,sourceId:invoice.id});});
+    rows.push(...ppSupplierInstrumentRowsPP());
+    return rows.sort((a,b)=>String(a.dueDate||'9999').localeCompare(String(b.dueDate||'9999'))||String(a.party).localeCompare(String(b.party),'fr'));
+}
+
+function ppScheduleBadgePP(status){
+    const classes={paid:'success',bank_pending:'warning',overdue:'danger',today:'warning',soon:'warning',upcoming:'info',undated:'warning'};
+    return `<span class="status ${classes[status.code]||'info'}">${escapeHTML(status.label)}</span>`;
+}
+
+function ppSupplierInstrumentMonthlyGroupsPP(){
+    const firstCurrentMonth=ppTodayISOPP().slice(0,7)+'-01',groups=new Map();
+    ppSupplierInstrumentRowsPP().filter(row=>ppIsChequeEffectModePP(row.mode)&&row.remaining>0.005&&(!row.dueDate||row.dueDate>=firstCurrentMonth)).forEach(row=>{
+        const key=row.dueDate?row.dueDate.slice(0,7):'undated';if(!groups.has(key))groups.set(key,{key,chequeCount:0,chequeAmount:0,effectCount:0,effectAmount:0,total:0});
+        const group=groups.get(key),effect=/effet|lcr/i.test(normalizeText(row.mode));if(effect){group.effectCount++;group.effectAmount+=row.remaining;}else{group.chequeCount++;group.chequeAmount+=row.remaining;}group.total+=row.remaining;
+    });
+    return [...groups.values()].sort((a,b)=>a.key==='undated'?1:b.key==='undated'?-1:a.key.localeCompare(b.key));
+}
+
+function ppInstrumentMonthlySituationHTMLPP(){
+    const groups=ppSupplierInstrumentMonthlyGroupsPP(),overdue=ppSupplierInstrumentRowsPP().filter(row=>ppIsChequeEffectModePP(row.mode)&&row.remaining>0.005&&row.dueDate&&row.dueDate<ppTodayISOPP());
+    return `<div class="pp-acc-panel" style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px"><div><h3 style="margin:0">🧾 Situation mensuelle des chèques et effets</h3></div><div class="stat-card" style="padding:10px 14px;min-width:190px"><small>Échus non validés</small><strong style="display:block;color:#b42318">${overdue.length} · ${formatMoney(overdue.reduce((sum,row)=>sum+row.remaining,0))}</strong></div></div><div style="overflow:auto"><table style="min-width:760px"><thead><tr><th>Mois de passage</th><th>Chèques</th><th>Montant chèques</th><th>Effets / LCR</th><th>Montant effets</th><th>Total prévu</th><th></th></tr></thead><tbody>${groups.map(group=>`<tr><td><strong>${escapeHTML(ppMonthKeyLabelPP(group.key))}</strong></td><td>${group.chequeCount}</td><td>${formatMoney(group.chequeAmount)}</td><td>${group.effectCount}</td><td>${formatMoney(group.effectAmount)}</td><td class="pp-acc-negative"><strong>${formatMoney(group.total)}</strong></td><td>${group.key!=='undated'?`<button class="btn small view" onclick="ppFilterInstrumentMonthPP('${group.key}')">Voir le mois</button>`:''}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">Aucun chèque ou effet fournisseur en attente de validation bancaire.</td></tr>'}</tbody></table></div></div>`;
+}
+
+function renderUnifiedSchedulePP(){
+    const rows=ppFilteredScheduleRowsPP(),open=rows.filter(row=>row.remaining>0.005),payables=open.filter(row=>row.flow==='payable'),receivables=open.filter(row=>row.flow==='receivable'),overduePay=payables.filter(row=>row.status.code==='overdue'),overdueReceive=receivables.filter(row=>row.status.code==='overdue'),soon=open.filter(row=>['today','soon'].includes(row.status.code));
+    return `<div class="pp-acc-toolbar"><div><h3 style="margin:0">📅 État d’échéancier</h3></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn print" onclick="printUnifiedSchedulePP()">🖨️ Imprimer</button><button class="btn" onclick="exportUnifiedScheduleExcelPP()">📊 Excel</button></div></div>
+      ${ppInstrumentMonthlySituationHTMLPP()}
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px"><div class="stat-card" style="padding:15px"><small>À décaisser</small><strong class="pp-acc-negative" style="display:block;font-size:21px">${formatMoney(payables.reduce((sum,row)=>sum+row.remaining,0))}</strong></div><div class="stat-card" style="padding:15px"><small>À encaisser</small><strong class="pp-acc-positive" style="display:block;font-size:21px">${formatMoney(receivables.reduce((sum,row)=>sum+row.remaining,0))}</strong></div><div class="stat-card" style="padding:15px"><small>Retards fournisseurs / charges / règlements</small><strong style="display:block;font-size:21px;color:#b42318">${formatMoney(overduePay.reduce((sum,row)=>sum+row.remaining,0))}</strong></div><div class="stat-card" style="padding:15px"><small>Retards clients</small><strong style="display:block;font-size:21px;color:#b42318">${formatMoney(overdueReceive.reduce((sum,row)=>sum+row.remaining,0))}</strong></div><div class="stat-card" style="padding:15px"><small>Échéances ≤ 7 jours</small><strong style="display:block;font-size:21px">${soon.length}</strong></div></div>
+      <div class="pp-acc-filters" style="display:grid"><div><label>Flux</label><select id="ppScheduleFlow" onchange="ppSetScheduleFilterPP('flow',this.value)"><option value="" ${!ppScheduleFiltersPP.flow?'selected':''}>À payer + à encaisser</option><option value="payable" ${ppScheduleFiltersPP.flow==='payable'?'selected':''}>À décaisser</option><option value="receivable" ${ppScheduleFiltersPP.flow==='receivable'?'selected':''}>À encaisser</option></select></div><div><label>Nature</label><select id="ppScheduleKind" onchange="ppSetScheduleFilterPP('kind',this.value)"><option value="" ${!ppScheduleFiltersPP.kind?'selected':''}>Toutes</option><option value="supplier" ${ppScheduleFiltersPP.kind==='supplier'?'selected':''}>Factures fournisseurs</option><option value="instrument" ${ppScheduleFiltersPP.kind==='instrument'?'selected':''}>Règlements en attente banque</option><option value="expense" ${ppScheduleFiltersPP.kind==='expense'?'selected':''}>Dépenses / charges</option><option value="client" ${ppScheduleFiltersPP.kind==='client'?'selected':''}>Factures clients</option></select></div><div><label>Situation</label><select id="ppScheduleStatus" onchange="ppSetScheduleFilterPP('status',this.value)"><option value="" ${!ppScheduleFiltersPP.status?'selected':''}>Toutes</option><option value="bank_pending" ${ppScheduleFiltersPP.status==='bank_pending'?'selected':''}>En attente banque</option><option value="overdue" ${ppScheduleFiltersPP.status==='overdue'?'selected':''}>En retard / échu</option><option value="today" ${ppScheduleFiltersPP.status==='today'?'selected':''}>Aujourd’hui</option><option value="soon" ${ppScheduleFiltersPP.status==='soon'?'selected':''}>≤ 7 jours</option><option value="upcoming" ${ppScheduleFiltersPP.status==='upcoming'?'selected':''}>À venir</option><option value="paid" ${ppScheduleFiltersPP.status==='paid'?'selected':''}>Soldées / validées banque</option><option value="undated" ${ppScheduleFiltersPP.status==='undated'?'selected':''}>Sans échéance</option></select></div><div><label>Échéance du</label><input id="ppScheduleFrom" type="date" value="${escapeHTML(ppScheduleFiltersPP.from)}" onchange="ppSetScheduleFilterPP('from',this.value)"></div><div><label>Au</label><input id="ppScheduleTo" type="date" value="${escapeHTML(ppScheduleFiltersPP.to)}" onchange="ppSetScheduleFilterPP('to',this.value)"></div><div><label>Recherche</label><input id="ppScheduleSearch" value="${escapeHTML(ppScheduleFiltersPP.search)}" placeholder="Tiers, facture, chèque, référence…" oninput="ppSetScheduleFilterPP('search',this.value)"></div></div>
+      <div class="pp-acc-panel"><table style="min-width:1460px"><thead><tr><th>Flux</th><th>Nature</th><th>Mode / délai</th><th>Tiers</th><th>Pièce / référence</th><th>Date</th><th>Échéance</th><th>Total</th><th>Réglé validé</th><th>Reste prévu</th><th>Situation</th><th>Action</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${row.flow==='payable'?'<span class="status danger">À décaisser</span>':'<span class="status success">À encaisser</span>'}</td><td>${escapeHTML(row.type)}</td><td>${escapeHTML(row.mode||'-')}${row.kind==='instrument'?`<br><small>${formatNumber(row.paymentTermDays||0)} j</small>`:''}</td><td><strong>${escapeHTML(row.party)}</strong></td><td>${escapeHTML(row.number)}</td><td>${formatDate(row.date)}</td><td><strong>${row.dueDate?formatDate(row.dueDate):'-'}</strong></td><td>${formatMoney(row.total)}</td><td>${formatMoney(row.paid)}</td><td class="${row.flow==='payable'?'pp-acc-negative':'pp-acc-positive'}"><strong>${formatMoney(row.remaining)}</strong></td><td>${ppScheduleBadgePP(row.status)}</td><td>${ppScheduleActionHTMLPP(row)}</td></tr>`).join('')||'<tr><td colspan="12" class="empty">Aucune échéance pour les filtres sélectionnés.</td></tr>'}</tbody></table></div>`;
+}
+
+function printSingleSupplierPaymentPP(id){
+    const raw=supplierPaymentsPP.find(item=>Number(item.id)===Number(id));if(!raw)return;
+    const payment=ppNormalizeSupplierPaymentMaturityPP(raw),supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId));
+    printDocument('Règlement fournisseur',`<div class="doc-head"><h1>Pause & Plate</h1><p>Règlement fournisseur</p></div>${detailRowsHTML([['Date du règlement',formatDate(payment.date)],['Fournisseur',supplier?.name||'-'],['Montant',formatMoney(payment.amount)],['Mode',payment.mode||'-'],['Référence',payment.reference||'-'],['Délai de paiement',`${formatNumber(payment.paymentTermDays||0)} jours`],['Date d’échéance',payment.dueDate?formatDate(payment.dueDate):'-'],['Situation',ppIsSupplierInstrumentModePP(payment.mode)?ppSupplierPaymentInstrumentStatusLabelPP(payment.instrumentStatus):'Réglé'],['Date validation banque',payment.bankValidationDate?formatDate(payment.bankValidationDate):'-'],['Facture(s)',supplierPaymentInvoiceLabelsPP(payment)],['Observation',payment.note||'-']])}`);
+}
+
+function printUnifiedSchedulePP(){
+    const rows=ppFilteredScheduleRowsPP(),groups=ppSupplierInstrumentMonthlyGroupsPP();
+    const monthRows=groups.map(group=>`<tr><td>${escapeHTML(ppMonthKeyLabelPP(group.key))}</td><td>${group.chequeCount}</td><td>${formatMoney(group.chequeAmount)}</td><td>${group.effectCount}</td><td>${formatMoney(group.effectAmount)}</td><td>${formatMoney(group.total)}</td></tr>`).join('');
+    const body=rows.map(row=>`<tr><td>${row.flow==='payable'?'À décaisser':'À encaisser'}</td><td>${escapeHTML(row.type)}</td><td>${escapeHTML(row.mode||'-')}</td><td>${escapeHTML(row.party)}</td><td>${escapeHTML(row.number)}</td><td>${formatDate(row.date)}</td><td>${row.dueDate?formatDate(row.dueDate):'-'}</td><td>${formatMoney(row.total)}</td><td>${formatMoney(row.paid)}</td><td>${formatMoney(row.remaining)}</td><td>${escapeHTML(row.status.label)}</td></tr>`).join('');
+    printDocument('État d’échéancier',`<div class="doc-head"><h1>Pause & Plate</h1><p>État d’échéancier</p></div><h2>Situation mensuelle des chèques et effets</h2><table><thead><tr><th>Mois</th><th>Nb chèques</th><th>Montant chèques</th><th>Nb effets</th><th>Montant effets</th><th>Total</th></tr></thead><tbody>${monthRows||'<tr><td colspan="6">Aucun titre en attente.</td></tr>'}</tbody></table><h2>Détail de l'échéancier</h2><table><thead><tr><th>Flux</th><th>Nature</th><th>Mode / délai</th><th>Tiers</th><th>Pièce</th><th>Date</th><th>Échéance</th><th>Total</th><th>Réglé validé</th><th>Reste</th><th>Situation</th></tr></thead><tbody>${body||'<tr><td colspan="11">Aucune échéance.</td></tr>'}</tbody></table>`);
+}
+
+function exportUnifiedScheduleExcelPP(){
+    if(typeof XLSX==='undefined'){alert('La bibliothèque Excel n’est pas chargée.');return;}
+    const detail=ppFilteredScheduleRowsPP().map(row=>({Flux:row.flow==='payable'?'À décaisser':'À encaisser',Nature:row.type,Mode_Delai:row.mode||'',Tiers:row.party,Piece_Reference:row.number,Date:row.date,Echeance:row.dueDate,Total:row.total,Regle_valide:row.paid,En_attente_banque:Number(row.pendingBank||0),Reste_prevu:row.remaining,Situation:row.status.label}));
+    const monthly=ppSupplierInstrumentMonthlyGroupsPP().map(group=>({Mois:ppMonthKeyLabelPP(group.key),Nombre_cheques:group.chequeCount,Montant_cheques:group.chequeAmount,Nombre_effets_LCR:group.effectCount,Montant_effets_LCR:group.effectAmount,Total_prevu:group.total}));
+    const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,XLSX.utils.json_to_sheet(detail),'Echeancier');XLSX.utils.book_append_sheet(book,XLSX.utils.json_to_sheet(monthly),'Cheques_Effets_Mois');XLSX.writeFile(book,`echeancier-validation-banque-${ppTodayISOPP()}.xlsx`);
+}
+
+let ppSupplierSettlementCloudLoadingPP=false;
+
+function ppSetDataset(key,items){
+    const safe=ppCloudEnsureRecordIdsPP(key,items);
+    switch(key){
+        case 'products':products=safe;break;case 'movements':movements=safe;break;case 'suppliers':suppliers=safe.map(ppNormalizeSupplierPaymentTermPP);break;
+        case 'invoices':invoices=safe.map(ppNormalizeInvoiceDeadlinePP);break;case 'supplierPayments':supplierPaymentsPP=safe.map(ppNormalizeSupplierPaymentMaturityPP);break;
+        case 'clients':clientsPP=safe;break;case 'clientInvoices':clientInvoicesPP=safe;break;case 'clientPayments':clientPaymentsPP=safe;break;case 'sales':salesPP=safe;break;
+        case 'expenses':expensesPP=safe.map(ppNormalizeExpensePP);break;case 'recipes':recipesPP=safe;break;case 'dailySalesScans':dailySalesScansPP=safe;break;
+        case 'accountingEntries':accountingEntriesPP=safe;break;case 'accountingSettings':accountingSettingsPP=safe;break;
+        case 'bankStatementTransactions':bankStatementTransactionsPP=safe.map(ppNormalizeBankTransactionPP);break;
+        case 'bankReconciliations':bankReconciliationsPP=safe.map(ppNormalizeBankReconciliationPP);break;
+        case 'treasuryTransfers':treasuryTransfersPP=safe.map(ppNormalizeTreasuryTransferPP);break;
+    }
+    if(!ppSupplierSettlementCloudLoadingPP&&['suppliers','invoices','supplierPayments'].includes(key))ppRebuildSupplierSettlementStatePP();
+}
+
+async function ppLoadAllCloud(){
+    ppApplyingCloudState=true;ppSupplierSettlementCloudLoadingPP=true;
+    try{
+        ppEnforceLocalDatasetScopePP();
+        const allowedKeys=ppCloudAllowedDatasetKeysPP();ppCloudBaseState={};
+        for(const key of allowedKeys){
+            const snap=await ppDataDoc(key).get();
+            ppSetDataset(key,snap.exists?snap.data()?.items||[]:[]);
+            ppCloudBaseState[key]=ppCloudClonePP(PP_CLOUD_DATASETS[key]());
+        }
+        ppRebuildSupplierSettlementStatePP();ppSaveLocalOnly();ppCloudDirty=false;
+    }finally{ppSupplierSettlementCloudLoadingPP=false;ppApplyingCloudState=false;}
+}
+
+ppRebuildSupplierSettlementStatePP();
+if(typeof ppSaveLocalOnly==='function')ppSaveLocalOnly();
+
+/* =========================================================
+   VALIDATION DES RÈGLEMENTS FOURNISSEURS DEPUIS LE
+   RAPPROCHEMENT BANCAIRE — 2026-08-05
+   Le règlement est saisi une seule fois côté fournisseur.
+   Sa validation et sa date de passage sont gérées ici.
+========================================================= */
+
+function ppSupplierPaymentPendingBankWorkflowPP(payment={}){
+    return ppIsSupplierInstrumentModePP(payment.mode)&&!ppSupplierPaymentIsSettledPP(payment);
+}
+
+function ppSupplierPaymentReconciliationDatePP(payment={}){
+    return String(payment.dueDate||payment.date||'').slice(0,10);
+}
+
+function ppPendingSupplierPaymentsForReconciliationPP(rec={}){
+    const to=String(rec.to||'').slice(0,10);
+    return supplierPaymentsPP.map(ppNormalizeSupplierPaymentMaturityPP).filter(payment=>{
+        if(!ppSupplierPaymentPendingBankWorkflowPP(payment))return false;
+        const paymentDate=String(payment.date||'').slice(0,10);
+        const expectedDate=ppSupplierPaymentReconciliationDatePP(payment);
+        if(to&&paymentDate&&paymentDate>to)return false;
+        if(to&&expectedDate&&expectedDate>to)return false;
+        return true;
+    }).sort((a,b)=>String(ppSupplierPaymentReconciliationDatePP(a)).localeCompare(String(ppSupplierPaymentReconciliationDatePP(b)))||String(a.id).localeCompare(String(b.id)));
+}
+
+function ppPendingSupplierPaymentCandidateTxPP(payment={},rec={}){
+    const reference=normalizeText(payment.reference||'');
+    const expected=ppSupplierPaymentReconciliationDatePP(payment);
+    const amount=Math.max(Number(payment.amount||0),0);
+    return ppBankTransactionsForPP(rec.id).filter(tx=>!tx.matchedAccountingKey&&Number(tx.debit||0)>0&&Math.abs(Number(tx.debit||0)-amount)<0.02).map(tx=>{
+        const txRef=normalizeText(tx.reference||'');
+        const txLabel=normalizeText(tx.label||'');
+        let score=100-Math.min(ppBankDateDifferencePP(tx.valueDate||tx.date,expected),30)*3;
+        if(reference&&txRef&&(reference===txRef||reference.includes(txRef)||txRef.includes(reference)))score+=100;
+        else if(reference&&txLabel.includes(reference))score+=65;
+        if(/cheque|effet|lcr|carte|prelevement/.test(normalizeText(`${tx.label} ${tx.reference}`)))score+=10;
+        return {tx,score};
+    }).sort((a,b)=>b.score-a.score)[0]?.tx||null;
+}
+
+function ppSupplierPaymentBankWorkflowStatusPP(payment={}){
+    if(!ppIsSupplierInstrumentModePP(payment.mode))return 'Réglé immédiatement';
+    if(ppSupplierPaymentIsSettledPP(payment))return `Validé dans le rapprochement${payment.bankValidationDate?` le ${formatDate(payment.bankValidationDate)}`:''}`;
+    return 'En attente dans le rapprochement bancaire';
+}
+
+function ensureSupplierPaymentModalPP(){
+    const previous=document.getElementById('ppSupplierPaymentModal');
+    if(previous?.dataset?.bankWorkflow==='reconciliation')return;
+    if(previous)previous.remove();
+    const modal=document.createElement('div');
+    modal.id='ppSupplierPaymentModal';modal.className='modal-overlay';modal.dataset.bankWorkflow='reconciliation';
+    modal.innerHTML=`<div class="modal"><div class="modal-header"><h2>💰 Règlement fournisseur</h2><button type="button" onclick="closeModal('ppSupplierPaymentModal')">×</button></div><form id="ppSupplierPaymentForm"><input type="hidden" id="ppSupplierPaymentId"><input type="hidden" id="ppSupplierPaymentSupplier"><div class="form-grid"><div><label>Fournisseur</label><input id="ppSupplierPaymentName" readonly></div><div><label>Date du règlement *</label><input id="ppSupplierPaymentDate" type="date" required onchange="ppSupplierPaymentDateChangedPP()"></div><div><label>Facture à affecter</label><select id="ppSupplierPaymentInvoice" onchange="ppSupplierPaymentInvoiceChangedPP()"></select></div><div><label>Montant *</label><input id="ppSupplierPaymentAmount" type="number" min="0.01" step="0.01" required></div><div><label>Mode</label><select id="ppSupplierPaymentMode" onchange="ppSupplierPaymentModeChangedPP()"><option>Espèces</option><option>Virement</option><option>Chèque</option><option>Carte</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div><div><label>Référence</label><input id="ppSupplierPaymentRef" placeholder="N° chèque / effet / référence bancaire..."></div><div><label>Délai de paiement (jours)</label><input id="ppSupplierPaymentTermDays" type="number" min="0" max="365" step="1" onchange="ppSupplierPaymentTermChangedPP()"></div><div><label>Date d'échéance *</label><input id="ppSupplierPaymentDueDate" type="date" required onchange="ppSupplierPaymentDueDateChangedPP()"></div></div><div id="ppSupplierPaymentMaturityHelp" style="display:none"></div><div><label>Observation</label><textarea id="ppSupplierPaymentNote"></textarea></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppSupplierPaymentModal')">Annuler</button><button type="submit" class="btn primary">Enregistrer</button></div></form></div>`;
+    document.body.appendChild(modal);
+    document.getElementById('ppSupplierPaymentForm').addEventListener('submit',event=>{event.preventDefault();saveSupplierPaymentPP();});
+}
+
+function ppUpdateSupplierPaymentMaturityHelpPP(){
+    const mode=getValue('ppSupplierPaymentMode'),needsBankWorkflow=ppIsSupplierInstrumentModePP(mode),help=document.getElementById('ppSupplierPaymentMaturityHelp');
+    const dueInput=document.getElementById('ppSupplierPaymentDueDate');if(dueInput)dueInput.required=true;
+    const paymentId=Number(getValue('ppSupplierPaymentId'))||0;
+    const existing=paymentId?supplierPaymentsPP.find(item=>Number(item.id)===paymentId):null;
+    if(!help)return;
+    if(needsBankWorkflow&&existing&&ppSupplierPaymentIsSettledPP(existing)){
+        help.innerHTML=`✅ Ce règlement a déjà été <strong>validé depuis le rapprochement bancaire</strong>${existing.bankValidationDate?` le ${formatDate(existing.bankValidationDate)}`:''}. La validation bancaire n'est pas modifiable depuis cette fiche.`;
+    }else if(needsBankWorkflow){
+        help.innerHTML=`Après l'enregistrement, ce règlement sera envoyé automatiquement vers <strong>Comptabilité → Rapprochement bancaire</strong>. C'est là que vous validerez son passage et indiquerez la date réelle du débit bancaire. Il restera non soldé dans l'Échéancier jusque-là.`;
+    }else{
+        help.innerHTML=`Le règlement par <strong>${escapeHTML(mode||'-')}</strong> est considéré comme soldé immédiatement. Aucune validation bancaire supplémentaire n'est nécessaire.`;
+    }
+}
+
+function ppSupplierPaymentModeChangedPP(){
+    ppUpdateSupplierPaymentMaturityHelpPP();
+}
+
+function openSupplierPaymentPP(id,paymentId=null){
+    ppRebuildSupplierSettlementStatePP();ensureSupplierPaymentModalPP();
+    const raw=paymentId?supplierPaymentsPP.find(item=>Number(item.id)===Number(paymentId)):null;
+    const payment=raw?ppNormalizeSupplierPaymentMaturityPP(raw):null;
+    const supplierId=payment?Number(payment.supplierId):Number(id),supplier=suppliers.find(item=>Number(item.id)===supplierId);if(!supplier)return;
+    setValue('ppSupplierPaymentId',payment?.id||'');setValue('ppSupplierPaymentSupplier',supplier.id);setValue('ppSupplierPaymentName',supplier.name);
+    setValue('ppSupplierPaymentDate',payment?.date||ppTodayISOPP());setValue('ppSupplierPaymentAmount',payment?.amount||'');setValue('ppSupplierPaymentMode',payment?.mode||'Espèces');
+    setValue('ppSupplierPaymentRef',payment?.reference||'');setValue('ppSupplierPaymentNote',payment?.note||'');
+    const allocatedIds=new Set((payment?.allocations||[]).map(allocation=>Number(allocation.invoiceId)));
+    const supplierInvoices=supplierInvoicesPP(supplierId).filter(invoice=>Number(invoice.due||0)>0||allocatedIds.has(Number(invoice.id))).sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));
+    const select=document.getElementById('ppSupplierPaymentInvoice');
+    select.innerHTML='<option value="">Affectation automatique — plus anciennes factures</option>'+supplierInvoices.map(invoice=>`<option value="${invoice.id}">${escapeHTML(invoice.number)} — échéance ${invoice.dueDate?formatDate(invoice.dueDate):'-'} — reste ${formatMoney(invoice.due)}</option>`).join('');
+    const allocatedInvoice=ppSupplierPaymentAllocatedInvoicePP(payment||{});select.dataset.defaultInvoiceId=String(allocatedInvoice?.id||supplierInvoices[0]?.id||'');
+    if(payment&&(payment.allocations||[]).length===1)setValue('ppSupplierPaymentInvoice',payment.allocations[0].invoiceId);
+    const selectedInvoice=ppSupplierPaymentSelectedInvoicePP()||allocatedInvoice;
+    const termDays=payment?payment.paymentTermDays:ppSupplierPaymentTermDaysPP({},supplier,selectedInvoice),base=String(selectedInvoice?.date||getValue('ppSupplierPaymentDate')||'').slice(0,10);
+    setValue('ppSupplierPaymentTermDays',termDays);setValue('ppSupplierPaymentDueDate',payment?.dueDate||selectedInvoice?.dueDate||ppAddCalendarDaysPP(base,termDays));
+    ppUpdateSupplierPaymentMaturityHelpPP();openModal('ppSupplierPaymentModal');
+}
+
+function saveSupplierPaymentPP(){
+    ppRebuildSupplierSettlementStatePP();
+    const paymentId=Number(getValue('ppSupplierPaymentId'))||null,supplierId=Number(getValue('ppSupplierPaymentSupplier')),amount=Number(getValue('ppSupplierPaymentAmount'));
+    if(!(amount>0)){alert('Veuillez saisir un montant valide.');return;}
+    const supplier=suppliers.find(item=>Number(item.id)===supplierId);if(!supplier)return;
+    const date=String(getValue('ppSupplierPaymentDate')||'').slice(0,10),dueDate=String(getValue('ppSupplierPaymentDueDate')||'').slice(0,10);
+    const paymentTermDays=Math.max(Math.round(Number(getValue('ppSupplierPaymentTermDays'))||0),0),mode=getValue('ppSupplierPaymentMode');
+    const needsBankWorkflow=ppIsSupplierInstrumentModePP(mode),reference=getValue('ppSupplierPaymentRef').trim();
+    if(!date){alert('Veuillez sélectionner la date du règlement.');return;}if(!dueDate){alert("Veuillez sélectionner la date d'échéance.");return;}
+    if(dueDate<date&&!ppSupplierPaymentSelectedInvoicePP()&&!confirm("La date d'échéance est antérieure à la date du règlement. Continuer ?"))return;
+    if(needsBankWorkflow&&!reference){alert('Veuillez saisir la référence du règlement bancaire.');return;}
+    const old=paymentId?supplierPaymentsPP.find(item=>Number(item.id)===paymentId):null;
+    if(old)supplierPaymentsPP=supplierPaymentsPP.filter(item=>Number(item.id)!==paymentId);
+    ppRebuildSupplierSettlementStatePP();
+    let remaining=amount;const allocations=[],selected=Number(getValue('ppSupplierPaymentInvoice'))||0;
+    const targets=selected?invoices.filter(invoice=>Number(invoice.id)===selected):supplierInvoicesPP(supplierId).filter(invoice=>Number(invoice.due||0)>0).sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));
+    for(const invoice of targets){
+        if(remaining<=0)break;
+        const due=Math.max(Number(invoice.totalTTC||0)-Number(invoice.paid||0)-ppPendingAllocatedToInvoicePP(invoice.id),0),part=Math.min(remaining,due);if(part<=0)continue;
+        allocations.push({invoiceId:invoice.id,amount:part});remaining-=part;
+    }
+    const keepOldBankValidation=needsBankWorkflow&&old&&ppSupplierPaymentIsSettledPP(old);
+    const instrumentStatus=needsBankWorkflow?(keepOldBankValidation?'cleared':'planned'):'cleared';
+    const bankValidationDate=keepOldBankValidation?String(old.bankValidationDate||'').slice(0,10):'';
+    const obj=ppNormalizeSupplierPaymentMaturityPP({id:paymentId||createId(),supplierId,amount,date,dueDate,paymentTermDays,mode,reference,note:getValue('ppSupplierPaymentNote').trim(),instrumentStatus,bankValidationDate,bankReconciliationId:keepOldBankValidation?old.bankReconciliationId||null:null,bankStatementTransactionId:keepOldBankValidation?old.bankStatementTransactionId||null:null,allocations,createdAt:old?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()});
+    supplierPaymentsPP.push(obj);ppRebuildSupplierSettlementStatePP();saveData();closeModal('ppSupplierPaymentModal');renderAll();renderPaymentsCenterPP();
+}
+
+function ppFindAccountingMoveForSupplierPaymentPP(payment={},rec={}){
+    const target=-Math.abs(Number(payment.amount||0)),reference=normalizeText(payment.reference||''),date=String(payment.bankValidationDate||'').slice(0,10);
+    return ppBankAccountingMovementsPP(rec).filter(move=>Math.abs(Number(move.amount||0)-target)<0.02).map(move=>{
+        let score=0;
+        if(date&&String(move.date||'')===date)score+=100;
+        const piece=normalizeText(move.piece||''),label=normalizeText(move.label||'');
+        if(reference&&piece&&(reference===piece||reference.includes(piece)||piece.includes(reference)))score+=120;
+        else if(reference&&label.includes(reference))score+=60;
+        return {move,score};
+    }).sort((a,b)=>b.score-a.score)[0]?.move||null;
+}
+
+function ppValidateSupplierPaymentFromReconciliationPP(paymentId,reconciliationId){
+    const rec=bankReconciliationsPP.find(item=>String(item.id)===String(reconciliationId));
+    const payment=supplierPaymentsPP.find(item=>Number(item.id)===Number(paymentId));
+    if(!rec||!payment)return;
+    if(rec.status==='validated'){alert('Rouvrez d’abord ce rapprochement avant de valider un passage bancaire.');return;}
+    if(!ppSupplierPaymentPendingBankWorkflowPP(payment)){alert('Ce règlement est déjà validé ou ne nécessite pas de validation bancaire.');renderAccountingPP();return;}
+    const inputId=`pp-bank-pass-date-${String(payment.id).replace(/[^a-z0-9_-]/gi,'')}`;
+    const bankDate=String(document.getElementById(inputId)?.value||'').slice(0,10);
+    if(!bankDate){alert('Veuillez sélectionner la date réelle de passage en banque.');return;}
+    if((rec.from&&bankDate<rec.from)||(rec.to&&bankDate>rec.to)){alert(`La date de passage doit être comprise dans la période du rapprochement : ${formatDate(rec.from)} → ${formatDate(rec.to)}.`);return;}
+    if(!confirm(`Valider le règlement ${payment.reference||payment.id} à la date du ${formatDate(bankDate)} ?`))return;
+    const candidate=ppPendingSupplierPaymentCandidateTxPP(payment,rec);
+    payment.instrumentStatus='cleared';payment.bankValidationDate=bankDate;payment.bankReconciliationId=rec.id;payment.bankStatementTransactionId=candidate?.id||null;payment.updatedAt=new Date().toISOString();
+    ppRebuildSupplierSettlementStatePP();saveData();
+    const normalized=ppNormalizeSupplierPaymentMaturityPP(payment),move=ppFindAccountingMoveForSupplierPaymentPP(normalized,rec);
+    if(candidate&&move){candidate.matchedAccountingKey=move.key;candidate.updatedAt=new Date().toISOString();normalized.bankStatementTransactionId=candidate.id;}
+    const index=supplierPaymentsPP.findIndex(item=>Number(item.id)===Number(payment.id));if(index>=0)supplierPaymentsPP[index]={...supplierPaymentsPP[index],...normalized};
+    saveData();renderAccountingPP();
+}
+
+function ppPendingSupplierPaymentsPanelPP(rec={}){
+    const payments=ppPendingSupplierPaymentsForReconciliationPP(rec);
+    const rows=payments.map(payment=>{
+        const supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId)),candidate=ppPendingSupplierPaymentCandidateTxPP(payment,rec);
+        const safeId=String(payment.id).replace(/[^a-z0-9_-]/gi,''),defaultDate=String(candidate?.valueDate||candidate?.date||'').slice(0,10);
+        return `<tr><td><strong>${payment.dueDate?formatDate(payment.dueDate):'-'}</strong></td><td>${escapeHTML(supplier?.name||'-')}</td><td>${escapeHTML(payment.mode||'-')}</td><td>${escapeHTML(payment.reference||'-')}</td><td class="pp-acc-negative"><strong>${formatMoney(payment.amount)}</strong></td><td>${candidate?`<span class="status success">Ligne relevé détectée</span><br><small>${formatDate(candidate.valueDate||candidate.date)} · ${escapeHTML(candidate.reference||candidate.label||'-')}</small>`:'<span class="status warning">À confirmer dans le relevé</span>'}</td><td><input id="pp-bank-pass-date-${safeId}" type="date" value="${escapeHTML(defaultDate)}" min="${escapeHTML(rec.from||'')}" max="${escapeHTML(rec.to||'')}" ${rec.status==='validated'?'disabled':''}></td><td><button class="btn small primary" onclick='ppValidateSupplierPaymentFromReconciliationPP(${JSON.stringify(String(payment.id))},${JSON.stringify(String(rec.id))})' ${rec.status==='validated'?'disabled':''}>✓ Valider passage</button></td></tr>`;
+    }).join('');
+    return `<div class="pp-acc-panel" style="border:1px solid #f5c26b;background:#fffdf7"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><div><h3 style="margin:0">⏳ Règlements fournisseurs à valider en banque</h3><p style="margin:4px 0 0;color:#667085">Ils arrivent ici automatiquement. Indiquez la date réelle de passage en banque, sans retourner modifier le règlement fournisseur.</p></div><span class="status warning">${payments.length} en attente</span></div><div style="overflow:auto"><table style="min-width:1120px"><thead><tr><th>Échéance prévue</th><th>Fournisseur</th><th>Mode</th><th>Référence</th><th>Montant</th><th>Détection relevé</th><th>Date passage banque</th><th>Action</th></tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">Aucun règlement fournisseur en attente pour cette période.</td></tr>'}</tbody></table></div></div>`;
+}
+
+const ppRenderBankReconciliationDetailBeforeSupplierWorkflowPP=renderBankReconciliationDetailPP;
+renderBankReconciliationDetailPP=function(rec){
+    const html=ppRenderBankReconciliationDetailBeforeSupplierWorkflowPP(rec),panel=ppPendingSupplierPaymentsPanelPP(rec);
+    const anchor='<div class="pp-acc-panel"><h3 style="margin-top:0">Écritures comptables en circulation</h3>';
+    return html.includes(anchor)?html.replace(anchor,panel+anchor):html+panel;
+};
+
+const ppRenderBankReconciliationBeforeSupplierWorkflowPP=renderBankReconciliationPP;
+renderBankReconciliationPP=function(){
+    const html=ppRenderBankReconciliationBeforeSupplierWorkflowPP();
+    if(ppActiveBankReconciliationIdPP)return html;
+    const count=supplierPaymentsPP.filter(ppSupplierPaymentPendingBankWorkflowPP).length;
+    if(!count)return html;
+    const notice=`<div style="margin-bottom:14px;padding:12px 14px;border:1px solid #f5c26b;background:#fffaf0;border-radius:12px;color:#854d0e"><strong>⏳ ${count} règlement(s) fournisseur(s) attendent le passage en banque.</strong><br><small>Ouvrez le rapprochement correspondant à la période pour les valider avec leur date réelle de débit.</small></div>`;
+    const anchor='<div class="pp-acc-cards">';
+    return html.includes(anchor)?html.replace(anchor,notice+anchor):notice+html;
+};
+
+
+/* =========================================================
+   CORRECTION RAPPROCHEMENT BANCAIRE — 2026-08-05 v5
+   - Les règlements fournisseurs en attente sont visibles et
+     validables directement depuis la page principale.
+   - Les cartes Dossiers / Brouillons / Validés / Non rapprochés
+     filtrent réellement la liste.
+========================================================= */
+
+var ppBankReconciliationListFilterPP='all';
+
+function ppSetBankReconciliationListFilterPP(filter){
+    const allowed=['all','draft','validated','unmatched'];
+    ppBankReconciliationListFilterPP=allowed.includes(String(filter))?String(filter):'all';
+    ppActiveBankReconciliationIdPP=null;
+    renderAccountingPP();
+}
+
+function ppBankReconciliationFilterCardPP(label,value,filter,icon,accent,subtitle){
+    const active=ppBankReconciliationListFilterPP===filter;
+    return `<div class="pp-acc-card" role="button" tabindex="0" aria-pressed="${active?'true':'false'}" style="border-left-color:${accent};cursor:pointer;${active?'background:#f0fdf4;box-shadow:0 0 0 2px #0b6b4533;':''}" onclick='ppSetBankReconciliationListFilterPP(${JSON.stringify(filter)})' onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();ppSetBankReconciliationListFilterPP('${filter}');}"><span>${icon} ${escapeHTML(label)}</span><strong>${escapeHTML(String(value))}</strong><small style="color:#667085">${escapeHTML(subtitle)} →</small></div>`;
+}
+
+function ppDraftBankReconciliationsPP(){
+    return [...bankReconciliationsPP].filter(rec=>rec.status!=='validated');
+}
+
+function ppFindMainSupplierPaymentCandidatePP(payment={}){
+    const candidates=[];
+    ppDraftBankReconciliationsPP().forEach(rec=>{
+        const tx=ppPendingSupplierPaymentCandidateTxPP(payment,rec);
+        if(!tx)return;
+        const expected=ppSupplierPaymentReconciliationDatePP(payment);
+        const txDate=String(tx.valueDate||tx.date||'').slice(0,10);
+        const distance=ppBankDateDifferencePP(txDate,expected);
+        candidates.push({rec,tx,distance});
+    });
+    return candidates.sort((a,b)=>a.distance-b.distance||String(b.rec.to||'').localeCompare(String(a.rec.to||'')))[0]||null;
+}
+
+function ppFindDraftReconciliationForDatePP(date){
+    const value=String(date||'').slice(0,10);
+    if(!value)return null;
+    return ppDraftBankReconciliationsPP()
+        .filter(rec=>(!rec.from||value>=String(rec.from).slice(0,10))&&(!rec.to||value<=String(rec.to).slice(0,10)))
+        .sort((a,b)=>String(b.to||'').localeCompare(String(a.to||'')))[0]||null;
+}
+
+function ppValidateSupplierPaymentFromBankMainPP(paymentId){
+    const payment=supplierPaymentsPP.find(item=>Number(item.id)===Number(paymentId));
+    if(!payment)return;
+    if(!ppSupplierPaymentPendingBankWorkflowPP(payment)){
+        alert('Ce règlement est déjà validé ou ne nécessite pas de validation bancaire.');
+        renderAccountingPP();
+        return;
+    }
+    const safeId=String(payment.id).replace(/[^a-z0-9_-]/gi,'');
+    const bankDate=String(document.getElementById(`pp-bank-main-pass-date-${safeId}`)?.value||'').slice(0,10);
+    if(!bankDate){alert('Veuillez sélectionner la date réelle de passage en banque.');return;}
+    if(!confirm(`Valider le règlement ${payment.reference||payment.id} à la date du ${formatDate(bankDate)} ?`))return;
+
+    const detected=ppFindMainSupplierPaymentCandidatePP(payment);
+    const rec=(detected&&String(detected.tx.valueDate||detected.tx.date||'').slice(0,10)===bankDate)
+        ?detected.rec
+        :ppFindDraftReconciliationForDatePP(bankDate);
+    const candidateFound=rec?ppPendingSupplierPaymentCandidateTxPP(payment,rec):null;
+    const candidateDate=String(candidateFound?.valueDate||candidateFound?.date||'').slice(0,10);
+    const candidate=candidateDate===bankDate?candidateFound:null;
+
+    payment.instrumentStatus='cleared';
+    payment.bankValidationDate=bankDate;
+    payment.bankReconciliationId=rec?.id||null;
+    payment.bankStatementTransactionId=candidate?.id||null;
+    payment.updatedAt=new Date().toISOString();
+    ppRebuildSupplierSettlementStatePP();
+    saveData();
+
+    const normalized=ppNormalizeSupplierPaymentMaturityPP(payment);
+    if(rec){
+        const move=ppFindAccountingMoveForSupplierPaymentPP(normalized,rec);
+        if(candidate&&move){
+            candidate.matchedAccountingKey=move.key;
+            candidate.updatedAt=new Date().toISOString();
+            normalized.bankStatementTransactionId=candidate.id;
+        }
+    }
+    const index=supplierPaymentsPP.findIndex(item=>Number(item.id)===Number(payment.id));
+    if(index>=0)supplierPaymentsPP[index]={...supplierPaymentsPP[index],...normalized};
+    saveData();
+    renderAccountingPP();
+}
+
+function ppPendingSupplierPaymentsMainPanelPP(){
+    const payments=supplierPaymentsPP.map(ppNormalizeSupplierPaymentMaturityPP)
+        .filter(ppSupplierPaymentPendingBankWorkflowPP)
+        .sort((a,b)=>String(ppSupplierPaymentReconciliationDatePP(a)).localeCompare(String(ppSupplierPaymentReconciliationDatePP(b)))||String(a.id).localeCompare(String(b.id)));
+    if(!payments.length)return '';
+    const rows=payments.map(payment=>{
+        const supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId));
+        const detected=ppFindMainSupplierPaymentCandidatePP(payment);
+        const safeId=String(payment.id).replace(/[^a-z0-9_-]/gi,'');
+        const detectedDate=String(detected?.tx?.valueDate||detected?.tx?.date||'').slice(0,10);
+        const detection=detected
+            ?`<span class="status success">Ligne relevé détectée</span><br><small>${formatDate(detectedDate)} · ${escapeHTML(detected.tx.reference||detected.tx.label||'-')}</small>`
+            :`<span class="status warning">À confirmer</span><br><small>La liaison au relevé se fera automatiquement si un dossier correspond à la date.</small>`;
+        return `<tr><td><strong>${payment.dueDate?formatDate(payment.dueDate):'-'}</strong></td><td>${escapeHTML(supplier?.name||'-')}</td><td>${escapeHTML(payment.mode||'-')}</td><td>${escapeHTML(payment.reference||'-')}</td><td class="pp-acc-negative"><strong>${formatMoney(payment.amount)}</strong></td><td>${detection}</td><td><input id="pp-bank-main-pass-date-${safeId}" type="date" value="${escapeHTML(detectedDate)}"></td><td><button class="btn small primary" onclick='ppValidateSupplierPaymentFromBankMainPP(${JSON.stringify(String(payment.id))})'>✓ Valider passage</button></td></tr>`;
+    }).join('');
+    return `<div class="pp-acc-panel" id="ppPendingSupplierBankPanel" style="border:1px solid #f5c26b;background:#fffdf7;margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><div><h3 style="margin:0">⏳ Règlements fournisseurs à valider en banque</h3><p style="margin:4px 0 0;color:#667085">Sélectionnez ici la date réelle de passage. Il n’est plus nécessaire de retourner modifier le règlement fournisseur.</p></div><span class="status warning">${payments.length} en attente</span></div><div style="overflow:auto"><table style="min-width:1080px"><thead><tr><th>Échéance prévue</th><th>Fournisseur</th><th>Mode</th><th>Référence</th><th>Montant</th><th>Détection relevé</th><th>Date passage banque</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+
+const ppRenderBankReconciliationBeforeClickableFixPP=renderBankReconciliationPP;
+renderBankReconciliationPP=function(){
+    if(ppActiveBankReconciliationIdPP)return ppRenderBankReconciliationBeforeClickableFixPP();
+
+    const ordered=[...bankReconciliationsPP].sort((a,b)=>String(b.to||b.createdAt).localeCompare(String(a.to||a.createdAt)));
+    const drafts=ordered.filter(r=>r.status!=='validated').length;
+    const validated=ordered.length-drafts;
+    const pendingPayments=supplierPaymentsPP.filter(ppSupplierPaymentPendingBankWorkflowPP).length;
+    const reconciliationUnmatched=ordered.reduce((sum,r)=>{
+        const stats=ppBankReconciliationStatsPP(r);
+        return sum+stats.unmatched+stats.unmatchedAccounting.length+stats.gaps;
+    },0);
+    const unmatched=reconciliationUnmatched+pendingPayments;
+
+    const filtered=ordered.filter(rec=>{
+        if(ppBankReconciliationListFilterPP==='draft')return rec.status!=='validated';
+        if(ppBankReconciliationListFilterPP==='validated')return rec.status==='validated';
+        if(ppBankReconciliationListFilterPP==='unmatched'){
+            const stats=ppBankReconciliationStatsPP(rec);
+            return stats.unmatched+stats.unmatchedAccounting.length+stats.gaps>0;
+        }
+        return true;
+    });
+
+    const filterLabels={all:'Tous les dossiers',draft:'Brouillons',validated:'Validés',unmatched:'Opérations non rapprochées'};
+    const emptyMessages={all:'Aucun rapprochement bancaire. Créez le premier dossier.',draft:'Aucun brouillon à terminer.',validated:'Aucun rapprochement validé.',unmatched:'Aucun dossier avec des opérations non rapprochées.'};
+
+    return `<div class="pp-acc-toolbar"><div><h3 style="margin:0">🏦 États de rapprochement bancaire</h3></div><button class="btn primary" onclick="openBankReconciliationPP()">➕ Nouveau rapprochement</button></div>
+      ${ppPendingSupplierPaymentsMainPanelPP()}
+      <div class="pp-acc-cards">
+        ${ppBankReconciliationFilterCardPP('Dossiers',ordered.length,'all','📁','#0b6b45','Tous les rapprochements')}
+        ${ppBankReconciliationFilterCardPP('Brouillons',drafts,'draft','🟠','#f59e0b','À terminer')}
+        ${ppBankReconciliationFilterCardPP('Validés',validated,'validated','✅','#16a34a','Écart nul')}
+        ${ppBankReconciliationFilterCardPP('Opérations non rapprochées',unmatched,'unmatched','⚠️','#dc2626','À associer')}
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px"><strong>${escapeHTML(filterLabels[ppBankReconciliationListFilterPP]||filterLabels.all)}</strong>${ppBankReconciliationListFilterPP!=='all'?'<button class="btn small" onclick="ppSetBankReconciliationListFilterPP(\'all\')">Effacer le filtre</button>':''}</div>
+      <div class="pp-acc-panel"><div style="overflow:auto"><table><thead><tr><th>Période</th><th>Banque / compte</th><th>Sources</th><th>Solde relevé</th><th>Écart final rapproché</th><th>Statut</th><th>Actions</th></tr></thead><tbody>
+      ${filtered.map(rec=>{const stats=ppBankReconciliationStatsPP(rec),sources=[...new Set(rec.sources||[])].map(ppBankSourceLabelPP).join(' + ');return `<tr><td>${formatDate(rec.from)} → ${formatDate(rec.to)}</td><td><strong>${escapeHTML(rec.bankName||'Banque')}</strong><br><small>${escapeHTML(rec.accountName||rec.accountNumber||'Compte bancaire')}</small></td><td>${escapeHTML(sources)}</td><td>${formatMoney(rec.closingBalance)}</td><td class="${Math.abs(stats.finalGap)<.02?'pp-acc-positive':'pp-acc-negative'}"><strong>${formatMoney(stats.finalGap)}</strong></td><td>${ppBankStatusBadgePP(rec.status)}</td><td><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn small" onclick='viewBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Ouvrir</button><button class="btn small print" onclick='printBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Imprimer</button><button class="btn small danger" onclick='deleteBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Supprimer</button></div></td></tr>`;}).join('')||`<tr><td colspan="7" class="empty">${escapeHTML(emptyMessages[ppBankReconciliationListFilterPP]||emptyMessages.all)}</td></tr>`}
+      </tbody></table></div></div>`;
+};
+
+ppRebuildSupplierSettlementStatePP();
+if(typeof ppSaveLocalOnly==='function')ppSaveLocalOnly();
+
+/* =========================================================
+   RAPPROCHEMENT GLOBAL + CARTES TRÉSORERIE CLIQUABLES — v6
+   2026-08-05
+   - Les règlements fournisseurs validés apparaissent dans
+     la carte Validés, même sans dossier de relevé manuel.
+   - La date réelle de passage reste visible dans l'historique.
+   - Une validation bancaire manuelle marque aussi la ligne du
+     journal banque comme rapprochée.
+   - Les cartes Caisse / Banque filtrent les mouvements.
+========================================================= */
+
+var ppTreasuryAccountFilterV6PP='all';
+
+function ppSetTreasuryAccountFilterV6PP(account){
+    const allowed=['all','5141','5161'];
+    const normalized=allowed.includes(String(account))?String(account):'all';
+    ppTreasuryAccountFilterV6PP=ppTreasuryAccountFilterV6PP===normalized&&normalized!=='all'?'all':normalized;
+    renderAccountingPP();
+}
+
+function ppTreasuryCardV6PP(label,value,account,icon,accent,subtitle){
+    const active=ppTreasuryAccountFilterV6PP===account;
+    return `<div class="pp-acc-card" role="button" tabindex="0" aria-pressed="${active?'true':'false'}" style="border-left-color:${accent};cursor:pointer;${active?'background:#f0fdf4;box-shadow:0 0 0 2px #0b6b4533;':''}" onclick='ppSetTreasuryAccountFilterV6PP(${JSON.stringify(account)})' onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();ppSetTreasuryAccountFilterV6PP('${account}');}"><span>${icon} ${escapeHTML(label)}</span><strong>${escapeHTML(value)}</strong><small style="color:#667085">${escapeHTML(subtitle)} →</small></div>`;
+}
+
+renderAccountingTreasuryPP=function(stats){
+    const allEntries=stats.entries.flatMap(entry=>entry.lines
+        .filter(line=>line.account==='5141'||line.account==='5161')
+        .map(line=>({...line,date:entry.date,piece:entry.piece,entryLabel:entry.label,journal:entry.journal,source:entry.source})));
+    const entries=ppTreasuryAccountFilterV6PP==='all'
+        ?allEntries
+        :allEntries.filter(line=>line.account===ppTreasuryAccountFilterV6PP);
+    const receipts=allEntries.reduce((sum,line)=>sum+Number(line.debit||0),0);
+    const payments=allEntries.reduce((sum,line)=>sum+Number(line.credit||0),0);
+    const title=ppTreasuryAccountFilterV6PP==='5141'?'Mouvements de la banque':ppTreasuryAccountFilterV6PP==='5161'?'Mouvements de la caisse':'Mouvements de trésorerie';
+    return `<div class="pp-acc-cards">
+      ${ppTreasuryCardV6PP('Caisse actuelle',formatMoney(stats.caisse),'5161','💵','#0b6b45','Voir les mouvements caisse')}
+      ${ppTreasuryCardV6PP('Banque actuelle',formatMoney(stats.banque),'5141','🏦','#2563eb','Voir les mouvements banque')}
+      ${ppAccountingCardPP('Encaissements période',formatMoney(receipts),'journal','⬆️','#067647')}
+      ${ppAccountingCardPP('Décaissements période',formatMoney(payments),'journal','⬇️','#b42318')}
+    </div>
+    <div class="pp-acc-panel" id="ppTreasuryMovementsPanel">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <h3 style="margin:0">${escapeHTML(title)}</h3>
+        ${ppTreasuryAccountFilterV6PP!=='all'?'<button class="btn small" onclick="ppSetTreasuryAccountFilterV6PP(\'all\')">Afficher toute la trésorerie</button>':''}
+      </div>
+      <table><thead><tr><th>Date</th><th>Journal</th><th>Pièce</th><th>Compte</th><th>Libellé</th><th>Entrée</th><th>Sortie</th></tr></thead><tbody>
+      ${entries.map(line=>`<tr><td>${formatDate(line.date)}</td><td>${escapeHTML(line.journal)}</td><td>${escapeHTML(line.piece||'-')}</td><td>${line.account} — ${escapeHTML(line.accountLabel)}</td><td>${escapeHTML(line.entryLabel)}</td><td class="pp-acc-positive">${line.debit?formatMoney(line.debit):'-'}</td><td class="pp-acc-negative">${line.credit?formatMoney(line.credit):'-'}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">Aucun mouvement pour ce filtre.</td></tr>'}
+      </tbody></table>
+    </div>`;
+};
+
+const ppLinkedBankRowsBeforeV6PP=ppLinkedBankRowsPP;
+
+function ppClearedSupplierPaymentForBankRowV6PP(row={}){
+    if(String(row.source)!=='supplier-payment')return null;
+    const rowDate=String(row.date||'').slice(0,10);
+    const rowReference=normalizeText(row.piece||'');
+    const rowAmount=Math.abs(Number(row.amount||0));
+    const invoiceId=Number(row.sourceId)||0;
+    return supplierPaymentsPP.map(ppNormalizeSupplierPaymentMaturityPP)
+        .filter(payment=>ppIsSupplierInstrumentModePP(payment.mode)&&ppSupplierPaymentIsSettledPP(payment)&&String(payment.bankValidationDate||'').slice(0,10)===rowDate)
+        .map(payment=>{
+            const reference=normalizeText(payment.reference||'');
+            const allocations=Array.isArray(payment.allocations)?payment.allocations:[];
+            const allocationMatch=allocations.some(allocation=>Number(allocation.invoiceId)===invoiceId&&Math.abs(Number(allocation.amount||0)-rowAmount)<0.02);
+            const amountMatch=Math.abs(Number(payment.amount||0)-rowAmount)<0.02||allocationMatch;
+            if(!amountMatch)return null;
+            let score=allocationMatch?160:80;
+            if(reference&&rowReference&&(reference===rowReference||reference.includes(rowReference)||rowReference.includes(reference)))score+=160;
+            return {payment,score};
+        })
+        .filter(Boolean)
+        .sort((a,b)=>b.score-a.score)[0]?.payment||null;
+}
+
+ppLinkedBankRowsPP=function(){
+    return ppLinkedBankRowsBeforeV6PP().map(row=>{
+        if(row.matched)return row;
+        const payment=ppClearedSupplierPaymentForBankRowV6PP(row);
+        if(!payment)return row;
+        return {...row,matched:true,matchOrigin:'supplier-bank-validation',supplierPaymentId:payment.id,bankValidationDate:payment.bankValidationDate};
+    });
+};
+
+function ppSupplierBankTrackingRowsV6PP(){
+    return supplierPaymentsPP.map(ppNormalizeSupplierPaymentMaturityPP)
+        .filter(payment=>ppIsSupplierInstrumentModePP(payment.mode))
+        .map(payment=>{
+            const supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId));
+            const validated=ppSupplierPaymentIsSettledPP(payment);
+            const reconciliation=payment.bankReconciliationId?bankReconciliationsPP.find(item=>String(item.id)===String(payment.bankReconciliationId)):null;
+            return {payment,supplier,validated,reconciliation};
+        })
+        .sort((a,b)=>String(b.payment.bankValidationDate||b.payment.dueDate||b.payment.date||'').localeCompare(String(a.payment.bankValidationDate||a.payment.dueDate||a.payment.date||''))||String(b.payment.id).localeCompare(String(a.payment.id)));
+}
+
+function ppSupplierBankTrackingRowsForFilterV6PP(filter){
+    const rows=ppSupplierBankTrackingRowsV6PP();
+    if(filter==='validated')return rows.filter(row=>row.validated);
+    if(filter==='draft'||filter==='unmatched')return rows.filter(row=>!row.validated);
+    return rows;
+}
+
+function ppSupplierBankTrackingTableV6PP(filter){
+    const rows=ppSupplierBankTrackingRowsForFilterV6PP(filter);
+    const labels={all:'Tous les règlements bancaires',draft:'Règlements en attente',validated:'Règlements validés',unmatched:'Règlements à rapprocher'};
+    const body=rows.map(({payment,supplier,validated,reconciliation})=>{
+        const safeId=String(payment.id).replace(/[^a-z0-9_-]/gi,'');
+        const detected=!validated?ppFindMainSupplierPaymentCandidatePP(payment):null;
+        const detectedDate=String(detected?.tx?.valueDate||detected?.tx?.date||'').slice(0,10);
+        const status=validated
+            ?`<span class="pp-bank-status matched">✓ Validé / rapproché</span>`
+            :`<span class="pp-bank-status unmatched">À valider en banque</span>`;
+        const reconciliationLabel=reconciliation
+            ?`${formatDate(reconciliation.from)} → ${formatDate(reconciliation.to)}`
+            :(validated?'Validation directe':'En attente');
+        const action=validated
+            ?'<span class="status success">Terminé</span>'
+            :`<div style="display:flex;gap:6px;align-items:center;min-width:270px"><input id="pp-bank-main-pass-date-${safeId}" type="date" value="${escapeHTML(detectedDate)}"><button class="btn small primary" onclick='ppValidateSupplierPaymentFromBankMainPP(${JSON.stringify(String(payment.id))})'>✓ Valider passage</button></div>`;
+        return `<tr><td>${formatDate(payment.date)}</td><td>${payment.dueDate?formatDate(payment.dueDate):'-'}</td><td><strong>${payment.bankValidationDate?formatDate(payment.bankValidationDate):'-'}</strong></td><td>${escapeHTML(supplier?.name||'-')}</td><td>${escapeHTML(payment.mode||'-')}</td><td>${escapeHTML(payment.reference||'-')}</td><td class="pp-acc-negative"><strong>${formatMoney(payment.amount)}</strong></td><td>${status}</td><td>${escapeHTML(reconciliationLabel)}</td><td>${action}</td></tr>`;
+    }).join('');
+    return `<div class="pp-acc-panel" id="ppSupplierBankTrackingV6"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><div><h3 style="margin:0">🏦 ${escapeHTML(labels[filter]||labels.all)}</h3><p style="margin:4px 0 0;color:#667085">Historique complet avec échéance, date réelle de passage et situation bancaire.</p></div><span class="status ${filter==='validated'?'success':filter==='draft'||filter==='unmatched'?'warning':''}">${rows.length} opération(s)</span></div><div style="overflow:auto"><table style="min-width:1320px"><thead><tr><th>Date règlement</th><th>Échéance</th><th>Passage banque</th><th>Fournisseur</th><th>Mode</th><th>Référence</th><th>Montant</th><th>Situation</th><th>Dossier</th><th>Action</th></tr></thead><tbody>${body||'<tr><td colspan="10" class="empty">Aucun règlement fournisseur dans cet état.</td></tr>'}</tbody></table></div></div>`;
+}
+
+renderBankReconciliationPP=function(){
+    if(ppActiveBankReconciliationIdPP)return ppRenderBankReconciliationBeforeClickableFixPP();
+
+    const ordered=[...bankReconciliationsPP].sort((a,b)=>String(b.to||b.createdAt).localeCompare(String(a.to||a.createdAt)));
+    const supplierRows=ppSupplierBankTrackingRowsV6PP();
+    const pendingSupplierRows=supplierRows.filter(row=>!row.validated);
+    const validatedSupplierRows=supplierRows.filter(row=>row.validated);
+    const draftReconciliations=ordered.filter(rec=>rec.status!=='validated');
+    const validatedReconciliations=ordered.filter(rec=>rec.status==='validated');
+    const recsWithUnmatched=ordered.filter(rec=>{
+        const stats=ppBankReconciliationStatsPP(rec);
+        return stats.unmatched+stats.unmatchedAccounting.length+stats.gaps>0;
+    });
+    const unmatchedLines=recsWithUnmatched.reduce((sum,rec)=>{
+        const stats=ppBankReconciliationStatsPP(rec);
+        return sum+stats.unmatched+stats.unmatchedAccounting.length+stats.gaps;
+    },0);
+
+    const totals={
+        all:ordered.length+supplierRows.length,
+        draft:draftReconciliations.length+pendingSupplierRows.length,
+        validated:validatedReconciliations.length+validatedSupplierRows.length,
+        unmatched:unmatchedLines+pendingSupplierRows.length
+    };
+
+    const filtered=ordered.filter(rec=>{
+        if(ppBankReconciliationListFilterPP==='draft')return rec.status!=='validated';
+        if(ppBankReconciliationListFilterPP==='validated')return rec.status==='validated';
+        if(ppBankReconciliationListFilterPP==='unmatched'){
+            const stats=ppBankReconciliationStatsPP(rec);
+            return stats.unmatched+stats.unmatchedAccounting.length+stats.gaps>0;
+        }
+        return true;
+    });
+
+    const filterLabels={all:'Tous les dossiers et règlements',draft:'Brouillons et règlements en attente',validated:'Dossiers et règlements validés',unmatched:'Opérations non rapprochées'};
+    const emptyMessages={all:'Aucun dossier de relevé bancaire.',draft:'Aucun dossier brouillon.',validated:'Aucun dossier de relevé validé.',unmatched:'Aucun dossier avec des opérations non rapprochées.'};
+
+    return `<div class="pp-acc-toolbar"><div><h3 style="margin:0 0 4px">🏦 États de rapprochement bancaire</h3><p style="margin:0;color:#667085">Suivez les relevés bancaires et les règlements du logiciel dans un seul état.</p></div><button class="btn primary" onclick="openBankReconciliationPP()">➕ Nouveau rapprochement</button></div>
+      <div class="pp-acc-cards">
+        ${ppBankReconciliationFilterCardPP('Dossiers',totals.all,'all','📁','#0b6b45','Dossiers + règlements')}
+        ${ppBankReconciliationFilterCardPP('Brouillons',totals.draft,'draft','🟠','#f59e0b','À terminer / valider')}
+        ${ppBankReconciliationFilterCardPP('Validés',totals.validated,'validated','✅','#16a34a','Passages confirmés')}
+        ${ppBankReconciliationFilterCardPP('Opérations non rapprochées',totals.unmatched,'unmatched','⚠️','#dc2626','À associer')}
+      </div>
+      ${ppSupplierBankTrackingTableV6PP(ppBankReconciliationListFilterPP)}
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px"><strong>Dossiers de relevé — ${escapeHTML(filterLabels[ppBankReconciliationListFilterPP]||filterLabels.all)}</strong>${ppBankReconciliationListFilterPP!=='all'?'<button class="btn small" onclick="ppSetBankReconciliationListFilterPP(\'all\')">Effacer le filtre</button>':''}</div>
+      <div class="pp-acc-panel"><div style="overflow:auto"><table><thead><tr><th>Période</th><th>Banque / compte</th><th>Sources</th><th>Solde relevé</th><th>Écart final rapproché</th><th>Statut</th><th>Actions</th></tr></thead><tbody>
+      ${filtered.map(rec=>{const stats=ppBankReconciliationStatsPP(rec),sources=[...new Set(rec.sources||[])].map(ppBankSourceLabelPP).join(' + ');return `<tr><td>${formatDate(rec.from)} → ${formatDate(rec.to)}</td><td><strong>${escapeHTML(rec.bankName||'Banque')}</strong><br><small>${escapeHTML(rec.accountName||rec.accountNumber||'Compte bancaire')}</small></td><td>${escapeHTML(sources)}</td><td>${formatMoney(rec.closingBalance)}</td><td class="${Math.abs(stats.finalGap)<.02?'pp-acc-positive':'pp-acc-negative'}"><strong>${formatMoney(stats.finalGap)}</strong></td><td>${ppBankStatusBadgePP(rec.status)}</td><td><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn small" onclick='viewBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Ouvrir</button><button class="btn small print" onclick='printBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Imprimer</button><button class="btn small danger" onclick='deleteBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Supprimer</button></div></td></tr>`;}).join('')||`<tr><td colspan="7" class="empty">${escapeHTML(emptyMessages[ppBankReconciliationListFilterPP]||emptyMessages.all)}</td></tr>`}
+      </tbody></table></div></div>`;
+};
+
+/* =========================================================
+   GESTION SÉCURISÉE DES RÈGLEMENTS DANS LE RAPPROCHEMENT — v7
+   - Recherche + filtre par dates.
+   - Dévalidation obligatoire avant modification/suppression.
+   - Correction du fournisseur et de toutes les données après dévalidation.
+========================================================= */
+
+var ppBankManagementSearchV7='';
+var ppBankManagementFromV7='';
+var ppBankManagementToV7='';
+
+function ppSetBankManagementSearchV7(value){
+    ppBankManagementSearchV7=String(value||'');
+    renderAccountingPP();
+    requestAnimationFrame(()=>{
+        const input=document.getElementById('ppBankManagementSearchV7');
+        if(input){input.focus();const length=input.value.length;try{input.setSelectionRange(length,length);}catch(_){}}
+    });
+}
+
+function ppSetBankManagementDateV7(field,value){
+    const normalized=String(value||'').slice(0,10);
+    if(field==='from')ppBankManagementFromV7=normalized;
+    if(field==='to')ppBankManagementToV7=normalized;
+    renderAccountingPP();
+}
+
+function ppResetBankManagementFiltersV7(){
+    ppBankManagementSearchV7='';
+    ppBankManagementFromV7='';
+    ppBankManagementToV7='';
+    ppBankReconciliationListFilterPP='all';
+    renderAccountingPP();
+}
+
+function ppBankManagementToolbarV7(){
+    return `<div class="pp-acc-filters" style="display:grid;margin-bottom:16px">
+      <div><label>Du</label><input id="ppBankManagementFromV7" type="date" value="${escapeHTML(ppBankManagementFromV7)}" onchange="ppSetBankManagementDateV7('from',this.value)"></div>
+      <div><label>Au</label><input id="ppBankManagementToV7" type="date" value="${escapeHTML(ppBankManagementToV7)}" onchange="ppSetBankManagementDateV7('to',this.value)"></div>
+      <div><label>Recherche</label><input id="ppBankManagementSearchV7" value="${escapeHTML(ppBankManagementSearchV7)}" placeholder="Fournisseur, référence, mode, montant, statut…" oninput="ppSetBankManagementSearchV7(this.value)"></div>
+      <div style="display:flex;align-items:end"><button class="btn" style="width:100%" onclick="ppResetBankManagementFiltersV7()">Effacer les filtres</button></div>
+    </div>`;
+}
+
+function ppBankManagementDateMatchesV7(date){
+    const value=String(date||'').slice(0,10);
+    if(ppBankManagementFromV7&&(!value||value<ppBankManagementFromV7))return false;
+    if(ppBankManagementToV7&&(!value||value>ppBankManagementToV7))return false;
+    return true;
+}
+
+function ppSupplierBankRelevantDateV7(payment={}){
+    return String(payment.bankValidationDate||payment.dueDate||payment.date||'').slice(0,10);
+}
+
+function ppSupplierBankRowMatchesV7(row={}){
+    const payment=row.payment||{},supplier=row.supplier||{};
+    if(!ppBankManagementDateMatchesV7(ppSupplierBankRelevantDateV7(payment)))return false;
+    const query=normalizeText(ppBankManagementSearchV7);
+    if(!query)return true;
+    const status=row.validated?'valide valide banque rapproche solde':'attente brouillon non rapproche non solde';
+    const haystack=normalizeText([
+        supplier.name,supplier.ice,supplier.phone,payment.reference,payment.mode,payment.amount,
+        payment.date,payment.dueDate,payment.bankValidationDate,payment.amount,formatMoney(payment.amount),status,
+        row.reconciliation?.bankName,row.reconciliation?.accountName
+    ].join(' '));
+    return haystack.includes(query);
+}
+
+function ppBankReconciliationMatchesV7(rec={}){
+    const overlaps=(!ppBankManagementFromV7||!rec.to||String(rec.to).slice(0,10)>=ppBankManagementFromV7)
+        &&(!ppBankManagementToV7||!rec.from||String(rec.from).slice(0,10)<=ppBankManagementToV7);
+    if(!overlaps)return false;
+    const query=normalizeText(ppBankManagementSearchV7);
+    if(!query)return true;
+    const stats=ppBankReconciliationStatsPP(rec);
+    const haystack=normalizeText([
+        rec.bankName,rec.accountName,rec.accountNumber,rec.from,rec.to,rec.status,
+        (rec.sources||[]).map(ppBankSourceLabelPP).join(' '),rec.closingBalance,stats.finalGap
+    ].join(' '));
+    return haystack.includes(query);
+}
+
+function ppSupplierPaymentLockedByBankV7(payment={}){
+    return ppIsSupplierInstrumentModePP(payment.mode)&&ppSupplierPaymentIsSettledPP(payment);
+}
+
+function ppClearSupplierPaymentBankMatchV7(payment={}){
+    const transactionId=payment.bankStatementTransactionId;
+    if(transactionId!==null&&transactionId!==undefined&&transactionId!==''){
+        const tx=bankStatementTransactionsPP.find(item=>String(item.id)===String(transactionId));
+        if(tx){tx.matchedAccountingKey=null;tx.updatedAt=new Date().toISOString();}
+    }
+    const reconciliation=payment.bankReconciliationId
+        ?bankReconciliationsPP.find(item=>String(item.id)===String(payment.bankReconciliationId))
+        :null;
+    if(reconciliation&&reconciliation.status==='validated'){
+        reconciliation.status='draft';
+        reconciliation.validatedAt=null;
+        reconciliation.updatedAt=new Date().toISOString();
+    }
+}
+
+function ppDevalidateSupplierPaymentBankV7(paymentId){
+    const payment=supplierPaymentsPP.find(item=>Number(item.id)===Number(paymentId));
+    if(!payment)return;
+    if(!ppSupplierPaymentLockedByBankV7(payment)){
+        alert('Ce règlement est déjà dévalidé. Vous pouvez maintenant le modifier ou le supprimer.');
+        renderAccountingPP();
+        return;
+    }
+    const supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId));
+    const dateText=payment.bankValidationDate?` du ${formatDate(payment.bankValidationDate)}`:'';
+    if(!confirm(`Dévalider le passage bancaire${dateText} du règlement ${payment.reference||payment.id} — ${supplier?.name||'Fournisseur'} ?\n\nLa facture redeviendra non soldée et le règlement retournera dans l’Échéancier.`))return;
+    ppClearSupplierPaymentBankMatchV7(payment);
+    payment.previousBankValidationDate=payment.bankValidationDate||payment.previousBankValidationDate||'';
+    payment.instrumentStatus='planned';
+    payment.bankValidationDate='';
+    payment.bankReconciliationId=null;
+    payment.bankStatementTransactionId=null;
+    payment.bankDevalidatedAt=new Date().toISOString();
+    ppBankReconciliationListFilterPP='draft';
+    payment.updatedAt=new Date().toISOString();
+    ppRebuildSupplierSettlementStatePP();
+    saveData();
+    renderAccountingPP();
+    if(typeof renderPaymentsCenterPP==='function')renderPaymentsCenterPP();
+}
+
+function ppDeleteSupplierPaymentUnlockedV7(paymentId){
+    supplierPaymentsPP=supplierPaymentsPP.filter(item=>Number(item.id)!==Number(paymentId));
+    ppRebuildSupplierSettlementStatePP();
+    saveData();
+    if(typeof renderAll==='function')renderAll();
+    if(typeof renderPaymentsCenterPP==='function')renderPaymentsCenterPP();
+    if(ppActiveAccountingTab==='bank')renderAccountingPP();
+}
+
+function ppDeleteSupplierPaymentFromBankV7(paymentId){
+    const payment=supplierPaymentsPP.find(item=>Number(item.id)===Number(paymentId));
+    if(!payment)return;
+    if(ppSupplierPaymentLockedByBankV7(payment)){
+        alert('Dévalidez d’abord ce règlement dans le rapprochement bancaire avant de le supprimer.');
+        return;
+    }
+    const supplier=suppliers.find(item=>Number(item.id)===Number(payment.supplierId));
+    if(!confirm(`Supprimer définitivement le règlement ${payment.reference||payment.id} — ${supplier?.name||'Fournisseur'} ?`))return;
+    ppDeleteSupplierPaymentUnlockedV7(paymentId);
+}
+
+const ppDeleteSupplierPaymentBeforeManagementV7=deleteSupplierPaymentPP;
+deleteSupplierPaymentPP=function(paymentId){
+    const payment=supplierPaymentsPP.find(item=>Number(item.id)===Number(paymentId));
+    if(!payment)return;
+    if(ppSupplierPaymentLockedByBankV7(payment)){
+        alert('Ce règlement est validé par la banque. Dévalidez-le d’abord dans Comptabilité → Rapprochement bancaire avant toute suppression.');
+        return;
+    }
+    if(!confirm('Supprimer ce règlement ?'))return;
+    ppDeleteSupplierPaymentUnlockedV7(paymentId);
+};
+
+function ppSupplierPaymentEditSupplierChangedV7(select){
+    const supplierId=Number(select?.value)||0;
+    const supplier=suppliers.find(item=>Number(item.id)===supplierId);
+    if(!supplier)return;
+    setValue('ppSupplierPaymentSupplier',supplier.id);
+    setValue('ppSupplierPaymentName',supplier.name);
+    const invoiceSelect=document.getElementById('ppSupplierPaymentInvoice');
+    const supplierInvoiceRows=supplierInvoicesPP(supplierId)
+        .filter(invoice=>Number(invoice.due||0)>0)
+        .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+    if(invoiceSelect){
+        invoiceSelect.innerHTML='<option value="">Affectation automatique — plus anciennes factures</option>'
+            +supplierInvoiceRows.map(invoice=>`<option value="${invoice.id}">${escapeHTML(invoice.number)} — échéance ${invoice.dueDate?formatDate(invoice.dueDate):'-'} — reste ${formatMoney(invoice.due)}</option>`).join('');
+        invoiceSelect.dataset.defaultInvoiceId=String(supplierInvoiceRows[0]?.id||'');
+        invoiceSelect.value='';
+    }
+    const days=Math.max(Number(ppSupplierLegalTermPP(supplier).days||0),0);
+    const base=String(supplierInvoiceRows[0]?.date||getValue('ppSupplierPaymentDate')||'').slice(0,10);
+    setValue('ppSupplierPaymentTermDays',days);
+    setValue('ppSupplierPaymentDueDate',String(supplierInvoiceRows[0]?.dueDate||ppAddCalendarDaysPP(base,days)||'').slice(0,10));
+    ppUpdateSupplierPaymentMaturityHelpPP();
+}
+
+function ppConfigureSupplierPaymentEditorV7(paymentId){
+    const nameInput=document.getElementById('ppSupplierPaymentName');
+    if(!nameInput)return;
+    const holder=nameInput.parentElement;
+    let select=document.getElementById('ppSupplierPaymentSupplierEditV7');
+    if(!paymentId){
+        if(select)select.remove();
+        nameInput.style.display='';
+        return;
+    }
+    const payment=supplierPaymentsPP.find(item=>Number(item.id)===Number(paymentId));
+    if(!payment)return;
+    if(!select){
+        select=document.createElement('select');
+        select.id='ppSupplierPaymentSupplierEditV7';
+        select.onchange=function(){ppSupplierPaymentEditSupplierChangedV7(this);};
+        holder.appendChild(select);
+    }
+    select.innerHTML=suppliers.slice().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'fr')).map(supplier=>`<option value="${supplier.id}" ${Number(supplier.id)===Number(payment.supplierId)?'selected':''}>${escapeHTML(supplier.name||'-')}</option>`).join('');
+    nameInput.style.display='none';
+    select.style.display='block';
+    const label=holder.querySelector('label');
+    if(label)label.textContent='Fournisseur *';
+}
+
+const ppOpenSupplierPaymentBeforeManagementV7=openSupplierPaymentPP;
+openSupplierPaymentPP=function(id,paymentId=null){
+    const payment=paymentId?supplierPaymentsPP.find(item=>Number(item.id)===Number(paymentId)):null;
+    if(payment&&ppSupplierPaymentLockedByBankV7(payment)){
+        alert('Ce règlement est validé par la banque. Dévalidez-le d’abord dans Comptabilité → Rapprochement bancaire avant toute modification.');
+        return;
+    }
+    ppOpenSupplierPaymentBeforeManagementV7(id,paymentId);
+    ppConfigureSupplierPaymentEditorV7(paymentId);
+};
+
+const ppSaveSupplierPaymentBeforeManagementV7=saveSupplierPaymentPP;
+saveSupplierPaymentPP=function(){
+    const paymentId=Number(getValue('ppSupplierPaymentId'))||0;
+    const payment=paymentId?supplierPaymentsPP.find(item=>Number(item.id)===paymentId):null;
+    if(payment&&ppSupplierPaymentLockedByBankV7(payment)){
+        alert('Dévalidez d’abord ce règlement dans le rapprochement bancaire avant de le modifier.');
+        return;
+    }
+    ppSaveSupplierPaymentBeforeManagementV7();
+};
+
+function ppEditSupplierPaymentFromBankV7(paymentId){
+    const payment=supplierPaymentsPP.find(item=>Number(item.id)===Number(paymentId));
+    if(!payment)return;
+    if(ppSupplierPaymentLockedByBankV7(payment)){
+        alert('Dévalidez d’abord ce règlement avant de le modifier.');
+        return;
+    }
+    openSupplierPaymentPP(payment.supplierId,payment.id);
+}
+
+function ppSupplierBankTrackingRowsFilteredV7(){
+    return ppSupplierBankTrackingRowsV6PP().filter(ppSupplierBankRowMatchesV7);
+}
+
+function ppSupplierBankTrackingTableV7(filter){
+    const allFiltered=ppSupplierBankTrackingRowsFilteredV7();
+    const rows=filter==='validated'
+        ?allFiltered.filter(row=>row.validated)
+        :(filter==='draft'||filter==='unmatched')
+            ?allFiltered.filter(row=>!row.validated)
+            :allFiltered;
+    const labels={all:'Tous les règlements bancaires',draft:'Règlements en attente',validated:'Règlements validés',unmatched:'Règlements à rapprocher'};
+    const body=rows.map(({payment,supplier,validated,reconciliation})=>{
+        const safeId=String(payment.id).replace(/[^a-z0-9_-]/gi,'');
+        const detected=!validated?ppFindMainSupplierPaymentCandidatePP(payment):null;
+        const detectedDate=String(detected?.tx?.valueDate||detected?.tx?.date||'').slice(0,10);
+        const status=validated
+            ?`<span class="pp-bank-status matched">✓ Validé / rapproché</span>`
+            :`<span class="pp-bank-status unmatched">À valider en banque</span>`;
+        const reconciliationLabel=reconciliation
+            ?`${formatDate(reconciliation.from)} → ${formatDate(reconciliation.to)}`
+            :(validated?'Validation directe':'En attente');
+        const action=validated
+            ?`<button class="btn small" onclick='ppDevalidateSupplierPaymentBankV7(${JSON.stringify(String(payment.id))})'>↩ Dévalider</button>`
+            :`<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:430px"><input id="pp-bank-main-pass-date-${safeId}" type="date" value="${escapeHTML(detectedDate)}" style="max-width:155px"><button class="btn small primary" onclick='ppValidateSupplierPaymentFromBankMainPP(${JSON.stringify(String(payment.id))})'>✓ Valider passage</button><button class="btn small edit" onclick='ppEditSupplierPaymentFromBankV7(${JSON.stringify(String(payment.id))})'>✏️ Modifier</button><button class="btn small danger" onclick='ppDeleteSupplierPaymentFromBankV7(${JSON.stringify(String(payment.id))})'>🗑️ Supprimer</button></div>`;
+        return `<tr><td>${formatDate(payment.date)}</td><td>${payment.dueDate?formatDate(payment.dueDate):'-'}</td><td><strong>${payment.bankValidationDate?formatDate(payment.bankValidationDate):'-'}</strong></td><td>${escapeHTML(supplier?.name||'-')}</td><td>${escapeHTML(payment.mode||'-')}</td><td>${escapeHTML(payment.reference||'-')}</td><td class="pp-acc-negative"><strong>${formatMoney(payment.amount)}</strong></td><td>${status}</td><td>${escapeHTML(reconciliationLabel)}</td><td>${action}</td></tr>`;
+    }).join('');
+    return `<div class="pp-acc-panel" id="ppSupplierBankTrackingV7"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><div><h3 style="margin:0">🏦 ${escapeHTML(labels[filter]||labels.all)}</h3><p style="margin:4px 0 0;color:#667085">Pour corriger une date, un fournisseur ou toute autre information : dévalidez d’abord, puis modifiez ou supprimez.</p></div><span class="status ${filter==='validated'?'success':filter==='draft'||filter==='unmatched'?'warning':''}">${rows.length} opération(s)</span></div><div style="overflow:auto"><table style="min-width:1420px"><thead><tr><th>Date règlement</th><th>Échéance</th><th>Passage banque</th><th>Fournisseur</th><th>Mode</th><th>Référence</th><th>Montant</th><th>Situation</th><th>Dossier</th><th>Actions</th></tr></thead><tbody>${body||'<tr><td colspan="10" class="empty">Aucun règlement fournisseur pour les filtres sélectionnés.</td></tr>'}</tbody></table></div></div>`;
+}
+
+renderBankReconciliationPP=function(){
+    if(ppActiveBankReconciliationIdPP)return ppRenderBankReconciliationBeforeClickableFixPP();
+
+    const supplierRows=ppSupplierBankTrackingRowsFilteredV7();
+    const ordered=[...bankReconciliationsPP].filter(ppBankReconciliationMatchesV7).sort((a,b)=>String(b.to||b.createdAt).localeCompare(String(a.to||a.createdAt)));
+    const pendingSupplierRows=supplierRows.filter(row=>!row.validated);
+    const validatedSupplierRows=supplierRows.filter(row=>row.validated);
+    const draftReconciliations=ordered.filter(rec=>rec.status!=='validated');
+    const validatedReconciliations=ordered.filter(rec=>rec.status==='validated');
+    const recsWithUnmatched=ordered.filter(rec=>{
+        const stats=ppBankReconciliationStatsPP(rec);
+        return stats.unmatched+stats.unmatchedAccounting.length+stats.gaps>0;
+    });
+    const unmatchedLines=recsWithUnmatched.reduce((sum,rec)=>{
+        const stats=ppBankReconciliationStatsPP(rec);
+        return sum+stats.unmatched+stats.unmatchedAccounting.length+stats.gaps;
+    },0);
+    const totals={
+        all:ordered.length+supplierRows.length,
+        draft:draftReconciliations.length+pendingSupplierRows.length,
+        validated:validatedReconciliations.length+validatedSupplierRows.length,
+        unmatched:unmatchedLines+pendingSupplierRows.length
+    };
+    const filtered=ordered.filter(rec=>{
+        if(ppBankReconciliationListFilterPP==='draft')return rec.status!=='validated';
+        if(ppBankReconciliationListFilterPP==='validated')return rec.status==='validated';
+        if(ppBankReconciliationListFilterPP==='unmatched'){
+            const stats=ppBankReconciliationStatsPP(rec);
+            return stats.unmatched+stats.unmatchedAccounting.length+stats.gaps>0;
+        }
+        return true;
+    });
+    const filterLabels={all:'Tous les dossiers et règlements',draft:'Brouillons et règlements en attente',validated:'Dossiers et règlements validés',unmatched:'Opérations non rapprochées'};
+    const emptyMessages={all:'Aucun dossier de relevé bancaire.',draft:'Aucun dossier brouillon.',validated:'Aucun dossier de relevé validé.',unmatched:'Aucun dossier avec des opérations non rapprochées.'};
+
+    return `<div class="pp-acc-toolbar"><div><h3 style="margin:0 0 4px">🏦 États de rapprochement bancaire</h3><p style="margin:0;color:#667085">Recherche, suivi, validation et correction sécurisée des règlements bancaires.</p></div><button class="btn primary" onclick="openBankReconciliationPP()">➕ Nouveau rapprochement</button></div>
+      ${ppBankManagementToolbarV7()}
+      <div class="pp-acc-cards">
+        ${ppBankReconciliationFilterCardPP('Dossiers',totals.all,'all','📁','#0b6b45','Dossiers + règlements')}
+        ${ppBankReconciliationFilterCardPP('Brouillons',totals.draft,'draft','🟠','#f59e0b','À terminer / valider')}
+        ${ppBankReconciliationFilterCardPP('Validés',totals.validated,'validated','✅','#16a34a','Passages confirmés')}
+        ${ppBankReconciliationFilterCardPP('Opérations non rapprochées',totals.unmatched,'unmatched','⚠️','#dc2626','À associer')}
+      </div>
+      ${ppSupplierBankTrackingTableV7(ppBankReconciliationListFilterPP)}
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px"><strong>Dossiers de relevé — ${escapeHTML(filterLabels[ppBankReconciliationListFilterPP]||filterLabels.all)}</strong>${ppBankReconciliationListFilterPP!=='all'?'<button class="btn small" onclick="ppSetBankReconciliationListFilterPP(\'all\')">Effacer le filtre de statut</button>':''}</div>
+      <div class="pp-acc-panel"><div style="overflow:auto"><table><thead><tr><th>Période</th><th>Banque / compte</th><th>Sources</th><th>Solde relevé</th><th>Écart final rapproché</th><th>Statut</th><th>Actions</th></tr></thead><tbody>
+      ${filtered.map(rec=>{const stats=ppBankReconciliationStatsPP(rec),sources=[...new Set(rec.sources||[])].map(ppBankSourceLabelPP).join(' + ');return `<tr><td>${formatDate(rec.from)} → ${formatDate(rec.to)}</td><td><strong>${escapeHTML(rec.bankName||'Banque')}</strong><br><small>${escapeHTML(rec.accountName||rec.accountNumber||'Compte bancaire')}</small></td><td>${escapeHTML(sources)}</td><td>${formatMoney(rec.closingBalance)}</td><td class="${Math.abs(stats.finalGap)<.02?'pp-acc-positive':'pp-acc-negative'}"><strong>${formatMoney(stats.finalGap)}</strong></td><td>${ppBankStatusBadgePP(rec.status)}</td><td><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn small" onclick='viewBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Ouvrir</button><button class="btn small print" onclick='printBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Imprimer</button><button class="btn small danger" onclick='deleteBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Supprimer</button></div></td></tr>`;}).join('')||`<tr><td colspan="7" class="empty">${escapeHTML(emptyMessages[ppBankReconciliationListFilterPP]||emptyMessages.all)}</td></tr>`}
+      </tbody></table></div></div>`;
+};
+
+/* =========================================================
+   ENCAISSEMENTS CLIENTS DANS LE RAPPROCHEMENT BANCAIRE — v8
+   - Même workflow sécurisé que les règlements fournisseurs.
+   - Les instruments bancaires ne soldent la facture client
+     qu'après validation depuis le rapprochement bancaire.
+   - Recherche, dates, dévalidation, modification et suppression.
+========================================================= */
+
+function ppIsClientDeferredBankModeV8(mode){
+    return ppIsSupplierInstrumentModePP(mode);
+}
+
+function ppClientPaymentIsSettledV8(payment={}){
+    return !ppIsClientDeferredBankModeV8(payment.mode)||String(payment.instrumentStatus||'planned')==='cleared';
+}
+
+function ppClientPaymentAllocatedInvoiceV8(payment={}){
+    const allocation=(Array.isArray(payment.allocations)?payment.allocations:[])[0];
+    return allocation?clientInvoicesPP.find(invoice=>Number(invoice.id)===Number(allocation.invoiceId)):null;
+}
+
+function ppNormalizeClientPaymentBankV8(raw={}){
+    const payment={...raw,amount:Number(raw.amount??0),allocations:Array.isArray(raw.allocations)?raw.allocations:[]};
+    const invoice=ppClientPaymentAllocatedInvoiceV8(payment);
+    const dueDate=String(payment.dueDate||invoice?.dueDate||payment.date||'').slice(0,10);
+    const needsValidation=ppIsClientDeferredBankModeV8(payment.mode);
+    const instrumentStatus=needsValidation
+        ?(String(payment.instrumentStatus||'').toLowerCase()==='cleared'||payment.bankValidationDate?'cleared':'planned')
+        :'cleared';
+    const bankValidationDate=instrumentStatus==='cleared'&&needsValidation
+        ?String(payment.bankValidationDate||payment.clearedDate||payment.date||'').slice(0,10)
+        :'';
+    return {...payment,dueDate,instrumentStatus,bankValidationDate};
+}
+
+function ppEnsureClientSettlementBasesV8(){
+    clientInvoicesPP.forEach(invoice=>{
+        if(Object.prototype.hasOwnProperty.call(invoice,'ppDirectPaidBase'))return;
+        const allocated=clientPaymentsPP.reduce((sum,payment)=>sum+(payment.allocations||[])
+            .filter(allocation=>Number(allocation.invoiceId)===Number(invoice.id))
+            .reduce((subtotal,allocation)=>subtotal+Math.max(Number(allocation.amount||0),0),0),0);
+        invoice.ppDirectPaidBase=Math.max(Number(invoice.paid||0)-allocated,0);
+    });
+}
+
+function ppRebuildClientSettlementStateV8(){
+    clientPaymentsPP=clientPaymentsPP.map(ppNormalizeClientPaymentBankV8);
+    ppEnsureClientSettlementBasesV8();
+    clientInvoicesPP.forEach(invoice=>{
+        const settledAllocated=clientPaymentsPP.filter(ppClientPaymentIsSettledV8).reduce((sum,payment)=>sum+(payment.allocations||[])
+            .filter(allocation=>Number(allocation.invoiceId)===Number(invoice.id))
+            .reduce((subtotal,allocation)=>subtotal+Math.max(Number(allocation.amount||0),0),0),0);
+        const total=Math.max(Number(invoice.totalTTC||0),0);
+        invoice.paid=Math.min(Math.max(Number(invoice.ppDirectPaidBase||0)+settledAllocated,0),total);
+        invoice.due=Math.max(total-invoice.paid,0);
+    });
+}
+
+function ppPendingClientAllocatedToInvoiceV8(invoiceId,excludedPaymentId=null){
+    return clientPaymentsPP.filter(payment=>
+        (!excludedPaymentId||Number(payment.id)!==Number(excludedPaymentId))&&
+        ppIsClientDeferredBankModeV8(payment.mode)&&!ppClientPaymentIsSettledV8(payment)
+    ).reduce((total,payment)=>total+(payment.allocations||[])
+        .filter(allocation=>Number(allocation.invoiceId)===Number(invoiceId))
+        .reduce((sum,allocation)=>sum+Math.max(Number(allocation.amount||0),0),0),0);
+}
+
+function ppClientPaymentPendingBankV8(payment={}){
+    return ppIsClientDeferredBankModeV8(payment.mode)&&!ppClientPaymentIsSettledV8(payment);
+}
+
+function ppClientPaymentRelevantDateV8(payment={}){
+    return String(payment.bankValidationDate||payment.dueDate||payment.date||'').slice(0,10);
+}
+
+function ppClientPaymentStatusBadgeV8(payment={}){
+    if(!ppIsClientDeferredBankModeV8(payment.mode))return '<span class="status success">Encaissé</span>';
+    if(ppClientPaymentIsSettledV8(payment))return `<span class="status success">Validé banque</span>${payment.bankValidationDate?`<br><small>${formatDate(payment.bankValidationDate)}</small>`:''}`;
+    return '<span class="status warning">En attente banque</span>';
+}
+
+function ppEnsureClientPaymentModalV8(){
+    const previous=document.getElementById('ppClientPaymentModal');
+    if(previous?.dataset?.bankWorkflow==='client-v8')return;
+    if(previous)previous.remove();
+    const modal=document.createElement('div');
+    modal.id='ppClientPaymentModal';modal.className='modal-overlay';modal.dataset.bankWorkflow='client-v8';
+    modal.innerHTML=`<div class="modal"><div class="modal-header"><h2>💰 Encaissement client</h2><button type="button" onclick="closeModal('ppClientPaymentModal')">×</button></div><form id="ppClientPaymentForm"><input type="hidden" id="ppClientPaymentId"><input type="hidden" id="ppClientPaymentClient"><div class="form-grid"><div><label>Client *</label><select id="ppClientPaymentClientSelect" required onchange="ppClientPaymentClientChangedV8()"></select></div><div><label>Date de l'encaissement *</label><input id="ppClientPaymentDate" type="date" required onchange="ppClientPaymentDateChangedV8()"></div><div><label>Facture à affecter</label><select id="ppClientPaymentInvoice" onchange="ppClientPaymentInvoiceChangedV8()"></select></div><div><label>Montant *</label><input id="ppClientPaymentAmount" type="number" min="0.01" step="0.01" required></div><div><label>Mode</label><select id="ppClientPaymentMode" onchange="ppClientPaymentModeChangedV8()"><option>Espèces</option><option>Virement</option><option>Chèque</option><option>Carte</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre bancaire</option><option>Autre</option></select></div><div><label>Référence</label><input id="ppClientPaymentRef" placeholder="N° chèque / effet / référence bancaire..."></div><div><label>Date d'échéance / remise prévue *</label><input id="ppClientPaymentDueDate" type="date" required></div></div><div id="ppClientPaymentBankHelpV8" style="display:none"></div><div><label>Observation</label><textarea id="ppClientPaymentNote"></textarea></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppClientPaymentModal')">Annuler</button><button class="btn primary" type="submit">Enregistrer</button></div></form></div>`;
+    document.body.appendChild(modal);
+    document.getElementById('ppClientPaymentForm').addEventListener('submit',event=>{event.preventDefault();saveClientPaymentPP();});
+}
+
+function ppClientPaymentLoadInvoicesV8(clientId,payment=null){
+    const select=document.getElementById('ppClientPaymentInvoice');if(!select)return;
+    const allocatedIds=new Set((payment?.allocations||[]).map(allocation=>Number(allocation.invoiceId)));
+    const invoices=clientInvoicesPP.filter(invoice=>Number(invoice.clientId)===Number(clientId)&&(Number(invoice.due||0)>0||allocatedIds.has(Number(invoice.id))))
+        .sort((a,b)=>String(a.dueDate||a.date||'').localeCompare(String(b.dueDate||b.date||'')));
+    select.innerHTML='<option value="">Affectation automatique — plus anciennes factures</option>'+invoices.map(invoice=>`<option value="${invoice.id}">${escapeHTML(invoice.number)} — échéance ${invoice.dueDate?formatDate(invoice.dueDate):'-'} — reste ${formatMoney(invoice.due)}</option>`).join('');
+    if(payment&&(payment.allocations||[]).length===1)select.value=String(payment.allocations[0].invoiceId);
+    if(typeof ppUpgradeClientPaymentInvoiceSearchPP==='function')ppUpgradeClientPaymentInvoiceSearchPP();
+}
+
+function ppUpdateClientPaymentBankHelpV8(){
+    const mode=getValue('ppClientPaymentMode'),help=document.getElementById('ppClientPaymentBankHelpV8');if(!help)return;
+    const paymentId=Number(getValue('ppClientPaymentId'))||0;
+    const existing=paymentId?clientPaymentsPP.find(item=>Number(item.id)===paymentId):null;
+    if(ppIsClientDeferredBankModeV8(mode)&&existing&&ppClientPaymentIsSettledV8(existing)){
+        help.innerHTML=`✅ Cet encaissement a déjà été <strong>validé depuis le rapprochement bancaire</strong>${existing.bankValidationDate?` le ${formatDate(existing.bankValidationDate)}`:''}. Dévalidez-le d'abord pour le corriger.`;
+    }else if(ppIsClientDeferredBankModeV8(mode)){
+        help.innerHTML=`Après l'enregistrement, cet encaissement sera envoyé automatiquement vers <strong>Comptabilité → Rapprochement bancaire</strong>. La facture client restera non soldée jusqu'à la validation et la date réelle du crédit bancaire.`;
+    }else{
+        help.innerHTML=`L'encaissement par <strong>${escapeHTML(mode||'-')}</strong> est considéré comme soldé immédiatement.`;
+    }
+}
+
+function ppClientPaymentClientChangedV8(){
+    const clientId=Number(getValue('ppClientPaymentClientSelect'))||0;
+    setValue('ppClientPaymentClient',clientId||'');
+    ppClientPaymentLoadInvoicesV8(clientId,null);
+    ppClientPaymentInvoiceChangedV8();
+}
+
+function ppClientPaymentInvoiceChangedV8(){
+    const invoice=clientInvoicesPP.find(item=>Number(item.id)===Number(getValue('ppClientPaymentInvoice')));
+    if(invoice?.dueDate)setValue('ppClientPaymentDueDate',String(invoice.dueDate).slice(0,10));
+    if(invoice&&!(Number(getValue('ppClientPaymentAmount'))>0))setValue('ppClientPaymentAmount',Math.max(Number(invoice.due||0)-ppPendingClientAllocatedToInvoiceV8(invoice.id,Number(getValue('ppClientPaymentId'))||null),0)||'');
+}
+
+function ppClientPaymentDateChangedV8(){
+    if(!getValue('ppClientPaymentDueDate'))setValue('ppClientPaymentDueDate',getValue('ppClientPaymentDate'));
+}
+
+function ppClientPaymentModeChangedV8(){ppUpdateClientPaymentBankHelpV8();}
+
+openClientPaymentPP=function(id,paymentId=null){
+    ppRebuildClientSettlementStateV8();
+    const raw=paymentId?clientPaymentsPP.find(item=>Number(item.id)===Number(paymentId)):null;
+    if(raw&&ppIsClientDeferredBankModeV8(raw.mode)&&ppClientPaymentIsSettledV8(raw)){
+        alert('Cet encaissement est validé par la banque. Dévalidez-le d’abord dans Comptabilité → Rapprochement bancaire avant toute modification.');
+        return;
+    }
+    ppEnsureClientPaymentModalV8();
+    const payment=raw?ppNormalizeClientPaymentBankV8(raw):null;
+    const clientId=payment?Number(payment.clientId):Number(id),client=clientsPP.find(item=>Number(item.id)===clientId);if(!client)return;
+    const clientSelect=document.getElementById('ppClientPaymentClientSelect');
+    clientSelect.innerHTML='<option value="">Sélectionner un client</option>'+clientsPP.slice().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'fr')).map(item=>`<option value="${item.id}">${escapeHTML(item.name||'-')}</option>`).join('');
+    setValue('ppClientPaymentId',payment?.id||'');setValue('ppClientPaymentClient',client.id);setValue('ppClientPaymentClientSelect',client.id);
+    setValue('ppClientPaymentDate',payment?.date||ppTodayISOPP());setValue('ppClientPaymentAmount',payment?.amount||'');setValue('ppClientPaymentMode',payment?.mode||'Espèces');
+    setValue('ppClientPaymentRef',payment?.reference||'');setValue('ppClientPaymentDueDate',payment?.dueDate||payment?.date||ppTodayISOPP());setValue('ppClientPaymentNote',payment?.note||'');
+    ppClientPaymentLoadInvoicesV8(client.id,payment);
+    ppUpdateClientPaymentBankHelpV8();openModal('ppClientPaymentModal');
+};
+
+saveClientPaymentPP=function(){
+    ppRebuildClientSettlementStateV8();
+    const paymentId=Number(getValue('ppClientPaymentId'))||null;
+    const old=paymentId?clientPaymentsPP.find(item=>Number(item.id)===paymentId):null;
+    if(old&&ppIsClientDeferredBankModeV8(old.mode)&&ppClientPaymentIsSettledV8(old)){
+        alert('Dévalidez d’abord cet encaissement dans le rapprochement bancaire avant de le modifier.');return;
+    }
+    const clientId=Number(getValue('ppClientPaymentClientSelect')||getValue('ppClientPaymentClient'))||0,client=clientsPP.find(item=>Number(item.id)===clientId);
+    const amount=Number(getValue('ppClientPaymentAmount')),date=String(getValue('ppClientPaymentDate')||'').slice(0,10),dueDate=String(getValue('ppClientPaymentDueDate')||'').slice(0,10);
+    const mode=getValue('ppClientPaymentMode'),reference=getValue('ppClientPaymentRef').trim(),needsValidation=ppIsClientDeferredBankModeV8(mode);
+    if(!client){alert('Veuillez sélectionner un client.');return;}if(!(amount>0)){alert('Veuillez saisir un montant valide.');return;}if(!date){alert("Veuillez sélectionner la date de l'encaissement.");return;}if(!dueDate){alert("Veuillez sélectionner la date d'échéance.");return;}if(needsValidation&&!reference){alert("Veuillez saisir la référence de l'encaissement bancaire.");return;}
+    if(old)clientPaymentsPP=clientPaymentsPP.filter(item=>Number(item.id)!==paymentId);
+    ppRebuildClientSettlementStateV8();
+    let remaining=amount;const allocations=[],selected=Number(getValue('ppClientPaymentInvoice'))||0;
+    const targets=selected?clientInvoicesPP.filter(invoice=>Number(invoice.id)===selected):clientInvoicesPP.filter(invoice=>Number(invoice.clientId)===clientId&&Number(invoice.due||0)>0).sort((a,b)=>String(a.dueDate||a.date||'').localeCompare(String(b.dueDate||b.date||'')));
+    for(const invoice of targets){
+        if(remaining<=0)break;
+        const available=Math.max(Number(invoice.totalTTC||0)-Number(invoice.paid||0)-ppPendingClientAllocatedToInvoiceV8(invoice.id,paymentId),0);
+        const part=Math.min(remaining,available);if(part<=0)continue;
+        allocations.push({invoiceId:invoice.id,amount:part});remaining-=part;
+    }
+    const obj=ppNormalizeClientPaymentBankV8({id:paymentId||createId(),clientId,amount,date,dueDate,mode,reference,note:getValue('ppClientPaymentNote').trim(),instrumentStatus:needsValidation?'planned':'cleared',bankValidationDate:'',bankReconciliationId:null,bankStatementTransactionId:null,allocations,createdAt:old?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()});
+    clientPaymentsPP.push(obj);ppRebuildClientSettlementStateV8();saveData();closeModal('ppClientPaymentModal');renderAll();renderPaymentsCenterPP();
+};
+
+rollbackClientPaymentPP=function(){ppRebuildClientSettlementStateV8();};
+
+deleteClientPaymentPP=function(id){
+    const payment=clientPaymentsPP.find(item=>Number(item.id)===Number(id));if(!payment)return;
+    if(ppIsClientDeferredBankModeV8(payment.mode)&&ppClientPaymentIsSettledV8(payment)){
+        alert('Dévalidez d’abord cet encaissement dans le rapprochement bancaire avant de le supprimer.');return;
+    }
+    if(!confirm('Supprimer cet encaissement client ?'))return;
+    clientPaymentsPP=clientPaymentsPP.filter(item=>Number(item.id)!==Number(id));ppRebuildClientSettlementStateV8();saveData();renderAll();renderPaymentsCenterPP();if(ppActiveAccountingTab==='bank')renderAccountingPP();
+};
+
+ppAccountingClientPaymentEventsPP=function(inv){
+    const invoiceId=Number(inv?.id),events=[];let settledAllocated=0;
+    clientPaymentsPP.map(ppNormalizeClientPaymentBankV8).filter(ppClientPaymentIsSettledV8).forEach(payment=>{
+        (payment.allocations||[]).forEach(allocation=>{
+            if(Number(allocation.invoiceId)!==invoiceId)return;
+            const amount=Math.max(Number(allocation.amount||0),0);if(!(amount>0))return;
+            settledAllocated+=amount;
+            events.push({date:String(ppIsClientDeferredBankModeV8(payment.mode)?payment.bankValidationDate||payment.date:payment.date||'').slice(0,10),amount,mode:payment.mode||'Virement',reference:payment.reference||''});
+        });
+    });
+    const direct=Math.max(Number(inv?.ppDirectPaidBase??inv?.paid??0),0);
+    if(direct>0)events.push({date:String(inv?.paymentDate||inv?.date||'').slice(0,10),amount:direct,mode:inv?.mode||'Autre',reference:'Règlement saisi à la facture'});
+    return events;
+};
+
+clientLedgerPP=function(id){
+    ppRebuildClientSettlementStateV8();
+    const events=[],invoices=clientInvoicesPP.filter(invoice=>Number(invoice.clientId)===Number(id));
+    invoices.forEach(invoice=>{
+        events.push({date:invoice.date,piece:invoice.number,label:invoice.label||'Facture client',debit:Number(invoice.totalTTC||0),credit:0});
+        const direct=Math.max(Number(invoice.ppDirectPaidBase||0),0);if(direct>0)events.push({date:invoice.date,piece:invoice.number,label:'Encaissement saisi avec facture',debit:0,credit:direct});
+    });
+    clientPaymentsPP.filter(payment=>Number(payment.clientId)===Number(id)).forEach(raw=>{
+        const payment=ppNormalizeClientPaymentBankV8(raw),settled=ppClientPaymentIsSettledV8(payment);
+        events.push({date:settled&&ppIsClientDeferredBankModeV8(payment.mode)?payment.bankValidationDate||payment.date:payment.date,piece:payment.reference||payment.id,label:`Encaissement ${payment.mode||''}${settled?'':' — en attente banque'}`,debit:0,credit:settled?Number(payment.amount||0):0});
+    });
+    events.sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));let balance=0;return events.map(event=>{balance+=event.debit-event.credit;return {...event,balance};});
+};
+
+const ppGetTVACollecteeRowsBeforeClientBankV8=getTVACollecteeRowsPP;
+getTVACollecteeRowsPP=function(){
+    ppRebuildClientSettlementStateV8();
+    const rows=ppGetTVACollecteeRowsBeforeClientBankV8();
+    return rows.map(row=>{
+        if(row.source!=='clientInvoice')return row;
+        const invoice=clientInvoicesPP.find(item=>Number(item.id)===Number(row.id));if(!invoice)return row;
+        const payments=clientPaymentsPP.map(ppNormalizeClientPaymentBankV8).filter(payment=>ppClientPaymentIsSettledV8(payment)&&(payment.allocations||[]).some(allocation=>Number(allocation.invoiceId)===Number(invoice.id)));
+        const modes=[...new Set(payments.map(payment=>String(payment.mode||'').trim()).filter(Boolean))];
+        const dates=[...new Set(payments.map(payment=>String(ppIsClientDeferredBankModeV8(payment.mode)?payment.bankValidationDate||payment.date:payment.date||'').slice(0,10)).filter(Boolean))].sort();
+        const direct=Math.max(Number(invoice.ppDirectPaidBase||0),0);
+        return {...row,mode:modes.join(' / ')||(direct>0?'Saisi avec facture':'Non encaissée'),paymentDate:dates.join(' / ')||(direct>0?String(invoice.date||'').slice(0,10):'')};
+    });
+};
+
+const ppScheduleRowsBeforeClientBankV8=ppScheduleRowsPP;
+ppScheduleRowsPP=function(){
+    ppRebuildClientSettlementStateV8();
+    return ppScheduleRowsBeforeClientBankV8().map(row=>{
+        if(row.kind!=='client')return row;
+        const invoice=clientInvoicesPP.find(item=>Number(item.id)===Number(row.sourceId));if(!invoice)return row;
+        const pending=ppPendingClientAllocatedToInvoiceV8(invoice.id),remaining=Math.max(Number(invoice.totalTTC||0)-Number(invoice.paid||0),0);
+        let status=ppScheduleStatusPP(row.dueDate,remaining);
+        if(pending>0&&remaining<=pending+0.005)status={code:'bank_pending',label:`Encaissement en attente banque — ${formatMoney(pending)}`,days:status.days};
+        else if(pending>0)status={...status,label:`${status.label} · ${formatMoney(pending)} en attente banque`};
+        return {...row,mode:pending>0?`${formatMoney(pending)} en attente banque`:'-',paid:Number(invoice.paid||0),pendingBank:pending,remaining,status};
+    });
+};
+
+function ppClientPaymentReconciliationDateV8(payment={}){return String(payment.dueDate||payment.date||'').slice(0,10);}
+
+function ppPendingClientPaymentCandidateTxV8(payment={},rec={}){
+    const reference=normalizeText(payment.reference||''),expected=ppClientPaymentReconciliationDateV8(payment),amount=Math.max(Number(payment.amount||0),0);
+    return ppBankTransactionsForPP(rec.id).filter(tx=>!tx.matchedAccountingKey&&Number(tx.credit||0)>0&&Math.abs(Number(tx.credit||0)-amount)<0.02).map(tx=>{
+        const txRef=normalizeText(tx.reference||''),txLabel=normalizeText(tx.label||'');let score=100-Math.min(ppBankDateDifferencePP(tx.valueDate||tx.date,expected),30)*3;
+        if(reference&&txRef&&(reference===txRef||reference.includes(txRef)||txRef.includes(reference)))score+=100;else if(reference&&txLabel.includes(reference))score+=65;
+        if(/cheque|effet|lcr|carte|prelevement/.test(normalizeText(`${tx.label} ${tx.reference}`)))score+=10;
+        return {tx,score};
+    }).sort((a,b)=>b.score-a.score)[0]?.tx||null;
+}
+
+function ppFindMainClientPaymentCandidateV8(payment={}){
+    const candidates=[];ppDraftBankReconciliationsPP().forEach(rec=>{const tx=ppPendingClientPaymentCandidateTxV8(payment,rec);if(!tx)return;const distance=ppBankDateDifferencePP(tx.valueDate||tx.date,ppClientPaymentReconciliationDateV8(payment));candidates.push({rec,tx,distance});});
+    return candidates.sort((a,b)=>a.distance-b.distance||String(b.rec.to||'').localeCompare(String(a.rec.to||'')))[0]||null;
+}
+
+function ppFindAccountingMoveForClientPaymentV8(payment={},rec={}){
+    const target=Math.abs(Number(payment.amount||0)),reference=normalizeText(payment.reference||''),date=String(payment.bankValidationDate||'').slice(0,10);
+    return ppBankAccountingMovementsPP(rec).filter(move=>Math.abs(Number(move.amount||0)-target)<0.02).map(move=>{let score=0;if(date&&String(move.date||'')===date)score+=100;const piece=normalizeText(move.piece||''),label=normalizeText(move.label||'');if(reference&&piece&&(reference===piece||reference.includes(piece)||piece.includes(reference)))score+=120;else if(reference&&label.includes(reference))score+=60;return {move,score};}).sort((a,b)=>b.score-a.score)[0]?.move||null;
+}
+
+function ppValidateClientPaymentFromBankV8(paymentId,reconciliationId=null,inputPrefix='pp-client-bank-main-pass-date-'){
+    const payment=clientPaymentsPP.find(item=>Number(item.id)===Number(paymentId));if(!payment)return;
+    if(!ppClientPaymentPendingBankV8(payment)){alert('Cet encaissement est déjà validé ou ne nécessite pas de validation bancaire.');renderAccountingPP();return;}
+    const safeId=String(payment.id).replace(/[^a-z0-9_-]/gi,'');
+    const bankDate=String(document.getElementById(`${inputPrefix}${safeId}`)?.value||'').slice(0,10);if(!bankDate){alert('Veuillez sélectionner la date réelle de passage en banque.');return;}
+    let rec=reconciliationId?bankReconciliationsPP.find(item=>String(item.id)===String(reconciliationId)):null;
+    if(rec&&rec.status==='validated'){alert('Rouvrez d’abord ce rapprochement avant de valider cet encaissement.');return;}
+    if(rec&&((rec.from&&bankDate<rec.from)||(rec.to&&bankDate>rec.to))){alert(`La date de passage doit être comprise dans la période du rapprochement : ${formatDate(rec.from)} → ${formatDate(rec.to)}.`);return;}
+    if(!confirm(`Valider l'encaissement ${payment.reference||payment.id} à la date du ${formatDate(bankDate)} ?`))return;
+    const detected=rec?null:ppFindMainClientPaymentCandidateV8(payment);
+    if(!rec)rec=(detected&&String(detected.tx.valueDate||detected.tx.date||'').slice(0,10)===bankDate)?detected.rec:ppFindDraftReconciliationForDatePP(bankDate);
+    const candidateFound=rec?ppPendingClientPaymentCandidateTxV8(payment,rec):null,candidateDate=String(candidateFound?.valueDate||candidateFound?.date||'').slice(0,10),candidate=candidateDate===bankDate?candidateFound:null;
+    payment.instrumentStatus='cleared';payment.bankValidationDate=bankDate;payment.bankReconciliationId=rec?.id||null;payment.bankStatementTransactionId=candidate?.id||null;payment.updatedAt=new Date().toISOString();
+    ppRebuildClientSettlementStateV8();saveData();
+    const normalized=ppNormalizeClientPaymentBankV8(payment);
+    if(rec){const move=ppFindAccountingMoveForClientPaymentV8(normalized,rec);if(candidate&&move){candidate.matchedAccountingKey=move.key;candidate.updatedAt=new Date().toISOString();normalized.bankStatementTransactionId=candidate.id;}}
+    const index=clientPaymentsPP.findIndex(item=>Number(item.id)===Number(payment.id));if(index>=0)clientPaymentsPP[index]={...clientPaymentsPP[index],...normalized};
+    saveData();renderAll();renderAccountingPP();if(typeof renderPaymentsCenterPP==='function')renderPaymentsCenterPP();
+}
+
+function ppClientPaymentLockedV8(payment={}){return ppIsClientDeferredBankModeV8(payment.mode)&&ppClientPaymentIsSettledV8(payment);}
+
+function ppClearClientPaymentBankMatchV8(payment={}){
+    const transactionId=payment.bankStatementTransactionId;
+    if(transactionId!==null&&transactionId!==undefined&&transactionId!==''){const tx=bankStatementTransactionsPP.find(item=>String(item.id)===String(transactionId));if(tx){tx.matchedAccountingKey=null;tx.updatedAt=new Date().toISOString();}}
+    const rec=payment.bankReconciliationId?bankReconciliationsPP.find(item=>String(item.id)===String(payment.bankReconciliationId)):null;
+    if(rec&&rec.status==='validated'){rec.status='draft';rec.validatedAt=null;rec.updatedAt=new Date().toISOString();}
+}
+
+function ppDevalidateClientPaymentBankV8(paymentId){
+    const payment=clientPaymentsPP.find(item=>Number(item.id)===Number(paymentId));if(!payment)return;
+    if(!ppClientPaymentLockedV8(payment)){alert('Cet encaissement est déjà dévalidé. Vous pouvez maintenant le modifier ou le supprimer.');renderAccountingPP();return;}
+    const client=clientsPP.find(item=>Number(item.id)===Number(payment.clientId)),dateText=payment.bankValidationDate?` du ${formatDate(payment.bankValidationDate)}`:'';
+    if(!confirm(`Dévalider le passage bancaire${dateText} de l'encaissement ${payment.reference||payment.id} — ${client?.name||'Client'} ?\n\nLa facture redeviendra non soldée et l'encaissement retournera dans l'Échéancier.`))return;
+    ppClearClientPaymentBankMatchV8(payment);payment.previousBankValidationDate=payment.bankValidationDate||payment.previousBankValidationDate||'';payment.instrumentStatus='planned';payment.bankValidationDate='';payment.bankReconciliationId=null;payment.bankStatementTransactionId=null;payment.bankDevalidatedAt=new Date().toISOString();payment.updatedAt=new Date().toISOString();
+    ppBankReconciliationListFilterPP='draft';ppRebuildClientSettlementStateV8();saveData();renderAll();renderAccountingPP();if(typeof renderPaymentsCenterPP==='function')renderPaymentsCenterPP();
+}
+
+function ppEditClientPaymentFromBankV8(paymentId){
+    const payment=clientPaymentsPP.find(item=>Number(item.id)===Number(paymentId));if(!payment)return;
+    if(ppClientPaymentLockedV8(payment)){alert('Dévalidez d’abord cet encaissement avant de le modifier.');return;}
+    openClientPaymentPP(payment.clientId,payment.id);
+}
+
+function ppDeleteClientPaymentFromBankV8(paymentId){
+    const payment=clientPaymentsPP.find(item=>Number(item.id)===Number(paymentId));if(!payment)return;
+    if(ppClientPaymentLockedV8(payment)){alert('Dévalidez d’abord cet encaissement dans le rapprochement bancaire avant de le supprimer.');return;}
+    if(!confirm(`Supprimer définitivement l'encaissement ${payment.reference||payment.id} ?`))return;
+    clientPaymentsPP=clientPaymentsPP.filter(item=>Number(item.id)!==Number(paymentId));ppRebuildClientSettlementStateV8();saveData();renderAll();renderAccountingPP();if(typeof renderPaymentsCenterPP==='function')renderPaymentsCenterPP();
+}
+
+function ppClientBankTrackingRowsV8(){
+    return clientPaymentsPP.map(ppNormalizeClientPaymentBankV8).filter(payment=>ppIsClientDeferredBankModeV8(payment.mode)).map(payment=>{
+        const client=clientsPP.find(item=>Number(item.id)===Number(payment.clientId));
+        const validated=ppClientPaymentIsSettledV8(payment),reconciliation=payment.bankReconciliationId?bankReconciliationsPP.find(item=>String(item.id)===String(payment.bankReconciliationId)):null;
+        return {payment,client,validated,reconciliation};
+    }).sort((a,b)=>String(b.payment.bankValidationDate||b.payment.dueDate||b.payment.date||'').localeCompare(String(a.payment.bankValidationDate||a.payment.dueDate||a.payment.date||''))||String(b.payment.id).localeCompare(String(a.payment.id)));
+}
+
+function ppClientBankRowMatchesV8(row={}){
+    const payment=row.payment||{},client=row.client||{};
+    if(!ppBankManagementDateMatchesV7(ppClientPaymentRelevantDateV8(payment)))return false;
+    const query=normalizeText(ppBankManagementSearchV7);if(!query)return true;
+    const status=row.validated?'valide valide banque rapproche solde encaisse':'attente brouillon non rapproche non solde a encaisser';
+    return normalizeText([client.name,client.ice,client.phone,payment.reference,payment.mode,payment.amount,formatMoney(payment.amount),payment.date,payment.dueDate,payment.bankValidationDate,status,row.reconciliation?.bankName,row.reconciliation?.accountName].join(' ')).includes(query);
+}
+
+function ppClientBankTrackingRowsFilteredV8(){return ppClientBankTrackingRowsV8().filter(ppClientBankRowMatchesV8);}
+
+function ppClientBankTrackingTableV8(filter){
+    const all=ppClientBankTrackingRowsFilteredV8();
+    const rows=filter==='validated'?all.filter(row=>row.validated):(filter==='draft'||filter==='unmatched')?all.filter(row=>!row.validated):all;
+    const labels={all:'Tous les encaissements clients bancaires',draft:'Encaissements clients en attente',validated:'Encaissements clients validés',unmatched:'Encaissements clients à rapprocher'};
+    const body=rows.map(({payment,client,validated,reconciliation})=>{
+        const safeId=String(payment.id).replace(/[^a-z0-9_-]/gi,''),detected=!validated?ppFindMainClientPaymentCandidateV8(payment):null,detectedDate=String(detected?.tx?.valueDate||detected?.tx?.date||'').slice(0,10);
+        const status=validated?'<span class="pp-bank-status matched">✓ Validé / rapproché</span>':'<span class="pp-bank-status unmatched">À valider en banque</span>';
+        const recLabel=reconciliation?`${formatDate(reconciliation.from)} → ${formatDate(reconciliation.to)}`:(validated?'Validation directe':'En attente');
+        const action=validated
+            ?`<button class="btn small" onclick='ppDevalidateClientPaymentBankV8(${JSON.stringify(String(payment.id))})'>↩ Dévalider</button>`
+            :`<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:430px"><input id="pp-client-bank-main-pass-date-${safeId}" type="date" value="${escapeHTML(detectedDate)}" style="max-width:155px"><button class="btn small primary" onclick='ppValidateClientPaymentFromBankV8(${JSON.stringify(String(payment.id))})'>✓ Valider passage</button><button class="btn small edit" onclick='ppEditClientPaymentFromBankV8(${JSON.stringify(String(payment.id))})'>✏️ Modifier</button><button class="btn small danger" onclick='ppDeleteClientPaymentFromBankV8(${JSON.stringify(String(payment.id))})'>🗑️ Supprimer</button></div>`;
+        return `<tr><td>${formatDate(payment.date)}</td><td>${payment.dueDate?formatDate(payment.dueDate):'-'}</td><td><strong>${payment.bankValidationDate?formatDate(payment.bankValidationDate):'-'}</strong></td><td>${escapeHTML(client?.name||'-')}</td><td>${escapeHTML(payment.mode||'-')}</td><td>${escapeHTML(payment.reference||'-')}</td><td class="pp-acc-positive"><strong>${formatMoney(payment.amount)}</strong></td><td>${status}</td><td>${escapeHTML(recLabel)}</td><td>${action}</td></tr>`;
+    }).join('');
+    return `<div class="pp-acc-panel" id="ppClientBankTrackingV8"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><div><h3 style="margin:0">💳 ${escapeHTML(labels[filter]||labels.all)}</h3><p style="margin:4px 0 0;color:#667085">La facture client n'est soldée qu'après validation bancaire. Pour corriger : dévalidez, puis modifiez ou supprimez.</p></div><span class="status ${filter==='validated'?'success':filter==='draft'||filter==='unmatched'?'warning':''}">${rows.length} opération(s)</span></div><div style="overflow:auto"><table style="min-width:1420px"><thead><tr><th>Date encaissement</th><th>Échéance</th><th>Passage banque</th><th>Client</th><th>Mode</th><th>Référence</th><th>Montant</th><th>Situation</th><th>Dossier</th><th>Actions</th></tr></thead><tbody>${body||'<tr><td colspan="10" class="empty">Aucun encaissement client pour les filtres sélectionnés.</td></tr>'}</tbody></table></div></div>`;
+}
+
+function ppPendingClientPaymentsPanelV8(rec={}){
+    const payments=clientPaymentsPP.map(ppNormalizeClientPaymentBankV8).filter(payment=>{
+        if(!ppClientPaymentPendingBankV8(payment))return false;
+        const expected=ppClientPaymentReconciliationDateV8(payment),to=String(rec.to||'').slice(0,10);
+        return !(to&&expected&&expected>to);
+    }).sort((a,b)=>String(ppClientPaymentReconciliationDateV8(a)).localeCompare(String(ppClientPaymentReconciliationDateV8(b))));
+    const rows=payments.map(payment=>{
+        const client=clientsPP.find(item=>Number(item.id)===Number(payment.clientId)),candidate=ppPendingClientPaymentCandidateTxV8(payment,rec),safeId=String(payment.id).replace(/[^a-z0-9_-]/gi,''),date=String(candidate?.valueDate||candidate?.date||'').slice(0,10);
+        return `<tr><td>${payment.dueDate?formatDate(payment.dueDate):'-'}</td><td>${escapeHTML(client?.name||'-')}</td><td>${escapeHTML(payment.mode||'-')}</td><td>${escapeHTML(payment.reference||'-')}</td><td class="pp-acc-positive"><strong>${formatMoney(payment.amount)}</strong></td><td>${candidate?`<span class="status success">Ligne relevé détectée</span><br><small>${formatDate(date)} · ${escapeHTML(candidate.reference||candidate.label||'-')}</small>`:'<span class="status warning">À confirmer</span>'}</td><td><input id="pp-client-bank-detail-pass-date-${safeId}" type="date" value="${escapeHTML(date)}" min="${escapeHTML(rec.from||'')}" max="${escapeHTML(rec.to||'')}"></td><td><button class="btn small primary" onclick='ppValidateClientPaymentFromBankV8(${JSON.stringify(String(payment.id))},${JSON.stringify(String(rec.id))},"pp-client-bank-detail-pass-date-")'>✓ Valider passage</button></td></tr>`;
+    }).join('');
+    return `<div class="pp-acc-panel" style="border:1px solid #86c5a8;background:#f5fff9"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><div><h3 style="margin:0">⏳ Encaissements clients à valider en banque</h3><p style="margin:4px 0 0;color:#667085">Indiquez la date réelle du crédit bancaire. La facture restera ouverte jusque-là.</p></div><span class="status warning">${payments.length} en attente</span></div><div style="overflow:auto"><table style="min-width:1120px"><thead><tr><th>Échéance</th><th>Client</th><th>Mode</th><th>Référence</th><th>Montant</th><th>Détection relevé</th><th>Date passage banque</th><th>Action</th></tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">Aucun encaissement client en attente pour cette période.</td></tr>'}</tbody></table></div></div>`;
+}
+
+const ppRenderBankReconciliationDetailBeforeClientV8=renderBankReconciliationDetailPP;
+renderBankReconciliationDetailPP=function(rec){
+    const html=ppRenderBankReconciliationDetailBeforeClientV8(rec),panel=ppPendingClientPaymentsPanelV8(rec),anchor='<div class="pp-acc-panel"><h3 style="margin-top:0">Écritures comptables en circulation</h3>';
+    return html.includes(anchor)?html.replace(anchor,panel+anchor):html+panel;
+};
+
+const ppLinkedBankRowsBeforeClientV8=ppLinkedBankRowsPP;
+function ppClearedClientPaymentForBankRowV8(row={}){
+    if(String(row.source)!=='client-payment')return null;
+    const rowDate=String(row.date||'').slice(0,10),rowReference=normalizeText(row.piece||''),rowAmount=Math.abs(Number(row.amount||0)),invoiceId=Number(row.sourceId)||0;
+    return clientPaymentsPP.map(ppNormalizeClientPaymentBankV8).filter(payment=>ppIsClientDeferredBankModeV8(payment.mode)&&ppClientPaymentIsSettledV8(payment)&&String(payment.bankValidationDate||'').slice(0,10)===rowDate).map(payment=>{
+        const allocations=payment.allocations||[],allocationMatch=allocations.some(allocation=>Number(allocation.invoiceId)===invoiceId&&Math.abs(Number(allocation.amount||0)-rowAmount)<0.02),amountMatch=Math.abs(Number(payment.amount||0)-rowAmount)<0.02||allocationMatch;if(!amountMatch)return null;
+        const reference=normalizeText(payment.reference||'');let score=allocationMatch?160:80;if(reference&&rowReference&&(reference===rowReference||reference.includes(rowReference)||rowReference.includes(reference)))score+=160;return {payment,score};
+    }).filter(Boolean).sort((a,b)=>b.score-a.score)[0]?.payment||null;
+}
+ppLinkedBankRowsPP=function(){
+    return ppLinkedBankRowsBeforeClientV8().map(row=>{
+        if(row.matched)return row;const payment=ppClearedClientPaymentForBankRowV8(row);return payment?{...row,matched:true,matchOrigin:'client-bank-validation',clientPaymentId:payment.id,bankValidationDate:payment.bankValidationDate}:row;
+    });
+};
+
+filteredClientPaymentsPP=function(){
+    const from=getValue('ppClientPayFrom'),to=getValue('ppClientPayTo'),mode=getValue('ppClientPayMode'),query=normalizeText(getValue('ppClientPaySearch'));
+    return clientPaymentsPP.map(ppNormalizeClientPaymentBankV8).filter(payment=>{
+        const relevant=String(payment.bankValidationDate||payment.dueDate||payment.date||'').slice(0,10);
+        if(from&&relevant<from)return false;if(to&&relevant>to)return false;if(mode&&String(payment.mode)!==mode)return false;
+        const client=clientsPP.find(item=>Number(item.id)===Number(payment.clientId));
+        const status=ppClientPaymentIsSettledV8(payment)?'valide banque rapproche encaisse solde':'attente banque non rapproche non solde';
+        const haystack=normalizeText(`${client?.name||''} ${client?.ice||''} ${client?.phone||''} ${payment.reference||''} ${payment.mode||''} ${payment.amount||''} ${formatMoney(payment.amount)} ${payment.date||''} ${payment.dueDate||''} ${payment.bankValidationDate||''} ${clientPaymentInvoiceLabelsPP(payment)} ${status}`);
+        return !query||haystack.includes(query);
+    });
+};
+
+renderClientPaymentsPP=function(){
+    ppRebuildClientSettlementStateV8();ensureClientSubmenuPP();const table=document.getElementById('ppClientPaymentsTable');if(!table)return;
+    const rows=filteredClientPaymentsPP().slice().sort((a,b)=>String(b.bankValidationDate||b.date||'').localeCompare(String(a.bankValidationDate||a.date||'')));
+    const settledTotal=rows.filter(ppClientPaymentIsSettledV8).reduce((sum,payment)=>sum+Number(payment.amount||0),0),pendingTotal=rows.filter(ppClientPaymentPendingBankV8).reduce((sum,payment)=>sum+Number(payment.amount||0),0);
+    setText('ppClientPaymentsTotal',`${formatMoney(settledTotal)} encaissés · ${formatMoney(pendingTotal)} en attente banque`);
+    const head=table.closest('table')?.querySelector('thead');if(head)head.innerHTML='<tr><th>Date</th><th>Échéance</th><th>Passage banque</th><th>Client</th><th>Montant</th><th>Mode</th><th>Référence</th><th>Situation</th><th>Facture(s)</th><th>Actions</th></tr>';
+    if(!rows.length){table.innerHTML='<tr><td colspan="10" class="empty">Aucun encaissement client enregistré.</td></tr>';return;}
+    table.innerHTML=rows.map(raw=>{const payment=ppNormalizeClientPaymentBankV8(raw),client=clientsPP.find(item=>Number(item.id)===Number(payment.clientId)),locked=ppClientPaymentLockedV8(payment);return `<tr><td>${formatDate(payment.date)}</td><td>${payment.dueDate?formatDate(payment.dueDate):'-'}</td><td>${payment.bankValidationDate?formatDate(payment.bankValidationDate):'-'}</td><td><strong>${escapeHTML(client?.name||'-')}</strong></td><td>${formatMoney(payment.amount)}</td><td>${escapeHTML(payment.mode||'-')}</td><td>${escapeHTML(payment.reference||'-')}</td><td>${ppClientPaymentStatusBadgeV8(payment)}</td><td>${escapeHTML(clientPaymentInvoiceLabelsPP(payment))}</td><td><div class="action-buttons">${locked?'':`<button class="btn small edit" onclick="openClientPaymentPP(${payment.clientId},${payment.id})">✏️</button>`}<button class="btn small print" onclick="printSingleClientPaymentPP(${payment.id})">🖨️</button>${locked?'':`<button class="btn small danger" onclick="deleteClientPaymentPP(${payment.id})">🗑️</button>`}</div></td></tr>`;}).join('');
+};
+
+printSingleClientPaymentPP=function(id){
+    const raw=clientPaymentsPP.find(item=>Number(item.id)===Number(id));if(!raw)return;const payment=ppNormalizeClientPaymentBankV8(raw),client=clientsPP.find(item=>Number(item.id)===Number(payment.clientId));
+    printDocument('Encaissement client',`<div class="doc-head"><h1>Pause & Plate</h1><p>Encaissement client</p></div>${detailRowsHTML([['Date',formatDate(payment.date)],['Échéance',payment.dueDate?formatDate(payment.dueDate):'-'],['Client',client?.name||'-'],['Montant',formatMoney(payment.amount)],['Mode',payment.mode||'-'],['Référence',payment.reference||'-'],['Situation',ppClientPaymentIsSettledV8(payment)?'Validé banque':'En attente banque'],['Date passage banque',payment.bankValidationDate?formatDate(payment.bankValidationDate):'-'],['Facture(s)',clientPaymentInvoiceLabelsPP(payment)],['Observation',payment.note||'-']])}`);
+};
+
+renderBankReconciliationPP=function(){
+    if(ppActiveBankReconciliationIdPP)return ppRenderBankReconciliationBeforeClickableFixPP();
+    ppRebuildClientSettlementStateV8();
+    const supplierRows=ppSupplierBankTrackingRowsFilteredV7(),clientRows=ppClientBankTrackingRowsFilteredV8();
+    const ordered=[...bankReconciliationsPP].filter(ppBankReconciliationMatchesV7).sort((a,b)=>String(b.to||b.createdAt).localeCompare(String(a.to||a.createdAt)));
+    const pendingSupplier=supplierRows.filter(row=>!row.validated),validatedSupplier=supplierRows.filter(row=>row.validated),pendingClients=clientRows.filter(row=>!row.validated),validatedClients=clientRows.filter(row=>row.validated);
+    const draftRecs=ordered.filter(rec=>rec.status!=='validated'),validatedRecs=ordered.filter(rec=>rec.status==='validated');
+    const recsWithUnmatched=ordered.filter(rec=>{const stats=ppBankReconciliationStatsPP(rec);return stats.unmatched+stats.unmatchedAccounting.length+stats.gaps>0;});
+    const unmatchedLines=recsWithUnmatched.reduce((sum,rec)=>{const stats=ppBankReconciliationStatsPP(rec);return sum+stats.unmatched+stats.unmatchedAccounting.length+stats.gaps;},0);
+    const totals={all:ordered.length+supplierRows.length+clientRows.length,draft:draftRecs.length+pendingSupplier.length+pendingClients.length,validated:validatedRecs.length+validatedSupplier.length+validatedClients.length,unmatched:unmatchedLines+pendingSupplier.length+pendingClients.length};
+    const filtered=ordered.filter(rec=>{if(ppBankReconciliationListFilterPP==='draft')return rec.status!=='validated';if(ppBankReconciliationListFilterPP==='validated')return rec.status==='validated';if(ppBankReconciliationListFilterPP==='unmatched'){const stats=ppBankReconciliationStatsPP(rec);return stats.unmatched+stats.unmatchedAccounting.length+stats.gaps>0;}return true;});
+    const filterLabels={all:'Tous les dossiers et règlements',draft:'Brouillons et opérations en attente',validated:'Dossiers et opérations validés',unmatched:'Opérations non rapprochées'},emptyMessages={all:'Aucun dossier de relevé bancaire.',draft:'Aucun dossier brouillon.',validated:'Aucun dossier de relevé validé.',unmatched:'Aucun dossier avec des opérations non rapprochées.'};
+    return `<div class="pp-acc-toolbar"><div><h3 style="margin:0 0 4px">🏦 États de rapprochement bancaire</h3><p style="margin:0;color:#667085">Règlements fournisseurs et encaissements clients avec validation, correction et historique bancaire.</p></div><button class="btn primary" onclick="openBankReconciliationPP()">➕ Nouveau rapprochement</button></div>
+      ${ppBankManagementToolbarV7().replace('Fournisseur, référence, mode, montant, statut…','Fournisseur, client, référence, mode, montant, statut…')}
+      <div class="pp-acc-cards">${ppBankReconciliationFilterCardPP('Dossiers',totals.all,'all','📁','#0b6b45','Dossiers + règlements + encaissements')}${ppBankReconciliationFilterCardPP('Brouillons',totals.draft,'draft','🟠','#f59e0b','À terminer / valider')}${ppBankReconciliationFilterCardPP('Validés',totals.validated,'validated','✅','#16a34a','Passages confirmés')}${ppBankReconciliationFilterCardPP('Opérations non rapprochées',totals.unmatched,'unmatched','⚠️','#dc2626','À associer')}</div>
+      ${ppSupplierBankTrackingTableV7(ppBankReconciliationListFilterPP)}
+      ${ppClientBankTrackingTableV8(ppBankReconciliationListFilterPP)}
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px"><strong>Dossiers de relevé — ${escapeHTML(filterLabels[ppBankReconciliationListFilterPP]||filterLabels.all)}</strong>${ppBankReconciliationListFilterPP!=='all'?'<button class="btn small" onclick="ppSetBankReconciliationListFilterPP(\'all\')">Effacer le filtre de statut</button>':''}</div>
+      <div class="pp-acc-panel"><div style="overflow:auto"><table><thead><tr><th>Période</th><th>Banque / compte</th><th>Sources</th><th>Solde relevé</th><th>Écart final rapproché</th><th>Statut</th><th>Actions</th></tr></thead><tbody>${filtered.map(rec=>{const stats=ppBankReconciliationStatsPP(rec),sources=[...new Set(rec.sources||[])].map(ppBankSourceLabelPP).join(' + ');return `<tr><td>${formatDate(rec.from)} → ${formatDate(rec.to)}</td><td><strong>${escapeHTML(rec.bankName||'Banque')}</strong><br><small>${escapeHTML(rec.accountName||rec.accountNumber||'Compte bancaire')}</small></td><td>${escapeHTML(sources)}</td><td>${formatMoney(rec.closingBalance)}</td><td class="${Math.abs(stats.finalGap)<.02?'pp-acc-positive':'pp-acc-negative'}"><strong>${formatMoney(stats.finalGap)}</strong></td><td>${ppBankStatusBadgePP(rec.status)}</td><td><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn small" onclick='viewBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Ouvrir</button><button class="btn small print" onclick='printBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Imprimer</button><button class="btn small danger" onclick='deleteBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Supprimer</button></div></td></tr>`;}).join('')||`<tr><td colspan="7" class="empty">${escapeHTML(emptyMessages[ppBankReconciliationListFilterPP]||emptyMessages.all)}</td></tr>`}</tbody></table></div></div>`;
+};
+
+var ppClientSettlementCloudLoadingV8=false;
+const ppSetDatasetBeforeClientBankV8=ppSetDataset;
+ppSetDataset=function(key,items){
+    ppSetDatasetBeforeClientBankV8(key,items);
+    if(!ppClientSettlementCloudLoadingV8&&['clients','clientInvoices','clientPayments'].includes(key))ppRebuildClientSettlementStateV8();
+};
+
+const ppLoadAllCloudBeforeClientBankV8=ppLoadAllCloud;
+ppLoadAllCloud=async function(){
+    ppClientSettlementCloudLoadingV8=true;
+    try{await ppLoadAllCloudBeforeClientBankV8();}
+    finally{ppClientSettlementCloudLoadingV8=false;}
+    ppRebuildClientSettlementStateV8();if(typeof ppSaveLocalOnly==='function')ppSaveLocalOnly();
+};
+
+ppRebuildClientSettlementStateV8();
+if(typeof ppSaveLocalOnly==='function')ppSaveLocalOnly();
+
+/* =========================================================
+   FACTURES CLIENTS — v9
+   - Facture documentaire liée à une vente déjà comptabilisée.
+   - Aucun doublon de CA, TVA, stock ou créance.
+   - Liste, recherche, modification, impression et relevé client.
+   - Les anciennes factures à crédit restent compatibles.
+========================================================= */
+
+const PP_CLIENT_INVOICE_NATURE_DOCUMENTARY_V9='documentary';
+const PP_CLIENT_INVOICE_NATURE_CREDIT_V9='credit';
+let ppClientInvoiceFiltersV9={search:'',from:'',to:'',status:'all',clientId:0};
+
+function ppIsDocumentaryClientInvoiceV9(invoice={}){
+    return invoice.invoiceNature===PP_CLIENT_INVOICE_NATURE_DOCUMENTARY_V9||invoice.accountingImpact===false||invoice.documentOnly===true;
+}
+
+function ppNormalizeClientInvoiceLineV9(line={}){
+    const quantity=Math.max(Number(line.quantity??1),0);
+    const unitPriceTTC=Math.max(Number(line.unitPriceTTC??line.unitPrice??0),0);
+    const vatRate=Math.max(Number(line.vatRate??10),0);
+    return {
+        id:line.id??createId(),
+        designation:String(line.designation||line.label||'Restauration').trim(),
+        quantity,
+        unitPriceTTC,
+        vatRate
+    };
+}
+
+function ppNormalizeClientInvoiceV9(raw={}){
+    const documentary=ppIsDocumentaryClientInvoiceV9(raw);
+    let lines=Array.isArray(raw.lines)?raw.lines.map(ppNormalizeClientInvoiceLineV9).filter(line=>line.designation&&line.quantity>0):[];
+    if(!lines.length&&Number(raw.totalTTC||0)>0){
+        lines=[ppNormalizeClientInvoiceLineV9({designation:raw.label||'Prestations de restauration',quantity:1,unitPriceTTC:Number(raw.totalTTC||0),vatRate:10})];
+    }
+    const totals=ppClientInvoiceTotalsFromLinesV9(lines);
+    const totalTTC=lines.length?totals.ttc:Math.max(Number(raw.totalTTC||0),0);
+    const paid=documentary?totalTTC:Math.min(Math.max(Number(raw.paid||0),0),totalTTC);
+    return {
+        ...raw,
+        invoiceNature:documentary?PP_CLIENT_INVOICE_NATURE_DOCUMENTARY_V9:(raw.invoiceNature||PP_CLIENT_INVOICE_NATURE_CREDIT_V9),
+        accountingImpact:!documentary,
+        documentOnly:documentary,
+        status:String(raw.status||'issued'),
+        linkedSaleId:raw.linkedSaleId??null,
+        saleReference:String(raw.saleReference||raw.linkedSaleNumber||''),
+        paymentMode:String(raw.paymentMode||raw.mode||''),
+        internalNote:String(raw.internalNote||raw.note||''),
+        lines,
+        totalHT:lines.length?totals.ht:Number(raw.totalHT||totalTTC/1.10),
+        vatAmount:lines.length?totals.vat:Number(raw.vatAmount||totalTTC-(Number(raw.totalHT||totalTTC/1.10))),
+        totalTTC,
+        paid,
+        due:documentary?0:Math.max(totalTTC-paid,0),
+        dueDate:String(raw.dueDate||raw.date||'').slice(0,10)
+    };
+}
+
+function ppClientInvoiceTotalsFromLinesV9(lines=[]){
+    return lines.reduce((totals,raw)=>{
+        const line=ppNormalizeClientInvoiceLineV9(raw),ttc=line.quantity*line.unitPriceTTC,ht=line.vatRate>=0?ttc/(1+line.vatRate/100):ttc;
+        totals.ht+=ht;totals.vat+=ttc-ht;totals.ttc+=ttc;return totals;
+    },{ht:0,vat:0,ttc:0});
+}
+
+clientInvoicesPP=clientInvoicesPP.map(ppNormalizeClientInvoiceV9);
+
+function ppFinancialClientInvoicesV9(clientId=null){
+    return clientInvoicesPP.filter(invoice=>!ppIsDocumentaryClientInvoiceV9(invoice)&&(clientId===null||Number(invoice.clientId)===Number(clientId)));
+}
+
+function ppDocumentaryClientInvoicesV9(clientId=null){
+    return clientInvoicesPP.filter(invoice=>ppIsDocumentaryClientInvoiceV9(invoice)&&(clientId===null||Number(invoice.clientId)===Number(clientId)));
+}
+
+function ppNextClientInvoiceNumberV9(){
+    const date=ppTodayISOPP().replace(/-/g,''),prefix=`FC-${date}-`;
+    const max=clientInvoicesPP.reduce((current,invoice)=>{
+        const match=String(invoice.number||'').match(new RegExp(`^${prefix}(\\d+)$`));
+        return match?Math.max(current,Number(match[1])):current;
+    },0);
+    return `${prefix}${String(max+1).padStart(3,'0')}`;
+}
+
+function ppEnsureCompanyInvoiceStylesV9(){
+    if(document.getElementById('ppCompanyInvoiceStylesV9'))return;
+    const style=document.createElement('style');style.id='ppCompanyInvoiceStylesV9';
+    style.textContent=`
+      .pp-ci-panel-v9{margin-top:18px;border:1px solid #e4e7ec;border-radius:16px;background:#fff;padding:14px}
+      .pp-ci-toolbar-v9{display:flex;justify-content:space-between;align-items:end;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+      .pp-ci-filters-v9{display:grid;grid-template-columns:minmax(220px,1.5fr) repeat(3,minmax(145px,.8fr));gap:8px;flex:1}
+      .pp-ci-summary-v9{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin:10px 0}
+      .pp-ci-summary-v9>div{border:1px solid #e4e7ec;border-radius:12px;padding:10px;background:#fafcfb}
+      .pp-ci-lines-v9{display:flex;flex-direction:column;gap:8px}
+      .pp-ci-line-v9{display:grid;grid-template-columns:minmax(240px,2fr) 100px 130px 100px 130px 48px;gap:8px;align-items:end;border:1px solid #e4e7ec;border-radius:12px;padding:10px}
+      .pp-ci-note-v9{padding:10px 12px;border-radius:10px;background:#fff8e8;border:1px solid #f6c85f;color:#6b4b00;font-size:13px;line-height:1.5}
+      .pp-ci-click-v9{cursor:pointer}
+      .pp-ci-click-v9:hover{box-shadow:0 5px 16px rgba(15,75,45,.08);transform:translateY(-1px)}
+      @media(max-width:760px){.pp-ci-filters-v9{grid-template-columns:1fr 1fr}.pp-ci-line-v9{grid-template-columns:1fr 1fr}.pp-ci-line-v9>div:first-child{grid-column:1/-1}}
+      @media(max-width:480px){.pp-ci-filters-v9{grid-template-columns:1fr}.pp-ci-line-v9{grid-template-columns:1fr}.pp-ci-line-v9>div:first-child{grid-column:auto}}
+    `;
+    document.head.appendChild(style);
+}
+
+function ppEnsureClientInvoicesPanelV9(){
+    ppEnsureCompanyInvoiceStylesV9();
+    ensureClientsModulePP();
+    const module=document.getElementById('ppClientsModule');if(!module)return null;
+    let panel=document.getElementById('ppClientInvoicesPanelV9');
+    if(panel)return panel;
+    panel=document.createElement('section');panel.id='ppClientInvoicesPanelV9';panel.className='pp-ci-panel-v9';
+    panel.innerHTML=`
+      <div class="pp-ci-toolbar-v9">
+        <div><h3 style="margin:0">🧾 Factures clients</h3></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="openClientInvoicePP()">+ Nouvelle facture</button><button class="btn" onclick="printFilteredClientInvoicesV9()">🖨️ Imprimer la liste</button></div>
+      </div>
+      <div class="pp-ci-filters-v9">
+        <div><label>Recherche</label><input id="ppClientInvoiceSearchV9" placeholder="Client, N° facture, ICE, référence vente…" oninput="ppSetClientInvoiceFilterV9('search',this.value)"></div>
+        <div><label>Du</label><input id="ppClientInvoiceFromV9" type="date" onchange="ppSetClientInvoiceFilterV9('from',this.value)"></div>
+        <div><label>Au</label><input id="ppClientInvoiceToV9" type="date" onchange="ppSetClientInvoiceFilterV9('to',this.value)"></div>
+        <div><label>Statut</label><select id="ppClientInvoiceStatusV9" onchange="ppSetClientInvoiceFilterV9('status',this.value)"><option value="all">Tous</option><option value="issued">Émises</option><option value="draft">Brouillons</option><option value="cancelled">Annulées</option><option value="credit">Factures à crédit</option></select></div>
+      </div>
+      <div id="ppClientInvoiceActiveClientV9"></div>
+      <div class="pp-ci-summary-v9"><div><small>Factures affichées</small><strong id="ppClientInvoiceCountV9" style="display:block;font-size:19px">0</strong></div><div><small>Total TTC</small><strong id="ppClientInvoiceTotalV9" style="display:block;font-size:19px">0 DH</strong></div><div><small>Clients concernés</small><strong id="ppClientInvoiceCompaniesV9" style="display:block;font-size:19px">0</strong></div></div>
+      <div style="overflow:auto"><table style="min-width:1120px;width:100%"><thead><tr><th>Date</th><th>N° facture</th><th>Client</th><th>ICE</th><th>Référence vente</th><th>Nature</th><th>HT</th><th>TVA</th><th>TTC</th><th>Statut</th><th>Actions</th></tr></thead><tbody id="ppClientInvoicesTableV9"></tbody></table></div>`;
+    module.appendChild(panel);return panel;
+}
+
+function ppSetClientInvoiceFilterV9(key,value){
+    ppClientInvoiceFiltersV9[key]=key==='clientId'?Number(value||0):String(value||'');
+    ppRenderClientInvoicesV9();
+}
+
+function ppFilteredClientInvoicesV9(){
+    const q=normalizeText(ppClientInvoiceFiltersV9.search||''),from=ppClientInvoiceFiltersV9.from,to=ppClientInvoiceFiltersV9.to,status=ppClientInvoiceFiltersV9.status||'all',clientId=Number(ppClientInvoiceFiltersV9.clientId||0);
+    return clientInvoicesPP.map(ppNormalizeClientInvoiceV9).filter(invoice=>{
+        const date=String(invoice.date||'').slice(0,10),client=clientsPP.find(item=>Number(item.id)===Number(invoice.clientId));
+        if(clientId&&Number(invoice.clientId)!==clientId)return false;
+        if(from&&date<from)return false;if(to&&date>to)return false;
+        if(status==='credit'&&ppIsDocumentaryClientInvoiceV9(invoice))return false;
+        if(status!=='all'&&status!=='credit'&&String(invoice.status||'issued')!==status)return false;
+        if(q&&!normalizeText(`${invoice.number||''} ${invoice.clientName||''} ${client?.ice||''} ${invoice.saleReference||''} ${invoice.label||''}`).includes(q))return false;
+        return true;
+    }).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))||String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+}
+
+function ppClientInvoiceStatusBadgeV9(invoice={}){
+    if(invoice.status==='cancelled')return '<span class="status danger">Annulée</span>';
+    if(invoice.status==='draft')return '<span class="status warning">Brouillon</span>';
+    return '<span class="status success">Émise</span>';
+}
+
+function ppRenderClientInvoicesV9(){
+    const panel=ppEnsureClientInvoicesPanelV9();if(!panel)return;
+    const rows=ppFilteredClientInvoicesV9(),body=document.getElementById('ppClientInvoicesTableV9');if(!body)return;
+    const activeInvoices=rows.filter(invoice=>invoice.status!=='cancelled');
+    setText('ppClientInvoiceCountV9',String(rows.length));setText('ppClientInvoiceTotalV9',formatMoney(activeInvoices.reduce((sum,invoice)=>sum+Number(invoice.totalTTC||0),0)));setText('ppClientInvoiceCompaniesV9',String(new Set(rows.map(invoice=>Number(invoice.clientId))).size));
+    const active=document.getElementById('ppClientInvoiceActiveClientV9');
+    if(active){const client=clientsPP.find(item=>Number(item.id)===Number(ppClientInvoiceFiltersV9.clientId));active.innerHTML=client?`<div style="margin:10px 0;padding:9px 12px;border-radius:10px;background:#eef8f1;display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap"><strong>Relevé filtré : ${escapeHTML(client.name)}</strong><div style="display:flex;gap:6px"><button class="btn small print" onclick="printClientInvoiceStatementV9(${client.id})">🖨️ Imprimer le relevé</button><button class="btn small" onclick="ppShowClientInvoicesV9(0)">Afficher tous les clients</button></div></div>`:'';}
+    body.innerHTML=rows.map(invoice=>{const client=clientsPP.find(item=>Number(item.id)===Number(invoice.clientId)),documentaryInvoice=ppIsDocumentaryClientInvoiceV9(invoice);return `<tr><td>${formatDate(invoice.date)}</td><td><strong>${escapeHTML(invoice.number||'-')}</strong></td><td>${escapeHTML(invoice.clientName||client?.name||'-')}</td><td>${escapeHTML(client?.ice||'-')}</td><td>${escapeHTML(invoice.saleReference||'-')}</td><td>${documentaryInvoice?'<span class="status">Vente liée</span>':'<span class="status warning">À crédit</span>'}</td><td>${formatMoney(invoice.totalHT||0)}</td><td>${formatMoney(invoice.vatAmount||0)}</td><td><strong>${formatMoney(invoice.totalTTC||0)}</strong></td><td>${ppClientInvoiceStatusBadgeV9(invoice)}</td><td><div class="action-buttons"><button class="btn small view" onclick="viewClientInvoiceV9(${invoice.id})">👁️</button><button class="btn small print" onclick="printClientInvoiceV9(${invoice.id})">🖨️</button>${invoice.status!=='cancelled'?`<button class="btn small edit" onclick="openClientInvoicePP(${invoice.id})">✏️</button><button class="btn small" onclick="duplicateClientInvoiceV9(${invoice.id})">⧉</button><button class="btn small danger" onclick="cancelClientInvoiceV9(${invoice.id})">Annuler</button>`:''}</div></td></tr>`;}).join('')||'<tr><td colspan="11" class="empty">Aucune facture client pour les filtres sélectionnés.</td></tr>';
+}
+
+function ppShowClientInvoicesV9(clientId){
+    ppClientInvoiceFiltersV9.clientId=Number(clientId||0);ppRenderClientInvoicesV9();
+    document.getElementById('ppClientInvoicesPanelV9')?.scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function ppEnsureCompanyInvoiceModalV9(){
+    ppEnsureCompanyInvoiceStylesV9();ensureClientModalsPP();
+    const old=document.getElementById('ppClientInvoiceModal');if(old?.dataset?.companyInvoice==='v9')return;
+    if(old)old.remove();
+    const modal=document.createElement('div');modal.id='ppClientInvoiceModal';modal.className='modal-overlay';modal.dataset.companyInvoice='v9';
+    modal.innerHTML=`<div class="modal" style="max-width:1120px"><div class="modal-header"><h2 id="ppClientInvoiceTitleV9">🧾 Facture client</h2><button type="button" onclick="closeModal('ppClientInvoiceModal')">×</button></div><form id="ppClientInvoiceForm"><input type="hidden" id="ppClientInvoiceId"><div class="form-grid" style="margin-top:12px"><div><label>Type *</label><select id="ppClientInvoiceNatureV9" onchange="ppClientInvoiceNatureChangedV9()"><option value="documentary">Vente liée</option><option value="credit">Facture à crédit</option></select></div><div><label>Client *</label><select id="ppClientInvoiceClient" required></select></div><div><label>N° facture *</label><input id="ppClientInvoiceNumber" required></div><div><label>Date de facture *</label><input id="ppClientInvoiceDate" type="date" required></div><div><label>Statut</label><select id="ppClientInvoiceStatusInputV9"><option value="issued">Émise</option><option value="draft">Brouillon</option></select></div><div><label>Mode de règlement constaté</label><select id="ppClientInvoicePaymentModeV9"><option value="">Non indiqué</option><option>Espèces</option><option>Carte</option><option>Virement</option><option>Chèque</option><option>Prélèvement</option><option>Effet / LCR</option><option>Autre</option></select></div></div><div style="margin-top:14px;padding:12px;border:1px solid #e4e7ec;border-radius:12px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><div><h3 style="margin:0">Vente liée</h3></div><button type="button" class="btn" onclick="ppLoadLinkedSaleIntoInvoiceV9()">Charger les détails de la vente</button></div><div class="form-grid" style="margin-top:10px"><div><label>Vente journalière / pièce</label><select id="ppClientInvoiceLinkedSaleV9" onchange="ppClientInvoiceSaleChangedV9()"></select></div><div><label>Référence ticket / vente</label><input id="ppClientInvoiceSaleReferenceV9" placeholder="Ticket, table, commande…"></div></div></div><div id="ppClientInvoiceCreditFieldsV9" class="form-grid" style="margin-top:12px;display:none"><div><label>Date d’échéance *</label><input id="ppClientInvoiceDueDate" type="date"></div><div><label>Montant déjà encaissé</label><input id="ppClientInvoicePaid" type="number" min="0" step="0.01" value="0"></div></div><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:16px 0 8px;flex-wrap:wrap"><div><h3 style="margin:0">Détail de la facture</h3></div><button type="button" class="btn primary" onclick="ppAddClientInvoiceLineV9()">+ Ajouter une ligne</button></div><div id="ppClientInvoiceLinesV9" class="pp-ci-lines-v9"></div><div class="pp-ci-summary-v9"><div><small>Total HT</small><strong id="ppClientInvoiceHTV9" style="display:block;font-size:19px">0 DH</strong></div><div><small>TVA</small><strong id="ppClientInvoiceVATV9" style="display:block;font-size:19px">0 DH</strong></div><div><small>Total TTC</small><strong id="ppClientInvoiceTTCV9" style="display:block;font-size:19px">0 DH</strong></div></div><input type="hidden" id="ppClientInvoiceLabel"><input type="hidden" id="ppClientInvoiceInternalNoteV9"><div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppClientInvoiceModal')">Annuler</button><button class="btn primary" type="submit">Enregistrer la facture</button></div></form></div>`;
+    document.body.appendChild(modal);document.getElementById('ppClientInvoiceForm').addEventListener('submit',event=>{event.preventDefault();saveClientInvoicePP();});
+}
+
+function ppClientInvoiceSaleOptionsV9(selected=null){
+    const recent=salesPP.slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).slice(0,250);
+    return '<option value="">Aucune liaison / référence manuelle</option>'+recent.map(sale=>`<option value="${sale.id}" ${Number(selected)===Number(sale.id)?'selected':''}>${formatDate(sale.date)} — ${escapeHTML(sale.number||'Vente')} — ${formatMoney(sale.totalTTC||0)}</option>`).join('');
+}
+
+function ppAddClientInvoiceLineV9(data={}){
+    const box=document.getElementById('ppClientInvoiceLinesV9');if(!box)return;
+    const line=ppNormalizeClientInvoiceLineV9(data),row=document.createElement('div');row.className='pp-ci-line-v9';row.dataset.lineId=String(line.id);
+    row.innerHTML=`<div><label>Désignation *</label><input class="pp-ci-designation-v9" value="${escapeHTML(line.designation||'')}" placeholder="Repas, menu, prestation…" required></div><div><label>Quantité</label><input class="pp-ci-qty-v9" type="number" min="0.0001" step="0.0001" value="${line.quantity||1}" oninput="ppUpdateClientInvoiceTotalsV9()"></div><div><label>Prix unitaire TTC</label><input class="pp-ci-price-v9" type="number" min="0" step="0.01" value="${Number(line.unitPriceTTC||0).toFixed(2)}" oninput="ppUpdateClientInvoiceTotalsV9()"></div><div><label>TVA</label><select class="pp-ci-vat-v9" onchange="ppUpdateClientInvoiceTotalsV9()"><option value="10" ${Number(line.vatRate)===10?'selected':''}>10%</option><option value="20" ${Number(line.vatRate)===20?'selected':''}>20%</option><option value="0" ${Number(line.vatRate)===0?'selected':''}>0%</option></select></div><div><label>Total TTC</label><input class="pp-ci-line-total-v9" readonly></div><button type="button" class="btn danger" onclick="this.closest('.pp-ci-line-v9').remove();ppUpdateClientInvoiceTotalsV9()">🗑️</button>`;
+    box.appendChild(row);ppUpdateClientInvoiceTotalsV9();
+}
+
+function ppCurrentClientInvoiceLinesV9(){
+    return [...document.querySelectorAll('#ppClientInvoiceLinesV9 .pp-ci-line-v9')].map(row=>ppNormalizeClientInvoiceLineV9({id:row.dataset.lineId,designation:row.querySelector('.pp-ci-designation-v9')?.value,quantity:row.querySelector('.pp-ci-qty-v9')?.value,unitPriceTTC:row.querySelector('.pp-ci-price-v9')?.value,vatRate:row.querySelector('.pp-ci-vat-v9')?.value})).filter(line=>line.designation&&line.quantity>0);
+}
+
+function ppUpdateClientInvoiceTotalsV9(){
+    const lines=ppCurrentClientInvoiceLinesV9(),totals=ppClientInvoiceTotalsFromLinesV9(lines);
+    document.querySelectorAll('#ppClientInvoiceLinesV9 .pp-ci-line-v9').forEach(row=>{const qty=Number(row.querySelector('.pp-ci-qty-v9')?.value||0),price=Number(row.querySelector('.pp-ci-price-v9')?.value||0);const total=row.querySelector('.pp-ci-line-total-v9');if(total)total.value=(qty*price).toFixed(2);});
+    setText('ppClientInvoiceHTV9',formatMoney(totals.ht));setText('ppClientInvoiceVATV9',formatMoney(totals.vat));setText('ppClientInvoiceTTCV9',formatMoney(totals.ttc));
+}
+
+function ppClientInvoiceNatureChangedV9(){
+    const credit=getValue('ppClientInvoiceNatureV9')===PP_CLIENT_INVOICE_NATURE_CREDIT_V9,fields=document.getElementById('ppClientInvoiceCreditFieldsV9');if(fields)fields.style.display=credit?'grid':'none';
+    const due=document.getElementById('ppClientInvoiceDueDate');if(due)due.required=credit;
+}
+
+function ppClientInvoiceSaleChangedV9(){
+    const sale=salesPP.find(item=>Number(item.id)===Number(getValue('ppClientInvoiceLinkedSaleV9')));if(sale&&!getValue('ppClientInvoiceSaleReferenceV9'))setValue('ppClientInvoiceSaleReferenceV9',sale.number||'');
+}
+
+function ppInvoiceLinesFromSaleV9(sale={}){
+    const scan=dailySalesScansPP.find(item=>Number(item.saleId)===Number(sale.id));
+    if(scan?.items?.length){
+        const mapped=scan.items.map(item=>{const qty=Math.max(Number(item.quantity||1),0),ttc=Math.max(Number(item.totalTTC||0),0);return ppNormalizeClientInvoiceLineV9({designation:item.rawName||item.recipeName||item.stockProductName||item.sourceLine||'Restauration',quantity:qty||1,unitPriceTTC:qty>0?ttc/qty:ttc,vatRate:10});}).filter(line=>line.designation&&line.quantity>0);
+        if(mapped.length)return mapped;
+    }
+    const mapped=(sale.items||[]).map(item=>{const recipe=recipesPP.find(row=>Number(row.id)===Number(item.recipeId));return recipe?ppNormalizeClientInvoiceLineV9({designation:recipe.name,quantity:Number(item.quantity||1),unitPriceTTC:Number(recipe.salePrice||0),vatRate:10}):null;}).filter(Boolean);
+    return mapped.length?mapped:[ppNormalizeClientInvoiceLineV9({designation:'Prestations de restauration',quantity:1,unitPriceTTC:Number(sale.totalTTC||0),vatRate:10})];
+}
+
+function ppLoadLinkedSaleIntoInvoiceV9(){
+    const sale=salesPP.find(item=>Number(item.id)===Number(getValue('ppClientInvoiceLinkedSaleV9')));if(!sale){alert('Sélectionnez d’abord une vente enregistrée.');return;}
+    const existing=ppCurrentClientInvoiceLinesV9().some(line=>line.designation&&line.unitPriceTTC>0);if(existing&&!confirm('Remplacer les lignes actuelles par les détails de cette vente ?'))return;
+    const box=document.getElementById('ppClientInvoiceLinesV9');if(box)box.innerHTML='';ppInvoiceLinesFromSaleV9(sale).forEach(ppAddClientInvoiceLineV9);setValue('ppClientInvoiceSaleReferenceV9',sale.number||'');if(!getValue('ppClientInvoiceDate'))setValue('ppClientInvoiceDate',sale.date||ppTodayISOPP());ppUpdateClientInvoiceTotalsV9();
+}
+
+openClientInvoicePP=function(id=null){
+    ppEnsureCompanyInvoiceModalV9();if(!clientsPP.length){alert("Ajoutez d'abord un client.");return;}
+    const invoice=id?ppNormalizeClientInvoiceV9(clientInvoicesPP.find(item=>Number(item.id)===Number(id))||{}):null;
+    const clientSelect=document.getElementById('ppClientInvoiceClient');clientSelect.innerHTML='<option value="">Sélectionner un client</option>'+clientsPP.slice().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'fr')).map(client=>`<option value="${client.id}">${escapeHTML(client.name)}${client.ice?` — ICE ${escapeHTML(client.ice)}`:''}</option>`).join('');
+    setValue('ppClientInvoiceId',invoice?.id||'');setValue('ppClientInvoiceNatureV9',invoice?.invoiceNature||PP_CLIENT_INVOICE_NATURE_DOCUMENTARY_V9);setValue('ppClientInvoiceClient',invoice?.clientId||ppClientInvoiceFiltersV9.clientId||'');setValue('ppClientInvoiceNumber',invoice?.number||ppNextClientInvoiceNumberV9());setValue('ppClientInvoiceDate',invoice?.date||ppTodayISOPP());setValue('ppClientInvoiceStatusInputV9',invoice?.status==='draft'?'draft':'issued');setValue('ppClientInvoicePaymentModeV9',invoice?.paymentMode||'');
+    const linked=document.getElementById('ppClientInvoiceLinkedSaleV9');linked.innerHTML=ppClientInvoiceSaleOptionsV9(invoice?.linkedSaleId);setValue('ppClientInvoiceLinkedSaleV9',invoice?.linkedSaleId||'');setValue('ppClientInvoiceSaleReferenceV9',invoice?.saleReference||'');setValue('ppClientInvoiceDueDate',invoice?.dueDate||invoice?.date||ppTodayISOPP());setValue('ppClientInvoicePaid',invoice&&!ppIsDocumentaryClientInvoiceV9(invoice)?invoice.paid||0:0);setValue('ppClientInvoiceLabel',invoice?.label||'');setValue('ppClientInvoiceInternalNoteV9',invoice?.internalNote||'');
+    const box=document.getElementById('ppClientInvoiceLinesV9');if(box)box.innerHTML='';(invoice?.lines?.length?invoice.lines:[{designation:'Prestations de restauration',quantity:1,unitPriceTTC:0,vatRate:10}]).forEach(ppAddClientInvoiceLineV9);setText('ppClientInvoiceTitleV9',invoice?'Modifier la facture client':'Nouvelle facture client');ppClientInvoiceNatureChangedV9();ppUpdateClientInvoiceTotalsV9();
+    if(typeof ppUpgradeClientInvoiceSearchPP==='function')ppUpgradeClientInvoiceSearchPP();openModal('ppClientInvoiceModal');
+};
+
+saveClientInvoicePP=function(){
+    const id=Number(getValue('ppClientInvoiceId'))||null,old=id?clientInvoicesPP.find(item=>Number(item.id)===id):null,clientId=Number(getValue('ppClientInvoiceClient')),client=clientsPP.find(item=>Number(item.id)===clientId);if(!client){alert('Veuillez sélectionner un client.');return;}
+    const number=getValue('ppClientInvoiceNumber').trim(),date=String(getValue('ppClientInvoiceDate')||'').slice(0,10),nature=getValue('ppClientInvoiceNatureV9')||PP_CLIENT_INVOICE_NATURE_DOCUMENTARY_V9,documentary=nature===PP_CLIENT_INVOICE_NATURE_DOCUMENTARY_V9,lines=ppCurrentClientInvoiceLinesV9(),totals=ppClientInvoiceTotalsFromLinesV9(lines);
+    if(!number){alert('Veuillez saisir le numéro de facture.');return;}if(!date){alert('Veuillez sélectionner la date de facture.');return;}if(!lines.length||!(totals.ttc>0)){alert('Ajoutez au moins une ligne avec un montant valide.');return;}
+    const duplicate=clientInvoicesPP.find(invoice=>Number(invoice.id)!==Number(id)&&normalizeText(invoice.number)===normalizeText(number)&&invoice.status!=='cancelled');if(duplicate&&!confirm(`Le numéro ${number} existe déjà. Continuer quand même ?`))return;
+    const paid=documentary?totals.ttc:Math.min(Math.max(Number(getValue('ppClientInvoicePaid')||0),0),totals.ttc),status=getValue('ppClientInvoiceStatusInputV9')||'issued';
+    const obj=ppNormalizeClientInvoiceV9({...(old||{}),id:id||createId(),clientId,clientName:client.name,number,date,dueDate:documentary?date:String(getValue('ppClientInvoiceDueDate')||date).slice(0,10),invoiceNature:nature,accountingImpact:!documentary,documentOnly:documentary,status,linkedSaleId:Number(getValue('ppClientInvoiceLinkedSaleV9'))||null,saleReference:getValue('ppClientInvoiceSaleReferenceV9').trim(),paymentMode:getValue('ppClientInvoicePaymentModeV9'),label:old?.label||'',internalNote:old?.internalNote||'',lines,totalHT:totals.ht,vatAmount:totals.vat,totalTTC:totals.ttc,paid,due:documentary?0:Math.max(totals.ttc-paid,0),ppDirectPaidBase:documentary?totals.ttc:Math.min(Math.max(Number(old?.ppDirectPaidBase??paid),0),totals.ttc),createdAt:old?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()});
+    if(id){const index=clientInvoicesPP.findIndex(item=>Number(item.id)===id);if(index>=0)clientInvoicesPP[index]=obj;}else clientInvoicesPP.unshift(obj);
+    ppRebuildClientSettlementStateV8();saveData();closeModal('ppClientInvoiceModal');renderAll();ppRenderClientInvoicesV9();
+};
+
+function ppClientInvoicePrintableHTMLV9(invoiceId,{statement=false}={}){
+    const invoice=ppNormalizeClientInvoiceV9(clientInvoicesPP.find(item=>Number(item.id)===Number(invoiceId))||{}),client=clientsPP.find(item=>Number(item.id)===Number(invoice.clientId));if(!invoice.id)return '';
+    const rows=(invoice.lines||[]).map(line=>{const ttc=Number(line.quantity||0)*Number(line.unitPriceTTC||0),ht=ttc/(1+Number(line.vatRate||0)/100);return `<tr><td>${escapeHTML(line.designation)}</td><td>${formatNumber(line.quantity)}</td><td>${formatMoney(line.unitPriceTTC)}</td><td>${formatNumber(line.vatRate)}%</td><td>${formatMoney(ht)}</td><td>${formatMoney(ttc)}</td></tr>`;}).join('');
+    return `${invoice.status==='cancelled'?'<div style="font-size:28px;color:#b42318;text-align:center;font-weight:800;border:3px solid #b42318;padding:8px;margin-bottom:16px">FACTURE ANNULÉE</div>':''}<div class="doc-head"><h1>Pause & Plate</h1><p>FACTURE</p></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px"><div><h3>Émetteur</h3><strong>Pause & Plate</strong><br>Biougra, Maroc</div><div><h3>Facturé à</h3><strong>${escapeHTML(client?.name||invoice.clientName||'-')}</strong><br>${client?.address?escapeHTML(client.address).replace(/\n/g,'<br>')+'<br>':''}${client?.ice?`ICE : ${escapeHTML(client.ice)}<br>`:''}${client?.phone?`Tél. : ${escapeHTML(client.phone)}<br>`:''}${client?.email?escapeHTML(client.email):''}</div></div>${detailRowsHTML([['N° facture',invoice.number||'-'],['Date',formatDate(invoice.date)],['Référence vente / ticket',invoice.saleReference||'-'],['Mode de règlement',invoice.paymentMode||'-']])}<table><thead><tr><th>Désignation</th><th>Qté</th><th>PU TTC</th><th>TVA</th><th>Total HT</th><th>Total TTC</th></tr></thead><tbody>${rows}</tbody></table><div style="margin-left:auto;max-width:420px;margin-top:16px">${detailRowsHTML([['Total HT',formatMoney(invoice.totalHT||0)],['TVA',formatMoney(invoice.vatAmount||0)],['Total TTC',formatMoney(invoice.totalTTC||0)]])}</div>`;
+}
+
+function viewClientInvoiceV9(id){
+    const invoice=ppNormalizeClientInvoiceV9(clientInvoicesPP.find(item=>Number(item.id)===Number(id))||{}),client=clientsPP.find(item=>Number(item.id)===Number(invoice.clientId));if(!invoice.id)return;
+    const lines=`<div style="overflow:auto"><table><thead><tr><th>Désignation</th><th>Quantité</th><th>PU TTC</th><th>TVA</th><th>Total TTC</th></tr></thead><tbody>${invoice.lines.map(line=>`<tr><td>${escapeHTML(line.designation)}</td><td>${formatNumber(line.quantity)}</td><td>${formatMoney(line.unitPriceTTC)}</td><td>${formatNumber(line.vatRate)}%</td><td>${formatMoney(line.quantity*line.unitPriceTTC)}</td></tr>`).join('')}</tbody></table></div>`;
+    showDetailsModal(`Facture ${invoice.number||''}`,[['Client',client?.name||invoice.clientName||'-'],['ICE',client?.ice||'-'],['Date',formatDate(invoice.date)],['Référence vente',invoice.saleReference||'-'],['Nature',ppIsDocumentaryClientInvoiceV9(invoice)?'Vente liée':'À crédit'],['Statut',invoice.status==='cancelled'?'Annulée':invoice.status==='draft'?'Brouillon':'Émise'],['Total HT',formatMoney(invoice.totalHT||0)],['TVA',formatMoney(invoice.vatAmount||0)],['Total TTC',formatMoney(invoice.totalTTC||0)],['Détails',lines]],()=>printClientInvoiceV9(id),true);
+}
+
+function printClientInvoiceV9(id){const invoice=clientInvoicesPP.find(item=>Number(item.id)===Number(id));if(!invoice)return;printDocument(`Facture ${invoice.number||''}`,ppClientInvoicePrintableHTMLV9(id));}
+
+function duplicateClientInvoiceV9(id){
+    const source=clientInvoicesPP.find(item=>Number(item.id)===Number(id));if(!source)return;const copy=ppNormalizeClientInvoiceV9({...source,id:createId(),number:ppNextClientInvoiceNumberV9(),date:ppTodayISOPP(),status:'draft',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),lines:(source.lines||[]).map(line=>({...line,id:createId()}))});clientInvoicesPP.unshift(copy);saveData();renderAll();openClientInvoicePP(copy.id);
+}
+
+function cancelClientInvoiceV9(id){
+    const invoice=clientInvoicesPP.find(item=>Number(item.id)===Number(id));if(!invoice||invoice.status==='cancelled')return;if(!confirm(`Annuler la facture ${invoice.number||''} ? Elle restera visible dans l'historique.`))return;invoice.status='cancelled';invoice.cancelledAt=new Date().toISOString();invoice.updatedAt=new Date().toISOString();saveData();renderAll();ppRenderClientInvoicesV9();
+}
+
+function printFilteredClientInvoicesV9(){
+    const rows=ppFilteredClientInvoicesV9(),total=rows.filter(ppIsDocumentaryClientInvoiceV9).filter(invoice=>invoice.status!=='cancelled').reduce((sum,invoice)=>sum+Number(invoice.totalTTC||0),0),body=rows.map(invoice=>`<tr><td>${formatDate(invoice.date)}</td><td>${escapeHTML(invoice.number||'-')}</td><td>${escapeHTML(invoice.clientName||'-')}</td><td>${escapeHTML(invoice.saleReference||'-')}</td><td>${formatMoney(invoice.totalHT||0)}</td><td>${formatMoney(invoice.vatAmount||0)}</td><td>${formatMoney(invoice.totalTTC||0)}</td><td>${invoice.status==='cancelled'?'Annulée':invoice.status==='draft'?'Brouillon':'Émise'}</td></tr>`).join('');printDocument('Liste des factures clients',`<div class="doc-head"><h1>Pause & Plate</h1><p>Liste des factures clients</p></div>${detailRowsHTML([['Nombre de factures',String(rows.length)],['Total TTC',formatMoney(total)]])}<table><thead><tr><th>Date</th><th>N° facture</th><th>Client</th><th>Référence vente</th><th>HT</th><th>TVA</th><th>TTC</th><th>Statut</th></tr></thead><tbody>${body||'<tr><td colspan="8">Aucune facture.</td></tr>'}</tbody></table>`);}
+
+function printClientInvoiceStatementV9(clientId){
+    const client=clientsPP.find(item=>Number(item.id)===Number(clientId));if(!client)return;
+    const rows=clientInvoicesPP.map(ppNormalizeClientInvoiceV9).filter(invoice=>Number(invoice.clientId)===Number(clientId)&&ppIsDocumentaryClientInvoiceV9(invoice)).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+    const total=rows.filter(invoice=>invoice.status!=='cancelled').reduce((sum,invoice)=>sum+Number(invoice.totalTTC||0),0);
+    const body=rows.map(invoice=>`<tr><td>${formatDate(invoice.date)}</td><td>${escapeHTML(invoice.number||'-')}</td><td>${escapeHTML(invoice.saleReference||'-')}</td><td>${formatMoney(invoice.totalTTC||0)}</td><td>${invoice.status==='cancelled'?'Annulée':invoice.status==='draft'?'Brouillon':'Émise'}</td></tr>`).join('');
+    printDocument(`Relevé factures - ${client.name}`,`<div class="doc-head"><h1>Pause & Plate</h1><p>Relevé des factures clients</p></div><h2>${escapeHTML(client.name)}</h2>${detailRowsHTML([['ICE',client.ice||'-'],['Adresse',client.address||'-'],['Nombre de factures',String(rows.length)],['Total TTC',formatMoney(total)]])}<table><thead><tr><th>Date</th><th>N° facture</th><th>Référence vente</th><th>TTC</th><th>Statut</th></tr></thead><tbody>${body||'<tr><td colspan="5">Aucune facture.</td></tr>'}</tbody></table>`);
+}
+
+const ppRenderClientsBeforeCompanyInvoicesV9=renderClientsPP;
+renderClientsPP=function(){
+    ensureClientsModulePP();const table=document.getElementById('ppClientsTable');if(!table)return;const q=normalizeText(getValue('ppClientSearch'));
+    const clients=clientsPP.filter(client=>!q||normalizeText(`${client.name} ${client.phone} ${client.ice}`).includes(q));
+    table.innerHTML=clients.map(client=>{const financial=ppFinancialClientInvoicesV9(client.id),documents=ppDocumentaryClientInvoicesV9(client.id),total=financial.reduce((sum,invoice)=>sum+Number(invoice.totalTTC||0),0),paid=financial.reduce((sum,invoice)=>sum+Number(invoice.paid||0),0),due=Math.max(total-paid,0);return `<tr><td><strong>${escapeHTML(client.name)}</strong><br><small>${documents.length} facture(s)</small></td><td>${escapeHTML(client.phone||'-')}</td><td>${escapeHTML(client.ice||'-')}</td><td>${formatMoney(total)}</td><td>${formatMoney(paid)}</td><td>${formatMoney(due)}</td><td><span class="status ${due?'danger':'success'}">${due?'Débiteur':'Soldé'}</span></td><td><div class="action-buttons"><button class="btn small view" onclick="viewClientSituationPP(${client.id})">📊</button><button class="btn small" title="Factures" onclick="ppShowClientInvoicesV9(${client.id})">🧾</button><button class="btn small print" title="Relevé des factures" onclick="printClientInvoiceStatementV9(${client.id})">Relevé</button><button class="btn small" onclick="openClientPaymentPP(${client.id})">💰</button><button class="btn small edit" onclick="openClientModalPP(${client.id})">✏️</button><button class="btn small danger" onclick="deleteClientPP(${client.id})">🗑️</button></div></td></tr>`;}).join('')||'<tr><td colspan="8" class="empty">Aucun client enregistré.</td></tr>';
+    const newButton=[...document.querySelectorAll('#ppClientsModule button')].find(button=>button.getAttribute('onclick')==='openClientInvoicePP()');if(newButton)newButton.innerHTML='🧾 Nouvelle facture';ppRenderClientInvoicesV9();
+};
+
+const ppViewClientSituationBeforeCompanyInvoicesV9=viewClientSituationPP;
+viewClientSituationPP=function(id){
+    const client=clientsPP.find(item=>Number(item.id)===Number(id));if(!client)return;ppRebuildClientSettlementStateV8();const financial=ppFinancialClientInvoicesV9(id),documents=ppDocumentaryClientInvoicesV9(id),total=financial.reduce((sum,invoice)=>sum+Number(invoice.totalTTC||0),0),paid=financial.reduce((sum,invoice)=>sum+Number(invoice.paid||0),0),due=Math.max(total-paid,0),ledger=clientLedgerPP(id),documentRows=documents.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).map(invoice=>`<tr><td>${formatDate(invoice.date)}</td><td>${escapeHTML(invoice.number||'-')}</td><td>${escapeHTML(invoice.saleReference||'-')}</td><td>${formatMoney(invoice.totalTTC||0)}</td><td>${ppClientInvoiceStatusBadgeV9(invoice)}</td><td><button class="btn small print" onclick="printClientInvoiceV9(${invoice.id})">🖨️</button></td></tr>`).join('');const ledgerHTML=`<div style="overflow:auto;max-height:300px"><table><thead><tr><th>Date</th><th>Pièce</th><th>Libellé</th><th>Débit</th><th>Crédit</th><th>Solde</th></tr></thead><tbody>${ledger.map(event=>`<tr><td>${formatDate(event.date)}</td><td>${escapeHTML(event.piece||'')}</td><td>${escapeHTML(event.label||'')}</td><td>${event.debit?formatMoney(event.debit):'-'}</td><td>${event.credit?formatMoney(event.credit):'-'}</td><td>${formatMoney(event.balance)}</td></tr>`).join('')||'<tr><td colspan="6">Aucune opération financière</td></tr>'}</tbody></table></div><h3 style="margin-top:18px">Factures</h3><div style="overflow:auto;max-height:300px"><table><thead><tr><th>Date</th><th>Facture</th><th>Référence vente</th><th>TTC</th><th>Statut</th><th></th></tr></thead><tbody>${documentRows||'<tr><td colspan="6">Aucune facture</td></tr>'}</tbody></table></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn primary" onclick="closeModal('detailsModal');openClientInvoicePP()">🧾 Nouvelle facture</button><button class="btn print" onclick="printClientInvoiceStatementV9(${id})">🖨️ Relevé des factures</button>${due>0?`<button class="btn" onclick="closeModal('detailsModal');openClientPaymentPP(${id})">💰 Encaisser une créance</button>`:''}</div>`;showDetailsModal(`Situation client - ${client.name}`,[['Factures',String(documents.length)],['Total TTC',formatMoney(documents.filter(invoice=>invoice.status!=='cancelled').reduce((sum,invoice)=>sum+Number(invoice.totalTTC||0),0))],['Créances facturées',formatMoney(total)],['Créances encaissées',formatMoney(paid)],['Solde financier',formatMoney(due)],['Détails',ledgerHTML]],()=>printClientInvoiceStatementV9(id),true);
+};
+
+const ppDeleteClientBeforeCompanyInvoicesV9=deleteClientPP;
+deleteClientPP=function(id){if(clientInvoicesPP.some(invoice=>Number(invoice.clientId)===Number(id))){alert('Impossible de supprimer ce client : des factures sont enregistrées.');return;}ppDeleteClientBeforeCompanyInvoicesV9(id);};
+
+const ppAccountingGeneratedJournalBeforeCompanyInvoicesV9=ppAccountingGeneratedJournalPP;
+ppAccountingGeneratedJournalPP=function(){
+    const documentaryIds=new Set(ppDocumentaryClientInvoicesV9().map(invoice=>Number(invoice.id)));
+    return ppAccountingGeneratedJournalBeforeCompanyInvoicesV9().filter(entry=>!((entry.source==='client-invoice'||entry.source==='client-payment')&&documentaryIds.has(Number(entry.sourceId))));
+};
+
+const ppTVACollecteeBeforeCompanyInvoicesV9=getTVACollecteeRowsPP;
+getTVACollecteeRowsPP=function(){return ppTVACollecteeBeforeCompanyInvoicesV9().filter(row=>!(row.source==='clientInvoice'&&ppIsDocumentaryClientInvoiceV9(clientInvoicesPP.find(invoice=>Number(invoice.id)===Number(row.id))||{})));};
+
+const ppScheduleRowsBeforeCompanyInvoicesV9=ppScheduleRowsPP;
+ppScheduleRowsPP=function(){return ppScheduleRowsBeforeCompanyInvoicesV9().filter(row=>!(row.kind==='client'&&ppIsDocumentaryClientInvoiceV9(clientInvoicesPP.find(invoice=>Number(invoice.id)===Number(row.sourceId))||{})));};
+
+const ppRebuildClientSettlementBeforeCompanyInvoicesV9=ppRebuildClientSettlementStateV8;
+ppRebuildClientSettlementStateV8=function(){
+    ppRebuildClientSettlementBeforeCompanyInvoicesV9();
+    clientInvoicesPP.forEach(invoice=>{if(!ppIsDocumentaryClientInvoiceV9(invoice))return;invoice.paid=Number(invoice.totalTTC||0);invoice.due=0;invoice.ppDirectPaidBase=Number(invoice.totalTTC||0);});
+};
+
+const ppClientPaymentLoadInvoicesBeforeCompanyInvoicesV9=ppClientPaymentLoadInvoicesV8;
+ppClientPaymentLoadInvoicesV8=function(clientId,payment=null){
+    const select=document.getElementById('ppClientPaymentInvoice');if(!select)return;const allocatedIds=new Set((payment?.allocations||[]).map(allocation=>Number(allocation.invoiceId))),invoices=clientInvoicesPP.filter(invoice=>!ppIsDocumentaryClientInvoiceV9(invoice)&&Number(invoice.clientId)===Number(clientId)&&(Number(invoice.due||0)>0||allocatedIds.has(Number(invoice.id)))).sort((a,b)=>String(a.dueDate||a.date||'').localeCompare(String(b.dueDate||b.date||'')));
+    select.innerHTML='<option value="">Affectation automatique — plus anciennes factures à crédit</option>'+invoices.map(invoice=>`<option value="${invoice.id}">${escapeHTML(invoice.number)} — échéance ${invoice.dueDate?formatDate(invoice.dueDate):'-'} — reste ${formatMoney(invoice.due)}</option>`).join('');if(payment&&(payment.allocations||[]).length===1)select.value=String(payment.allocations[0].invoiceId);if(typeof ppUpgradeClientPaymentInvoiceSearchPP==='function')ppUpgradeClientPaymentInvoiceSearchPP();
+};
+
+const ppSaveClientPaymentBeforeCompanyInvoicesV9=saveClientPaymentPP;
+saveClientPaymentPP=function(){
+    const selectedId=Number(getValue('ppClientPaymentInvoice'))||0,selected=selectedId?clientInvoicesPP.find(invoice=>Number(invoice.id)===selectedId):null;if(selected&&ppIsDocumentaryClientInvoiceV9(selected)){alert('Cette facture ne peut pas recevoir un encaissement séparé.');return;}return ppSaveClientPaymentBeforeCompanyInvoicesV9();
+};
+
+const ppClientLedgerBeforeCompanyInvoicesV9=clientLedgerPP;
+clientLedgerPP=function(id){
+    const documentaryIds=new Set(ppDocumentaryClientInvoicesV9(id).map(invoice=>Number(invoice.id))),events=[];
+    ppRebuildClientSettlementStateV8();ppFinancialClientInvoicesV9(id).forEach(invoice=>{events.push({date:invoice.date,piece:invoice.number,label:invoice.label||'Facture client à crédit',debit:Number(invoice.totalTTC||0),credit:0});const direct=Math.max(Number(invoice.ppDirectPaidBase||0),0);if(direct>0)events.push({date:invoice.date,piece:invoice.number,label:'Encaissement saisi avec facture',debit:0,credit:direct});});clientPaymentsPP.filter(payment=>Number(payment.clientId)===Number(id)&&!(payment.allocations||[]).some(allocation=>documentaryIds.has(Number(allocation.invoiceId)))).forEach(raw=>{const payment=ppNormalizeClientPaymentBankV8(raw),settled=ppClientPaymentIsSettledV8(payment);events.push({date:settled&&ppIsClientDeferredBankModeV8(payment.mode)?payment.bankValidationDate||payment.date:payment.date,piece:payment.reference||payment.id,label:`Encaissement ${payment.mode||''}${settled?'':' — en attente banque'}`,debit:0,credit:settled?Number(payment.amount||0):0});});events.sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));let balance=0;return events.map(event=>{balance+=event.debit-event.credit;return {...event,balance};});
+};
+
+// Refresh the Clients page after loading this version.
+try{ppRebuildClientSettlementStateV8();if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{renderClientsPP();});else renderClientsPP();}catch(error){console.warn('Factures clients v9:',error);}
