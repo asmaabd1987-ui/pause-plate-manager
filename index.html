@@ -35,6 +35,47 @@
         href="css/pro-ui.css?v=20260804-pro-ui-v1"
     >
 
+    <style>
+        .stock-alert-trigger{
+            cursor:pointer;
+            user-select:none;
+            transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease;
+        }
+        .stock-alert-trigger:hover{
+            transform:translateY(-1px);
+        }
+        .stock-alert-trigger:focus-visible{
+            outline:3px solid rgba(9,75,45,.22);
+            outline-offset:3px;
+        }
+        .stock-alert-trigger.is-active{
+            border-color:#094B2D;
+            box-shadow:0 0 0 3px rgba(9,75,45,.12);
+        }
+        .stock-alert-trigger .stock-alert-trigger-hint{
+            display:block;
+            margin-top:4px;
+            font-size:12px;
+            font-weight:600;
+            color:#667085;
+        }
+        #stockAlertsDetails[hidden]{
+            display:none !important;
+        }
+        .stock-alert-details-close{
+            border:1px solid #d0d5dd;
+            background:#fff;
+            color:#344054;
+            border-radius:10px;
+            padding:8px 12px;
+            font-weight:700;
+            cursor:pointer;
+        }
+        .stock-alert-details-close:hover{
+            background:#f8fafc;
+        }
+    </style>
+
 </head>
 
 
@@ -425,22 +466,52 @@
                 </div>
 
 
-                <div class="section">
+                <div class="section" id="dashboardStockAlertsSection">
 
-
-                    <h3>
-                        ⚠️ Alertes Stock
-                    </h3>
-
-
-                    <div id="alertList">
-
-                        <p class="empty">
-                            Aucune alerte stock pour le moment.
-                        </p>
-
+                    <div class="section-header" style="align-items:center;gap:12px;flex-wrap:wrap;">
+                        <div>
+                            <h3 style="margin:0;">Alertes Stock</h3>
+                            <p style="margin:5px 0 0;color:#667085;font-size:13px;">Cliquez sur une alerte pour afficher les articles.</p>
+                        </div>
                     </div>
 
+                    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px;">
+                        <button
+                            id="dashboardRuptureAlertBtn"
+                            type="button"
+                            aria-expanded="false"
+                            onclick="toggleDashboardStockAlertsPP('rupture')"
+                            style="display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:14px;border:1px solid #fecaca;border-radius:14px;background:#fff7f7;text-align:left;cursor:pointer;"
+                        >
+                            <span>
+                                <strong style="display:block;color:#991b1b;">Rupture</strong>
+                                <small style="color:#667085;">Cliquer pour afficher</small>
+                            </span>
+                            <strong id="dashboardRuptureCount" style="font-size:22px;color:#dc2626;">0</strong>
+                        </button>
+
+                        <button
+                            id="dashboardLowAlertBtn"
+                            type="button"
+                            aria-expanded="false"
+                            onclick="toggleDashboardStockAlertsPP('low')"
+                            style="display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:14px;border:1px solid #fde68a;border-radius:14px;background:#fffdf3;text-align:left;cursor:pointer;"
+                        >
+                            <span>
+                                <strong style="display:block;color:#92400e;">Stock faible</strong>
+                                <small style="color:#667085;">Cliquer pour afficher</small>
+                            </span>
+                            <strong id="dashboardLowCount" style="font-size:22px;color:#d97706;">0</strong>
+                        </button>
+                    </div>
+
+                    <div id="dashboardStockAlertsDetails" hidden style="margin-top:12px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;">
+                            <strong id="dashboardStockAlertsTitle"></strong>
+                            <button type="button" class="btn small" onclick="closeDashboardStockAlertsPP()">Fermer</button>
+                        </div>
+                        <div id="alertList"></div>
+                    </div>
 
                 </div>
 
@@ -642,7 +713,17 @@
                     </div>
 
 
-                    <div class="stat-card">
+                    <div
+                        id="stockRuptureCard"
+                        class="stat-card stock-alert-trigger"
+                        role="button"
+                        tabindex="0"
+                        aria-expanded="false"
+                        aria-controls="stockAlertsDetails"
+                        title="Afficher les articles en rupture"
+                        onclick="toggleStockAlertsPP('rupture')"
+                        onkeydown="ppStockAlertCardKeydownPP(event,'rupture')"
+                    >
 
                         <span>
                             En rupture
@@ -652,10 +733,24 @@
                             0
                         </strong>
 
+                        <small class="stock-alert-trigger-hint">
+                            Cliquer pour afficher
+                        </small>
+
                     </div>
 
 
-                    <div class="stat-card">
+                    <div
+                        id="stockLowCard"
+                        class="stat-card stock-alert-trigger"
+                        role="button"
+                        tabindex="0"
+                        aria-expanded="false"
+                        aria-controls="stockAlertsDetails"
+                        title="Afficher les articles en stock faible"
+                        onclick="toggleStockAlertsPP('low')"
+                        onkeydown="ppStockAlertCardKeydownPP(event,'low')"
+                    >
 
                         <span>
                             Stock faible
@@ -665,39 +760,43 @@
                             0
                         </strong>
 
+                        <small class="stock-alert-trigger-hint">
+                            Cliquer pour afficher
+                        </small>
+
                     </div>
 
 
                 </div>
 
 
-                <div class="section stock-alerts-section">
+                <div
+                    id="stockAlertsDetails"
+                    class="section stock-alerts-section"
+                    hidden
+                >
 
                     <div class="section-header stock-alerts-header">
 
                         <div>
 
-                            <h3>
-                                🚨 Articles à réapprovisionner
+                            <h3 id="stockAlertsTitle">
+                                Articles à réapprovisionner
                             </h3>
 
-                            <p>
-                                Ruptures de stock et articles sous le seuil minimum.
+                            <p id="stockAlertsSubtitle">
+                                Sélectionnez Rupture ou Stock faible pour afficher les articles.
                             </p>
 
                         </div>
 
-                        <div class="stock-alert-summary">
-
-                            <span class="stock-alert-summary-item danger">
-                                <strong id="stockRuptureSummary">0</strong> rupture(s)
-                            </span>
-
-                            <span class="stock-alert-summary-item warning">
-                                <strong id="stockLowSummary">0</strong> stock faible
-                            </span>
-
-                        </div>
+                        <button
+                            type="button"
+                            class="stock-alert-details-close"
+                            onclick="closeStockAlertsPP()"
+                        >
+                            Fermer
+                        </button>
 
                     </div>
 
@@ -1738,6 +1837,18 @@
             >
 
 
+            <label for="movementDate">
+                Date *
+            </label>
+
+
+            <input
+                type="date"
+                id="movementDate"
+                required
+            >
+
+
             <label>
                 Produit *
             </label>
@@ -2359,7 +2470,7 @@
 <script src="js/fiches-techniques-data.js"></script>
 
 <script
-    src="js/app.js?v=20260804-sales-quick-search-v1"
+    src="js/app.js?v=20260805-dashboard-stock-alerts-v2"
 ></script>
 
 <script 

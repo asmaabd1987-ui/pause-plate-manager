@@ -810,9 +810,9 @@ function openMovementModal(type, id = null){
     if(select) select.innerHTML='<option value="">Sélectionner un produit</option>'+products.map(p=>`<option value="${p.id}">${escapeHTML(p.name)} — ${formatNumber(p.stock)} ${escapeHTML(p.unit)}</option>`).join('');
     if(editingMovementId){
         const m=movements.find(x=>Number(x.id)===editingMovementId); if(!m) return;
-        setValue("movementType",m.type); setValue("movementProduct",m.productId); setValue("movementQuantity",m.quantity); setValue("movementReason",m.reason); setValue("movementNote",m.note||"");
+        setValue("movementType",m.type); setValue("movementDate",String(m.date||"").slice(0,10)); setValue("movementProduct",m.productId); setValue("movementQuantity",m.quantity); setValue("movementReason",m.reason); setValue("movementNote",m.note||"");
         setText("movementTitle","Modifier le mouvement");
-    } else { setValue("movementType",type); setText("movementTitle",type==="entry"?"➕ Entrée Stock":"➖ Sortie Stock"); }
+    } else { setValue("movementType",type); setValue("movementDate",""); setText("movementTitle",type==="entry"?"➕ Entrée Stock":"➖ Sortie Stock"); }
     openModal("movementModal");
 }
 
@@ -824,9 +824,16 @@ function saveMovement(){
     }
 
     const type = getValue("movementType");
+    const movementDate = getValue("movementDate");
     const productId = Number(getValue("movementProduct"));
     const quantity = parseNumber(getValue("movementQuantity"));
     const product = products.find(p=>Number(p.id)===productId);
+
+    if(!movementDate){
+        alert("Veuillez sélectionner la date du mouvement.");
+        document.getElementById("movementDate")?.focus();
+        return;
+    }
 
     if(!product){
         alert("Veuillez sélectionner un produit.");
@@ -879,7 +886,8 @@ function saveMovement(){
     const operationId = editId || createId();
     const record = {
         id: operationId,
-        date: oldMovement?.date || new Date().toISOString(),
+        // Noon avoids timezone shifts while keeping the user-selected calendar date.
+        date: movementDate + "T12:00:00",
         productId: product.id,
         productName: product.name,
         type,
@@ -7700,51 +7708,199 @@ function saveData(){
 
 
 
+let ppDashboardStockAlertFilterPP = "";
+
+function ppSyncDashboardStockAlertButtonsPP(){
+    const details=document.getElementById("dashboardStockAlertsDetails");
+    const isOpen=Boolean(details && !details.hidden);
+    const ruptureButton=document.getElementById("dashboardRuptureAlertBtn");
+    const lowButton=document.getElementById("dashboardLowAlertBtn");
+
+    [
+        [ruptureButton,"rupture","#fee2e2","#fecaca"],
+        [lowButton,"low","#fef3c7","#fde68a"]
+    ].forEach(([button,type,activeBackground,normalBorder])=>{
+        if(!button)return;
+        const active=isOpen && ppDashboardStockAlertFilterPP===type;
+        button.setAttribute("aria-expanded",active?"true":"false");
+        button.style.background=active?activeBackground:(type==="rupture"?"#fff7f7":"#fffdf3");
+        button.style.borderColor=active?(type==="rupture"?"#ef4444":"#f59e0b"):normalBorder;
+        button.style.boxShadow=active?"0 0 0 2px rgba(9,75,45,.08)":"none";
+    });
+}
+
+function toggleDashboardStockAlertsPP(type){
+    if(!["rupture","low"].includes(type))return;
+    const details=document.getElementById("dashboardStockAlertsDetails");
+    if(!details)return;
+
+    if(!details.hidden && ppDashboardStockAlertFilterPP===type){
+        closeDashboardStockAlertsPP();
+        return;
+    }
+
+    ppDashboardStockAlertFilterPP=type;
+    details.hidden=false;
+    renderStockAlertsPP();
+}
+
+function closeDashboardStockAlertsPP(){
+    ppDashboardStockAlertFilterPP="";
+    const details=document.getElementById("dashboardStockAlertsDetails");
+    const box=document.getElementById("alertList");
+    if(details)details.hidden=true;
+    if(box)box.innerHTML="";
+    ppSyncDashboardStockAlertButtonsPP();
+}
+
 function renderStockAlertsPP(){
     const box=document.getElementById("alertList");
-    if(!box)return;
-    const alerts=products.filter(p=>{
-        const stock=Number(p.stock||0);
-        const min=Number(p.minStock||0);
-        return stock<=0 || (min>0 && stock<=min);
-    }).sort((a,b)=>Number(a.stock||0)-Number(b.stock||0));
+    const details=document.getElementById("dashboardStockAlertsDetails");
+    const title=document.getElementById("dashboardStockAlertsTitle");
+
+    const ruptureProducts=products
+        .filter(p=>Number(p.stock||0)<=0)
+        .sort((a,b)=>Number(a.stock||0)-Number(b.stock||0));
+
+    const lowProducts=products
+        .filter(p=>{
+            const stock=Number(p.stock||0);
+            const min=Number(p.minStock||0);
+            return stock>0 && min>0 && stock<=min;
+        })
+        .sort((a,b)=>{
+            const aRatio=Number(a.minStock||0)>0?Number(a.stock||0)/Number(a.minStock||0):1;
+            const bRatio=Number(b.minStock||0)>0?Number(b.stock||0)/Number(b.minStock||0):1;
+            return aRatio-bRatio || Number(a.stock||0)-Number(b.stock||0);
+        });
+
+    setText("dashboardRuptureCount",ruptureProducts.length);
+    setText("dashboardLowCount",lowProducts.length);
+
+    if(!box || !details)return;
+
+    if(!ppDashboardStockAlertFilterPP){
+        details.hidden=true;
+        box.innerHTML="";
+        ppSyncDashboardStockAlertButtonsPP();
+        return;
+    }
+
+    const showRupture=ppDashboardStockAlertFilterPP==="rupture";
+    const alerts=showRupture?ruptureProducts:lowProducts;
+    if(title)title.textContent=showRupture
+        ?`Articles en rupture (${ruptureProducts.length})`
+        :`Articles en stock faible (${lowProducts.length})`;
 
     if(!alerts.length){
-        box.innerHTML='<p class="empty">Aucune alerte stock pour le moment.</p>';
+        box.innerHTML=`<p class="empty">${showRupture?'Aucune rupture de stock pour le moment.':'Aucun article en stock faible pour le moment.'}</p>`;
+        ppSyncDashboardStockAlertButtonsPP();
         return;
     }
 
     box.innerHTML=alerts.map(p=>{
         const rupture=Number(p.stock||0)<=0;
-        return `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;margin:8px 0;border:1px solid #e5e7eb;border-radius:12px">
-          <div><strong>${rupture?'🔴':'⚠️'} ${escapeHTML(p.name)}</strong>
-          <div style="font-size:13px;color:#667085">Stock: ${formatNumber(p.stock)} ${escapeHTML(p.unit||'')} — Minimum: ${formatNumber(p.minStock)} ${escapeHTML(p.unit||'')}</div></div>
+        return `<button type="button" onclick="viewProduct(${Number(p.id)})" style="display:flex;justify-content:space-between;align-items:center;gap:12px;width:100%;padding:12px 14px;margin:8px 0;border:1px solid #e5e7eb;border-radius:12px;background:#fff;text-align:left;cursor:pointer;">
+          <span><strong>${rupture?'🔴':'⚠️'} ${escapeHTML(p.name)}</strong>
+          <span style="display:block;font-size:13px;color:#667085;margin-top:3px;">Stock: ${formatNumber(p.stock)} ${escapeHTML(p.unit||'')} — Minimum: ${formatNumber(p.minStock)} ${escapeHTML(p.unit||'')}</span></span>
           <span class="status ${rupture?'danger':'warning'}">${rupture?'Rupture':'Stock faible'}</span>
-        </div>`;
+        </button>`;
     }).join("");
+
+    ppSyncDashboardStockAlertButtonsPP();
+}
+
+let ppStockAlertFilterPP = "";
+
+function ppSyncStockAlertTriggersPP(){
+    const section=document.getElementById("stockAlertsDetails");
+    const open=Boolean(section && !section.hidden);
+    const ruptureCard=document.getElementById("stockRuptureCard");
+    const lowCard=document.getElementById("stockLowCard");
+
+    [
+        [ruptureCard,"rupture"],
+        [lowCard,"low"]
+    ].forEach(([card,type])=>{
+        if(!card)return;
+        const active=open && ppStockAlertFilterPP===type;
+        card.classList.toggle("is-active",active);
+        card.setAttribute("aria-expanded",active?"true":"false");
+    });
+}
+
+function ppStockAlertCardKeydownPP(event,type){
+    if(!event || !["Enter"," "].includes(event.key))return;
+    event.preventDefault();
+    toggleStockAlertsPP(type);
+}
+
+function toggleStockAlertsPP(type){
+    const section=document.getElementById("stockAlertsDetails");
+    if(!section || !["rupture","low"].includes(type))return;
+
+    if(!section.hidden && ppStockAlertFilterPP===type){
+        closeStockAlertsPP();
+        return;
+    }
+
+    ppStockAlertFilterPP=type;
+    section.hidden=false;
+    renderStockPageAlertsPP();
+}
+
+function closeStockAlertsPP(){
+    ppStockAlertFilterPP="";
+    const section=document.getElementById("stockAlertsDetails");
+    if(section)section.hidden=true;
+    const box=document.getElementById("stockPageAlerts");
+    if(box)box.innerHTML="";
+    ppSyncStockAlertTriggersPP();
 }
 
 function renderStockPageAlertsPP(){
     const box=document.getElementById("stockPageAlerts");
-    if(!box)return;
+    const section=document.getElementById("stockAlertsDetails");
+    if(!box || !section)return;
 
-    const ruptureProducts=products.filter(p=>Number(p.stock||0)<=0);
-    const lowProducts=products.filter(p=>{
-        const stock=Number(p.stock||0);
-        const min=Number(p.minStock||0);
-        return stock>0 && min>0 && stock<=min;
-    });
-    const alerts=[...ruptureProducts,...lowProducts].sort((a,b)=>{
-        const aRupture=Number(a.stock||0)<=0 ? 0 : 1;
-        const bRupture=Number(b.stock||0)<=0 ? 0 : 1;
-        return aRupture-bRupture || Number(a.stock||0)-Number(b.stock||0);
-    });
+    const ruptureProducts=products
+        .filter(p=>Number(p.stock||0)<=0)
+        .sort((a,b)=>Number(a.stock||0)-Number(b.stock||0));
+    const lowProducts=products
+        .filter(p=>{
+            const stock=Number(p.stock||0);
+            const min=Number(p.minStock||0);
+            return stock>0 && min>0 && stock<=min;
+        })
+        .sort((a,b)=>{
+            const aRatio=Number(a.minStock||0)>0?Number(a.stock||0)/Number(a.minStock||0):1;
+            const bRatio=Number(b.minStock||0)>0?Number(b.stock||0)/Number(b.minStock||0):1;
+            return aRatio-bRatio || Number(a.stock||0)-Number(b.stock||0);
+        });
 
     setText("stockRuptureSummary",ruptureProducts.length);
     setText("stockLowSummary",lowProducts.length);
 
+    if(!ppStockAlertFilterPP){
+        section.hidden=true;
+        box.innerHTML="";
+        ppSyncStockAlertTriggersPP();
+        return;
+    }
+
+    const showRupture=ppStockAlertFilterPP==="rupture";
+    const alerts=showRupture?ruptureProducts:lowProducts;
+    setText("stockAlertsTitle",showRupture?"Articles en rupture":"Articles en stock faible");
+    setText(
+        "stockAlertsSubtitle",
+        showRupture
+            ?`${ruptureProducts.length} article(s) avec un stock nul ou négatif.`
+            :`${lowProducts.length} article(s) sous le seuil minimum.`
+    );
+
     if(!alerts.length){
-        box.innerHTML='<div class="stock-alert-empty"><span>✅</span><div><strong>Stock sous contrôle</strong><p>Aucun article en rupture ou sous le seuil minimum.</p></div></div>';
+        box.innerHTML=`<div class="stock-alert-empty"><span>✅</span><div><strong>Aucun article</strong><p>${showRupture?'Aucune rupture de stock pour le moment.':'Aucun article en stock faible pour le moment.'}</p></div></div>`;
+        ppSyncStockAlertTriggersPP();
         return;
     }
 
@@ -7762,6 +7918,8 @@ function renderStockPageAlertsPP(){
             <span class="stock-alert-open" aria-hidden="true">›</span>
         </button>`;
     }).join("");
+
+    ppSyncStockAlertTriggersPP();
 }
 function renderAll(){
     ensurePPExtraUI();
@@ -8056,8 +8214,8 @@ function openMovementModal(type,id=null){
     editingMovementId=id?Number(id):null;
     const form=document.getElementById("movementForm"); if(form)form.reset();
     const select=document.getElementById("movementProduct"); if(select)select.innerHTML='<option value="">Sélectionner un produit</option>'+products.map(p=>`<option value="${p.id}">${escapeHTML(p.name)} — ${formatNumber(p.stock)} ${escapeHTML(p.unit)}</option>`).join('');
-    if(editingMovementId){const m=movements.find(x=>Number(x.id)===editingMovementId);if(!m)return;setValue("movementType",m.type);setValue("movementProduct",m.productId);setValue("movementQuantity",m.quantity);setValue("movementReason",m.reason);setValue("movementNote",m.note||"");setText("movementTitle","Modifier le mouvement");}
-    else{setValue("movementType",type);setText("movementTitle",type==="entry"?"➕ Entrée Stock":"➖ Sortie Stock");}
+    if(editingMovementId){const m=movements.find(x=>Number(x.id)===editingMovementId);if(!m)return;setValue("movementType",m.type);setValue("movementDate",String(m.date||"").slice(0,10));setValue("movementProduct",m.productId);setValue("movementQuantity",m.quantity);setValue("movementReason",m.reason);setValue("movementNote",m.note||"");setText("movementTitle","Modifier le mouvement");}
+    else{setValue("movementType",type);setValue("movementDate","");setText("movementTitle",type==="entry"?"➕ Entrée Stock":"➖ Sortie Stock");}
     const q=document.getElementById("movementQuantity");if(q){q.step="0.000001";q.min="0.000001";}
     openModal("movementModal");
 }
@@ -14381,3 +14539,197 @@ function renderDailyScanReviewPP(){
     `;
     const save=document.getElementById('ppDailyScanSaveBtn');if(save)save.disabled=false;
 }
+
+
+/* =========================================================
+   CLIENTS — RECHERCHE RAPIDE DANS FACTURE / ENCAISSEMENT
+   Ajout ciblé : les selects d'origine restent la source de vérité.
+========================================================= */
+
+function ppClientQuickSearchTextPP(value){
+    return normalizeText(String(value||''));
+}
+
+function ppUpgradeClientInvoiceSearchPP(){
+    ppEnsureSalesQuickSearchStylesPP();
+    const select=document.getElementById('ppClientInvoiceClient');
+    if(!select)return;
+    let wrap=select.closest('.pp-client-invoice-search-wrap');
+    let input;
+    if(!wrap){
+        wrap=document.createElement('div');
+        wrap.className='pp-sales-search-wrap pp-client-invoice-search-wrap';
+        input=document.createElement('input');
+        input.type='text';
+        input.className='pp-sales-search-input pp-client-invoice-search';
+        input.autocomplete='off';
+        input.placeholder='Rechercher un client…';
+        const menu=document.createElement('div');
+        menu.className='pp-sales-search-menu';
+        select.parentNode.insertBefore(wrap,select);
+        wrap.appendChild(input);
+        wrap.appendChild(select);
+        wrap.appendChild(menu);
+        select.classList.add('pp-sales-search-native');
+        select.required=false;
+        input.required=true;
+        input.addEventListener('focus',()=>ppOpenSalesSearchPP(input));
+        input.addEventListener('input',()=>ppClientInvoiceTypingPP(input));
+        input.addEventListener('keydown',event=>ppSalesSearchKeydownPP(event));
+    }else{
+        input=wrap.querySelector('.pp-client-invoice-search');
+    }
+    const client=clientsPP.find(item=>Number(item.id)===Number(select.value));
+    if(input){
+        input.value=client?.name||'';
+        input.dataset.selectedId=client?.id||'';
+    }
+}
+
+function ppRenderClientInvoiceSuggestionsPP(input){
+    const wrap=input.closest('.pp-sales-search-wrap');
+    const menu=wrap?.querySelector('.pp-sales-search-menu');
+    if(!menu)return;
+    const q=ppClientQuickSearchTextPP(input.value);
+    const list=clientsPP.slice()
+        .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'fr'))
+        .filter(client=>!q||ppClientQuickSearchTextPP([
+            client.name,client.phone,client.email,client.ice,client.address
+        ].join(' ')).includes(q))
+        .slice(0,100);
+    menu.innerHTML=list.length?list.map(client=>`
+      <button type="button" class="pp-sales-search-option" data-value="${client.id}" onclick="ppChooseClientInvoicePP(this)">
+        <strong>${escapeHTML(client.name||'Client sans nom')}</strong>
+        <small>${escapeHTML([client.phone,client.ice?`ICE ${client.ice}`:''].filter(Boolean).join(' · ')||'Client')}</small>
+      </button>`).join(''):'<div class="pp-sales-search-empty">Aucun client trouvé.</div>';
+    menu.classList.add('is-open');
+}
+
+function ppChooseClientInvoicePP(button){
+    const wrap=button.closest('.pp-sales-search-wrap');
+    const select=wrap?.querySelector('#ppClientInvoiceClient');
+    const input=wrap?.querySelector('.pp-client-invoice-search');
+    const client=clientsPP.find(item=>Number(item.id)===Number(button.dataset.value));
+    if(!select||!input||!client)return;
+    select.value=String(client.id);
+    input.value=client.name;
+    input.dataset.selectedId=String(client.id);
+    wrap.querySelector('.pp-sales-search-menu')?.classList.remove('is-open');
+}
+
+function ppClientInvoiceTypingPP(input){
+    input.dataset.selectedId='';
+    const select=input.closest('.pp-sales-search-wrap')?.querySelector('#ppClientInvoiceClient');
+    if(select)select.value='';
+    ppRenderClientInvoiceSuggestionsPP(input);
+}
+
+function ppUpgradeClientPaymentInvoiceSearchPP(){
+    ppEnsureSalesQuickSearchStylesPP();
+    const select=document.getElementById('ppClientPaymentInvoice');
+    if(!select)return;
+    let wrap=select.closest('.pp-client-payment-invoice-search-wrap');
+    let input;
+    if(!wrap){
+        wrap=document.createElement('div');
+        wrap.className='pp-sales-search-wrap pp-client-payment-invoice-search-wrap';
+        input=document.createElement('input');
+        input.type='text';
+        input.className='pp-sales-search-input pp-client-payment-invoice-search';
+        input.autocomplete='off';
+        input.placeholder='Rechercher une facture…';
+        const menu=document.createElement('div');
+        menu.className='pp-sales-search-menu';
+        select.parentNode.insertBefore(wrap,select);
+        wrap.appendChild(input);
+        wrap.appendChild(select);
+        wrap.appendChild(menu);
+        select.classList.add('pp-sales-search-native');
+        input.addEventListener('focus',()=>ppOpenSalesSearchPP(input));
+        input.addEventListener('input',()=>ppClientPaymentInvoiceTypingPP(input));
+        input.addEventListener('keydown',event=>ppSalesSearchKeydownPP(event));
+    }else{
+        input=wrap.querySelector('.pp-client-payment-invoice-search');
+    }
+    const option=select.options[select.selectedIndex];
+    if(input){
+        input.value=option?.textContent?.trim()||'Affectation automatique — plus anciennes factures';
+        input.dataset.selectedId=select.value||'';
+    }
+}
+
+function ppRenderClientPaymentInvoiceSuggestionsPP(input){
+    const wrap=input.closest('.pp-sales-search-wrap');
+    const select=wrap?.querySelector('#ppClientPaymentInvoice');
+    const menu=wrap?.querySelector('.pp-sales-search-menu');
+    if(!select||!menu)return;
+    const q=ppClientQuickSearchTextPP(input.value);
+    const options=[...select.options].map(option=>({
+        value:String(option.value||''),
+        label:String(option.textContent||'').trim()
+    })).filter(option=>!q||ppClientQuickSearchTextPP(option.label).includes(q));
+    menu.innerHTML=options.length?options.map(option=>`
+      <button type="button" class="pp-sales-search-option" data-value="${escapeHTML(option.value)}" onclick="ppChooseClientPaymentInvoicePP(this)">
+        <strong>${escapeHTML(option.label)}</strong>
+        <small>${option.value?'Facture client':'Affectation automatique'}</small>
+      </button>`).join(''):'<div class="pp-sales-search-empty">Aucune facture trouvée.</div>';
+    menu.classList.add('is-open');
+}
+
+function ppChooseClientPaymentInvoicePP(button){
+    const wrap=button.closest('.pp-sales-search-wrap');
+    const select=wrap?.querySelector('#ppClientPaymentInvoice');
+    const input=wrap?.querySelector('.pp-client-payment-invoice-search');
+    if(!select||!input)return;
+    const value=String(button.dataset.value||'');
+    select.value=value;
+    const option=[...select.options].find(item=>String(item.value)===value);
+    input.value=option?.textContent?.trim()||'Affectation automatique — plus anciennes factures';
+    input.dataset.selectedId=value;
+    wrap.querySelector('.pp-sales-search-menu')?.classList.remove('is-open');
+}
+
+function ppClientPaymentInvoiceTypingPP(input){
+    const select=input.closest('.pp-sales-search-wrap')?.querySelector('#ppClientPaymentInvoice');
+    if(select)select.value='';
+    input.dataset.selectedId='';
+    ppRenderClientPaymentInvoiceSuggestionsPP(input);
+}
+
+const ppOpenSalesSearchBeforeClientsPP=ppOpenSalesSearchPP;
+ppOpenSalesSearchPP=function(input){
+    if(input?.classList?.contains('pp-client-invoice-search')){
+        ppEnsureSalesQuickSearchStylesPP();
+        ppRenderClientInvoiceSuggestionsPP(input);
+        return;
+    }
+    if(input?.classList?.contains('pp-client-payment-invoice-search')){
+        ppEnsureSalesQuickSearchStylesPP();
+        ppRenderClientPaymentInvoiceSuggestionsPP(input);
+        return;
+    }
+    ppOpenSalesSearchBeforeClientsPP(input);
+};
+
+const ppOpenClientInvoiceBeforeSearchPP=openClientInvoicePP;
+openClientInvoicePP=function(id=null){
+    ppOpenClientInvoiceBeforeSearchPP(id);
+    ppUpgradeClientInvoiceSearchPP();
+};
+
+const ppSaveClientInvoiceBeforeSearchPP=saveClientInvoicePP;
+saveClientInvoicePP=function(){
+    const selected=Number(getValue('ppClientInvoiceClient'))||0;
+    if(!selected){
+        alert('Veuillez sélectionner un client dans la liste.');
+        document.querySelector('.pp-client-invoice-search')?.focus();
+        return;
+    }
+    ppSaveClientInvoiceBeforeSearchPP();
+};
+
+const ppOpenClientPaymentBeforeSearchPP=openClientPaymentPP;
+openClientPaymentPP=function(id,paymentId=null){
+    ppOpenClientPaymentBeforeSearchPP(id,paymentId);
+    ppUpgradeClientPaymentInvoiceSearchPP();
+};
