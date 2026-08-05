@@ -6798,7 +6798,7 @@ function cleanSupplierName(value){
 
 
 function detailRowsHTML(rows, allowHtml=false){return `<div class="details-grid">${rows.map(([k,v])=>`<div class="details-label">${escapeHTML(k)}</div><div class="details-value">${allowHtml?String(v):escapeHTML(String(v??''))}</div>`).join('')}</div>`;}
-function showDetailsModal(title,rows,onPrint=null,allowHtml=false){let modal=document.getElementById('detailsModal');if(!modal){modal=document.createElement('div');modal.id='detailsModal';modal.className='modal-overlay';modal.innerHTML='<div class="modal details-modal"><div class="modal-header"><h2 id="detailsModalTitle"></h2><button type="button" onclick="closeModal(\'detailsModal\')">×</button></div><div id="detailsModalBody"></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal(\'detailsModal\')">Fermer</button><button type="button" class="btn print" id="detailsPrintBtn">🖨️ Imprimer</button></div></div>';document.body.appendChild(modal);}document.getElementById('detailsModalTitle').textContent=title;document.getElementById('detailsModalBody').innerHTML=detailRowsHTML(rows,allowHtml);const btn=document.getElementById('detailsPrintBtn');btn.style.display=onPrint?'inline-block':'none';btn.onclick=onPrint||null;openModal('detailsModal');}
+function showDetailsModal(title,rows,onPrint=null,allowHtml=false,options={}){let modal=document.getElementById('detailsModal');if(!modal){modal=document.createElement('div');modal.id='detailsModal';modal.className='modal-overlay';modal.innerHTML='<div class="modal details-modal"><div class="modal-header"><h2 id="detailsModalTitle"></h2><button type="button" onclick="closeModal(\'detailsModal\')">×</button></div><div id="detailsModalBody"></div><div class="modal-actions"><button type="button" class="btn" onclick="closeModal(\'detailsModal\')">Fermer</button><button type="button" class="btn print" id="detailsPrintBtn">🖨️ Imprimer</button></div></div>';document.body.appendChild(modal);}const panel=modal.querySelector('.details-modal'),body=document.getElementById('detailsModalBody');document.getElementById('detailsModalTitle').textContent=title;body.innerHTML=typeof rows==='string'?rows:detailRowsHTML(rows,allowHtml);panel.style.maxWidth=options.maxWidth||'';body.style.maxHeight=options.maxHeight||'';body.style.overflow=options.maxHeight?'auto':'';const btn=document.getElementById('detailsPrintBtn');btn.style.display=onPrint?'inline-block':'none';btn.onclick=onPrint||null;openModal('detailsModal');}
 function ppPrintableDocumentHTML(title,bodyHtml){
     return `<!doctype html>
 <html lang="fr">
@@ -10297,8 +10297,10 @@ function openRecipePP(id=null){ensureRecipeModalPP();const r=id?recipesPP.find(x
 function saveRecipePP(){const id=Number(getValue('ppRecipeId'))||null,name=getValue('ppRecipeName').trim(),ingredients=currentRecipeIngredientsPP();if(!name){alert('Saisissez le nom du plat.');return;}if(!ingredients.length){alert('Ajoutez au moins un ingrédient.');return;}const old=id?recipesPP.find(x=>Number(x.id)===id):null,obj={id:id||createId(),name,category:getValue('ppRecipeCategory'),salePrice:Number(getValue('ppRecipeSalePrice')||0),portions:Number(getValue('ppRecipePortions')||1),notes:getValue('ppRecipeNotes').trim(),ingredients,createdAt:old?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};if(id){const n=recipesPP.findIndex(x=>Number(x.id)===id);if(n>=0)recipesPP[n]=obj;}else recipesPP.unshift(obj);saveData();closeModal('ppRecipeModal');renderRecipesPP();}
 function deleteRecipePP(id){if(!confirm('Supprimer cette fiche technique ?'))return;recipesPP=recipesPP.filter(r=>Number(r.id)!==Number(id));saveData();renderRecipesPP();}
 function duplicateRecipePP(id){const r=recipesPP.find(x=>Number(x.id)===Number(id));if(!r)return;recipesPP.unshift({...JSON.parse(JSON.stringify(r)),id:createId(),name:r.name+' - Copie',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});saveData();renderRecipesPP();}
-function recipeDetailsHTMLPP(r){const t=recipeTotalsPP(r),body=(r.ingredients||[]).map(i=>{const p=products.find(x=>Number(x.id)===Number(i.productId)),price=Number(p?.price||i.unitPrice||0);return `<tr><td>${escapeHTML(p?.name||'Article supprimé')}</td><td>${formatNumber(i.quantity)} ${escapeHTML(p?.unit||i.unit||'')}</td><td>${formatMoney(price)}</td><td>${formatMoney(Number(i.quantity||0)*price)}</td></tr>`;}).join('');return `${detailRowsHTML([['Plat',r.name],['Catégorie',r.category||'-'],['Portions',r.portions||1],['Prix de vente',formatMoney(t.sale)],['Coût matière',formatMoney(t.cost)],['Food cost',formatNumber(t.pct)+'%'],['Marge brute',formatMoney(t.margin)],['Prix conseillé (30%)',formatMoney(t.recommended)]])}<h3>Ingrédients</h3><table><thead><tr><th>Article</th><th>Quantité</th><th>Prix moyen</th><th>Coût</th></tr></thead><tbody>${body}</tbody></table>${r.notes?`<h3>Préparation / Notes</h3><p>${escapeHTML(r.notes).replace(/\n/g,'<br>')}</p>`:''}`;}
-function viewRecipePP(id){const r=recipesPP.find(x=>Number(x.id)===Number(id));if(!r)return;showDetailsModal('Fiche technique - '+r.name,[['Nom',r.name],['Catégorie',r.category],['Prix de vente',formatMoney(r.salePrice)],['Coût matière',formatMoney(recipeTotalsPP(r).cost)],['Food cost',formatNumber(recipeTotalsPP(r).pct)+'%'],['Marge brute',formatMoney(recipeTotalsPP(r).margin)],['Ingrédients',(r.ingredients||[]).length]],()=>printRecipePP(id));}
+function ppRecipePreparationTextPP(r){return String(r?.notes||r?.preparation||r?.instructions||r?.method||'').trim();}
+function ppRecipeIngredientDetailsPP(i){const p=(Array.isArray(products)?products:[]).find(x=>Number(x.id)===Number(i?.productId));const sourceQuantity=Number(i?.sourceQuantity),hasSourceQuantity=Number.isFinite(sourceQuantity)&&String(i?.sourceUnit||'').trim()!=='';const quantity=hasSourceQuantity?sourceQuantity:Number(i?.quantity||0);const unit=hasSourceQuantity?String(i.sourceUnit||''):String(p?.unit||i?.unit||'');const price=Number(p?.price??i?.unitPrice??0);const cost=Number(i?.quantity||0)*price;return {name:String(p?.name||i?.name||i?.designation||'Article supprimé'),quantity,unit,price,cost};}
+function recipeDetailsHTMLPP(r){const t=recipeTotalsPP(r),ingredients=Array.isArray(r?.ingredients)?r.ingredients:[],preparation=ppRecipePreparationTextPP(r);const body=ingredients.map(item=>{const i=ppRecipeIngredientDetailsPP(item);return `<tr><td><strong>${escapeHTML(i.name)}</strong></td><td>${formatNumber(i.quantity)} ${escapeHTML(i.unit)}</td><td>${formatMoney(i.price)}</td><td>${formatMoney(i.cost)}</td></tr>`;}).join('')||'<tr><td colspan="4" class="empty">Aucun ingrédient.</td></tr>';return `<div class="pp-recipe-details">${detailRowsHTML([['Nom',r.name],['Catégorie',r.category||'-'],['Portions',r.portions||1],['Prix de vente',formatMoney(t.sale)],['Coût matière',formatMoney(t.cost)],['Food cost',formatNumber(t.pct)+'%'],['Marge brute',formatMoney(t.margin)],['Prix conseillé (30%)',formatMoney(t.recommended)]])}<h3 style="margin:22px 0 8px">Ingrédients</h3><div style="overflow:auto"><table style="min-width:650px"><thead><tr><th>Article</th><th>Quantité</th><th>Prix moyen</th><th>Coût</th></tr></thead><tbody>${body}</tbody><tfoot><tr><th colspan="3" style="text-align:right">Coût matière total</th><th>${formatMoney(t.cost)}</th></tr></tfoot></table></div><h3 style="margin:22px 0 8px">Préparation</h3><div style="white-space:pre-wrap;line-height:1.65;border:1px solid #e5e7eb;border-radius:12px;padding:14px;background:#fff">${preparation?escapeHTML(preparation):'—'}</div></div>`;}
+function viewRecipePP(id){const r=recipesPP.find(x=>Number(x.id)===Number(id));if(!r)return;showDetailsModal('Fiche technique - '+r.name,recipeDetailsHTMLPP(r),()=>printRecipePP(id),true,{maxWidth:'1050px',maxHeight:'72vh'});}
 function printRecipePP(id){const r=recipesPP.find(x=>Number(x.id)===Number(id));if(!r)return;printDocument('Fiche technique - '+r.name,`<div class="doc-head"><h1>Pause & Plate</h1><p>Fiche technique</p></div>${recipeDetailsHTMLPP(r)}`);}
 
 
@@ -17538,3 +17540,688 @@ clientLedgerPP=function(id){
 
 // Refresh the Clients page after loading this version.
 try{ppRebuildClientSettlementStateV8();if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{renderClientsPP();});else renderClientsPP();}catch(error){console.warn('Factures clients v9:',error);}
+
+/* =========================================================
+   INVENTAIRE PHYSIQUE — 2026-08-05
+========================================================= */
+
+const PP_INVENTORY_STORAGE_KEY = "pause_plate_inventories";
+let inventoriesPP = loadStorage(PP_INVENTORY_STORAGE_KEY, []);
+let ppActiveInventoryIdPP = null;
+let ppInventoryListStatusPP = "";
+let ppInventoryListSearchPP = "";
+let ppInventoryListFromPP = "";
+let ppInventoryListToPP = "";
+let ppInventoryListPagePP = 1;
+let ppInventoryDetailSearchPP = "";
+let ppInventoryDetailCategoryPP = "";
+let ppInventoryDetailDifferencePP = "";
+let ppInventoryDetailPagePP = 1;
+const PP_INVENTORY_PAGE_SIZE = 15;
+
+function ppInventoryNumberPP(value){
+    const number=Number(value);
+    return Number.isFinite(number)?number:0;
+}
+
+function ppInventoryRoundPP(value){
+    return Math.round((ppInventoryNumberPP(value)+Number.EPSILON)*1000000)/1000000;
+}
+
+function ppNormalizeInventoryRowPP(row={}){
+    const counted=row.countedQty===null||row.countedQty===undefined||row.countedQty===""
+        ? null
+        : ppInventoryNumberPP(row.countedQty);
+    return {
+        id:row.id??createId(),
+        productId:row.productId??null,
+        productName:String(row.productName||row.name||""),
+        category:String(row.category||"Autre"),
+        unit:String(row.unit||"pièce"),
+        theoreticalQty:ppInventoryNumberPP(row.theoreticalQty),
+        countedQty:counted,
+        price:ppInventoryNumberPP(row.price),
+        updatedAt:row.updatedAt||null
+    };
+}
+
+function ppNormalizeInventoryPP(item={}){
+    return {
+        id:item.id??createId(),
+        reference:String(item.reference||""),
+        date:String(item.date||"").slice(0,10),
+        status:item.status==="validated"?"validated":"draft",
+        rows:(Array.isArray(item.rows)?item.rows:[]).map(ppNormalizeInventoryRowPP),
+        adjustments:Array.isArray(item.adjustments)?item.adjustments.map(adjustment=>({
+            movementId:adjustment.movementId??null,
+            productId:adjustment.productId??null,
+            type:adjustment.type==="exit"?"exit":"entry",
+            quantity:ppInventoryNumberPP(adjustment.quantity)
+        })):[],
+        createdAt:item.createdAt||new Date().toISOString(),
+        updatedAt:item.updatedAt||item.createdAt||new Date().toISOString(),
+        validatedAt:item.validatedAt||null,
+        devalidatedAt:item.devalidatedAt||null,
+        createdBy:item.createdBy||null,
+        validatedBy:item.validatedBy||null
+    };
+}
+
+inventoriesPP=Array.isArray(inventoriesPP)?inventoriesPP.map(ppNormalizeInventoryPP):[];
+
+function ppInventoryCurrentUserPP(){
+    return {
+        uid:String(ppCurrentUser?.uid||""),
+        name:String(ppCurrentUserProfile?.name||ppCurrentUserProfile?.username||"Utilisateur")
+    };
+}
+
+function ppInventoryNextReferencePP(date){
+    const compact=String(date||ppTodayISOPP()).replace(/-/g,"");
+    const same=inventoriesPP.filter(item=>String(item.reference||"").startsWith(`INV-${compact}-`));
+    let max=0;
+    same.forEach(item=>{
+        const match=String(item.reference||"").match(/-(\d+)$/);
+        if(match)max=Math.max(max,Number(match[1])||0);
+    });
+    return `INV-${compact}-${String(max+1).padStart(3,"0")}`;
+}
+
+function ppInventoryRowDifferencePP(row){
+    if(row.countedQty===null)return null;
+    return ppInventoryRoundPP(ppInventoryNumberPP(row.countedQty)-ppInventoryNumberPP(row.theoreticalQty));
+}
+
+function ppInventoryRowValueDifferencePP(row){
+    const difference=ppInventoryRowDifferencePP(row);
+    return difference===null?null:ppInventoryRoundPP(difference*ppInventoryNumberPP(row.price));
+}
+
+function ppInventorySummaryPP(inventory){
+    const rows=Array.isArray(inventory?.rows)?inventory.rows:[];
+    let counted=0,differenceRows=0,netValue=0,absoluteValue=0;
+    rows.forEach(row=>{
+        if(row.countedQty!==null)counted++;
+        const difference=ppInventoryRowDifferencePP(row);
+        const value=ppInventoryRowValueDifferencePP(row);
+        if(difference!==null&&Math.abs(difference)>0.0000001)differenceRows++;
+        if(value!==null){netValue+=value;absoluteValue+=Math.abs(value);}
+    });
+    return {
+        articles:rows.length,
+        counted,
+        differenceRows,
+        netValue:ppInventoryRoundPP(netValue),
+        absoluteValue:ppInventoryRoundPP(absoluteValue)
+    };
+}
+
+function ppInventoryStatusBadgePP(status){
+    return status==="validated"
+        ? '<span class="status success">Validé</span>'
+        : '<span class="status warning">Brouillon</span>';
+}
+
+function ppInventorySignedNumberPP(value,unit=""){
+    const number=ppInventoryNumberPP(value);
+    const prefix=number>0?"+":"";
+    return `${prefix}${formatNumber(number)}${unit?` ${escapeHTML(unit)}`:""}`;
+}
+
+function ppInventorySignedMoneyPP(value){
+    const number=ppInventoryNumberPP(value);
+    const prefix=number>0?"+":"";
+    return `${prefix}${formatMoney(number)}`;
+}
+
+function ppEnsureInventoryStylePP(){
+    if(document.getElementById("ppInventoryStyle"))return;
+    const style=document.createElement("style");
+    style.id="ppInventoryStyle";
+    style.textContent=`
+      #inventoryPage .pp-inventory-card{cursor:pointer;transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease}
+      #inventoryPage .pp-inventory-card:hover{transform:translateY(-1px);border-color:#b8c9bf;box-shadow:0 8px 20px rgba(9,75,45,.06)}
+      #inventoryPage .pp-inventory-card.is-active{border-color:#094b2d;box-shadow:0 0 0 2px rgba(9,75,45,.08)}
+      #inventoryPage .pp-inventory-toolbar{display:grid;grid-template-columns:minmax(210px,1.6fr) minmax(150px,.8fr) minmax(150px,.8fr) minmax(160px,.8fr);gap:10px;align-items:end}
+      #inventoryPage .pp-inventory-detail-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+      #inventoryPage .pp-inventory-detail-fields{display:grid;grid-template-columns:minmax(190px,1fr) minmax(170px,.7fr);gap:10px;max-width:520px}
+      #inventoryPage .pp-inventory-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+      #inventoryPage .pp-inventory-counted{min-width:115px;width:100%;padding:8px 10px;border:1px solid #dce4df;border-radius:8px;text-align:right}
+      #inventoryPage .pp-inventory-counted:focus{outline:none;border-color:#094b2d;box-shadow:0 0 0 3px rgba(9,75,45,.10)}
+      #inventoryPage .pp-inventory-positive{color:#087443;font-weight:700}
+      #inventoryPage .pp-inventory-negative{color:#c73737;font-weight:700}
+      #inventoryPage .pp-inventory-zero{color:#667085}
+      #inventoryPage .pp-inventory-pagination{display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:14px}
+      #inventoryPage .pp-inventory-pagination button{min-width:36px;height:36px;border:1px solid #dce4df;border-radius:8px;background:#fff;cursor:pointer}
+      #inventoryPage .pp-inventory-pagination button.active{background:#094b2d;color:#fff;border-color:#094b2d}
+      #inventoryPage .pp-inventory-pagination button:disabled{opacity:.45;cursor:not-allowed}
+      @media(max-width:850px){
+        #inventoryPage .pp-inventory-toolbar{grid-template-columns:1fr 1fr}
+        #inventoryPage .pp-inventory-detail-fields{grid-template-columns:1fr}
+        #inventoryPage .pp-inventory-actions{justify-content:flex-start}
+      }
+      @media(max-width:560px){
+        #inventoryPage .pp-inventory-toolbar{grid-template-columns:1fr}
+        #inventoryPage .stats{grid-template-columns:1fr 1fr}
+      }
+    `;
+    document.head.appendChild(style);
+}
+
+function ppEnsureInventoryUI(){
+    ppEnsureInventoryStylePP();
+    if(!document.querySelector('[data-page="inventory"]')){
+        const stockNav=document.querySelector('.sidebar [data-page="stock"]');
+        if(stockNav){
+            const button=document.createElement("button");
+            button.type="button";
+            button.className="nav-item";
+            button.dataset.page="inventory";
+            button.innerHTML="📋 <span>Inventaire</span>";
+            stockNav.insertAdjacentElement("afterend",button);
+            button.addEventListener("click",()=>ppOpenInventoryPagePP(button));
+        }
+    }
+    if(!document.getElementById("inventoryPage")){
+        const content=document.querySelector("section.content");
+        if(content){
+            const page=document.createElement("div");
+            page.id="inventoryPage";
+            page.className="page";
+            page.innerHTML=`
+              <div class="page-actions">
+                <div><h2>📋 Inventaire</h2></div>
+                <div><button type="button" class="btn primary" onclick="ppOpenNewInventoryModalPP()">+ Nouvel inventaire</button></div>
+              </div>
+              <div class="stats" id="ppInventoryStats"></div>
+              <div class="section" id="ppInventoryDetail" hidden></div>
+              <div class="section">
+                <div class="pp-inventory-toolbar">
+                  <div><label>Recherche</label><input id="ppInventoryListSearch" placeholder="Référence, article…" oninput="ppSetInventoryListFilterPP('search',this.value)"></div>
+                  <div><label>Du</label><input id="ppInventoryListFrom" type="date" onchange="ppSetInventoryListFilterPP('from',this.value)"></div>
+                  <div><label>Au</label><input id="ppInventoryListTo" type="date" onchange="ppSetInventoryListFilterPP('to',this.value)"></div>
+                  <div><label>Statut</label><select id="ppInventoryListStatus" onchange="ppSetInventoryListFilterPP('status',this.value)"><option value="">Tous</option><option value="draft">Brouillons</option><option value="validated">Validés</option><option value="difference">Avec écart</option></select></div>
+                </div>
+                <div class="table-wrapper" style="margin-top:14px">
+                  <table style="min-width:1050px"><thead><tr><th>Date</th><th>Référence</th><th>Articles</th><th>Comptés</th><th>Lignes en écart</th><th>Écart net</th><th>Statut</th><th>Actions</th></tr></thead><tbody id="ppInventoryHistoryTable"></tbody></table>
+                </div>
+                <div id="ppInventoryListPagination" class="pp-inventory-pagination"></div>
+              </div>`;
+            content.appendChild(page);
+        }
+    }
+    if(!document.getElementById("ppInventoryCreateModal")){
+        document.body.insertAdjacentHTML("beforeend",`
+          <div id="ppInventoryCreateModal" class="modal-overlay">
+            <div class="modal" style="max-width:600px">
+              <div class="modal-header"><h2>Nouvel inventaire</h2><button type="button" onclick="closeModal('ppInventoryCreateModal')">×</button></div>
+              <form id="ppInventoryCreateForm" onsubmit="event.preventDefault();ppCreateInventoryPP()">
+                <div class="form-grid">
+                  <div><label>Date</label><input id="ppInventoryCreateDate" type="date" required onchange="ppInventoryRefreshReferencePP()"></div>
+                  <div><label>Référence</label><input id="ppInventoryCreateReference" required></div>
+                </div>
+                <div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppInventoryCreateModal')">Annuler</button><button type="submit" class="btn primary">Créer</button></div>
+              </form>
+            </div>
+          </div>`);
+    }
+}
+
+function ppOpenInventoryPagePP(button){
+    document.querySelectorAll(".nav-item").forEach(item=>item.classList.remove("active"));
+    if(button)button.classList.add("active");
+    document.querySelectorAll(".page").forEach(page=>page.classList.remove("active-page"));
+    document.getElementById("inventoryPage")?.classList.add("active-page");
+    setText("pageTitle","Inventaire");
+    setText("pageSubtitle","");
+    ppRenderInventoryPagePP();
+}
+
+function ppInventoryRefreshReferencePP(){
+    const date=getValue("ppInventoryCreateDate")||ppTodayISOPP();
+    setValue("ppInventoryCreateReference",ppInventoryNextReferencePP(date));
+}
+
+function ppOpenNewInventoryModalPP(){
+    if(!products.length){alert("Aucun article enregistré.");return;}
+    setValue("ppInventoryCreateDate",ppTodayISOPP());
+    ppInventoryRefreshReferencePP();
+    openModal("ppInventoryCreateModal");
+}
+
+function ppCreateInventoryPP(){
+    const date=getValue("ppInventoryCreateDate");
+    const reference=getValue("ppInventoryCreateReference").trim();
+    if(!date){alert("Sélectionnez la date.");return;}
+    if(!reference){alert("Saisissez la référence.");return;}
+    if(inventoriesPP.some(item=>normalizeText(item.reference)===normalizeText(reference))){alert("Cette référence existe déjà.");return;}
+    const inventory=ppNormalizeInventoryPP({
+        id:createId(),reference,date,status:"draft",
+        rows:products.slice().sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""),"fr")).map(product=>({
+            id:createId(),productId:product.id,productName:product.name,category:product.category,unit:product.unit,
+            theoreticalQty:ppInventoryNumberPP(product.stock),countedQty:null,price:ppInventoryNumberPP(product.price)
+        })),
+        createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),createdBy:ppInventoryCurrentUserPP()
+    });
+    inventoriesPP.unshift(inventory);
+    ppActiveInventoryIdPP=inventory.id;
+    ppInventoryDetailPagePP=1;
+    saveData();
+    closeModal("ppInventoryCreateModal");
+    ppRenderInventoryPagePP();
+}
+
+function ppSetInventoryListFilterPP(key,value){
+    if(key==="search")ppInventoryListSearchPP=String(value||"");
+    if(key==="from")ppInventoryListFromPP=String(value||"");
+    if(key==="to")ppInventoryListToPP=String(value||"");
+    if(key==="status")ppInventoryListStatusPP=String(value||"");
+    ppInventoryListPagePP=1;
+    ppRenderInventoryPagePP();
+}
+
+function ppInventoryCardFilterPP(status){
+    ppInventoryListStatusPP=status||"";
+    ppInventoryListPagePP=1;
+    const select=document.getElementById("ppInventoryListStatus");
+    if(select)select.value=ppInventoryListStatusPP;
+    ppRenderInventoryPagePP();
+}
+
+function ppInventoryFilteredListPP(){
+    const search=normalizeText(ppInventoryListSearchPP);
+    return inventoriesPP.filter(item=>{
+        const summary=ppInventorySummaryPP(item);
+        if(ppInventoryListStatusPP==="draft"&&item.status!=="draft")return false;
+        if(ppInventoryListStatusPP==="validated"&&item.status!=="validated")return false;
+        if(ppInventoryListStatusPP==="difference"&&summary.differenceRows===0)return false;
+        if(ppInventoryListFromPP&&item.date<ppInventoryListFromPP)return false;
+        if(ppInventoryListToPP&&item.date>ppInventoryListToPP)return false;
+        if(search){
+            const text=normalizeText([item.reference,item.date,...item.rows.map(row=>`${row.productName} ${row.category}`)].join(" "));
+            if(!text.includes(search))return false;
+        }
+        return true;
+    }).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))||String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+}
+
+function ppInventoryPaginationHTMLPP(total,page,handlerName){
+    const pages=Math.max(1,Math.ceil(total/PP_INVENTORY_PAGE_SIZE));
+    const current=Math.min(Math.max(1,page),pages);
+    const start=Math.max(1,current-2),end=Math.min(pages,current+2);
+    let html=`<button type="button" ${current<=1?"disabled":""} onclick="${handlerName}(${current-1})">‹</button>`;
+    for(let index=start;index<=end;index++)html+=`<button type="button" class="${index===current?"active":""}" onclick="${handlerName}(${index})">${index}</button>`;
+    html+=`<button type="button" ${current>=pages?"disabled":""} onclick="${handlerName}(${current+1})">›</button>`;
+    return html;
+}
+
+function ppSetInventoryListPagePP(page){ppInventoryListPagePP=Number(page)||1;ppRenderInventoryPagePP();}
+function ppSetInventoryDetailPagePP(page){ppInventoryDetailPagePP=Number(page)||1;ppRenderInventoryDetailPP();}
+
+function ppRenderInventoryStatsPP(){
+    const box=document.getElementById("ppInventoryStats");if(!box)return;
+    const all=inventoriesPP.length;
+    const drafts=inventoriesPP.filter(item=>item.status==="draft").length;
+    const validated=inventoriesPP.filter(item=>item.status==="validated").length;
+    const differences=inventoriesPP.filter(item=>ppInventorySummaryPP(item).differenceRows>0).length;
+    const cards=[
+        ["","Dossiers",all],
+        ["draft","Brouillons",drafts],
+        ["validated","Validés",validated],
+        ["difference","Avec écart",differences]
+    ];
+    box.innerHTML=cards.map(([status,label,value])=>`<div class="stat-card pp-inventory-card ${ppInventoryListStatusPP===status?"is-active":""}" role="button" tabindex="0" onclick="ppInventoryCardFilterPP('${status}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();ppInventoryCardFilterPP('${status}')}" aria-pressed="${ppInventoryListStatusPP===status}"><span>${label}</span><strong>${value}</strong></div>`).join("");
+}
+
+function ppRenderInventoryHistoryPP(){
+    const table=document.getElementById("ppInventoryHistoryTable");if(!table)return;
+    const filtered=ppInventoryFilteredListPP();
+    const pages=Math.max(1,Math.ceil(filtered.length/PP_INVENTORY_PAGE_SIZE));
+    ppInventoryListPagePP=Math.min(Math.max(1,ppInventoryListPagePP),pages);
+    const start=(ppInventoryListPagePP-1)*PP_INVENTORY_PAGE_SIZE;
+    const rows=filtered.slice(start,start+PP_INVENTORY_PAGE_SIZE);
+    table.innerHTML=rows.map(item=>{
+        const summary=ppInventorySummaryPP(item);
+        const valueClass=summary.netValue>0?"pp-inventory-positive":summary.netValue<0?"pp-inventory-negative":"pp-inventory-zero";
+        const actions=item.status==="validated"
+            ? `<button class="btn small view" onclick="ppOpenInventoryPP(${JSON.stringify(item.id)})" title="Voir">👁️</button><button class="btn small print" onclick="ppPrintInventoryPP(${JSON.stringify(item.id)})" title="Imprimer">🖨️</button><button class="btn small" onclick="ppExportInventoryExcelPP(${JSON.stringify(item.id)})" title="Excel">📊</button><button class="btn small danger" onclick="ppDevalidateInventoryPP(${JSON.stringify(item.id)})">Dévalider</button>`
+            : `<button class="btn small edit" onclick="ppOpenInventoryPP(${JSON.stringify(item.id)})" title="Ouvrir">✏️</button><button class="btn small print" onclick="ppPrintInventoryPP(${JSON.stringify(item.id)})" title="Imprimer">🖨️</button><button class="btn small" onclick="ppExportInventoryExcelPP(${JSON.stringify(item.id)})" title="Excel">📊</button><button class="btn small danger" onclick="ppDeleteInventoryPP(${JSON.stringify(item.id)})" title="Supprimer">🗑️</button>`;
+        return `<tr><td>${formatDate(item.date)}</td><td><strong>${escapeHTML(item.reference)}</strong></td><td>${summary.articles}</td><td>${summary.counted}</td><td>${summary.differenceRows}</td><td class="${valueClass}">${ppInventorySignedMoneyPP(summary.netValue)}</td><td>${ppInventoryStatusBadgePP(item.status)}</td><td><div class="action-buttons">${actions}</div></td></tr>`;
+    }).join("")||'<tr><td colspan="8" class="empty">Aucun inventaire.</td></tr>';
+    const pagination=document.getElementById("ppInventoryListPagination");
+    if(pagination)pagination.innerHTML=filtered.length>PP_INVENTORY_PAGE_SIZE?ppInventoryPaginationHTMLPP(filtered.length,ppInventoryListPagePP,"ppSetInventoryListPagePP"):"";
+}
+
+function ppOpenInventoryPP(id){
+    const inventory=inventoriesPP.find(item=>String(item.id)===String(id));if(!inventory)return;
+    ppActiveInventoryIdPP=inventory.id;
+    ppInventoryDetailSearchPP="";
+    ppInventoryDetailCategoryPP="";
+    ppInventoryDetailDifferencePP="";
+    ppInventoryDetailPagePP=1;
+    ppRenderInventoryDetailPP();
+    document.getElementById("ppInventoryDetail")?.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+function ppCloseInventoryDetailPP(){
+    ppActiveInventoryIdPP=null;
+    const detail=document.getElementById("ppInventoryDetail");
+    if(detail){detail.hidden=true;detail.innerHTML="";}
+}
+
+function ppSetInventoryDetailFilterPP(key,value){
+    if(key==="search")ppInventoryDetailSearchPP=String(value||"");
+    if(key==="category")ppInventoryDetailCategoryPP=String(value||"");
+    if(key==="difference")ppInventoryDetailDifferencePP=String(value||"");
+    ppInventoryDetailPagePP=1;
+    ppRenderInventoryDetailPP();
+    if(key==="search"){
+        setTimeout(()=>{
+            const input=document.getElementById("ppInventoryDetailSearch");
+            if(input){input.focus();const end=input.value.length;try{input.setSelectionRange(end,end);}catch(_){}}
+        },0);
+    }
+}
+
+function ppInventoryFilteredRowsPP(inventory){
+    const search=normalizeText(ppInventoryDetailSearchPP);
+    return inventory.rows.filter(row=>{
+        if(search&&!normalizeText(`${row.productName} ${row.category} ${row.unit}`).includes(search))return false;
+        if(ppInventoryDetailCategoryPP&&row.category!==ppInventoryDetailCategoryPP)return false;
+        const difference=ppInventoryRowDifferencePP(row);
+        if(ppInventoryDetailDifferencePP==="difference"&&(difference===null||Math.abs(difference)<=0.0000001))return false;
+        if(ppInventoryDetailDifferencePP==="uncounted"&&row.countedQty!==null)return false;
+        if(ppInventoryDetailDifferencePP==="counted"&&row.countedQty===null)return false;
+        return true;
+    });
+}
+
+function ppInventoryUpdateHeaderPP(field,value){
+    const inventory=inventoriesPP.find(item=>String(item.id)===String(ppActiveInventoryIdPP));
+    if(!inventory||inventory.status!=="draft")return;
+    if(field==="date")inventory.date=String(value||"").slice(0,10);
+    if(field==="reference")inventory.reference=String(value||"").trim();
+    inventory.updatedAt=new Date().toISOString();
+}
+
+function ppInventoryUpdateCountedPP(rowId,value){
+    const inventory=inventoriesPP.find(item=>String(item.id)===String(ppActiveInventoryIdPP));
+    if(!inventory||inventory.status!=="draft")return;
+    const row=inventory.rows.find(item=>String(item.id)===String(rowId));if(!row)return;
+    row.countedQty=value===""?null:ppInventoryNumberPP(value);
+    row.updatedAt=new Date().toISOString();
+    inventory.updatedAt=new Date().toISOString();
+    const difference=ppInventoryRowDifferencePP(row);
+    const valueDifference=ppInventoryRowValueDifferencePP(row);
+    const diffCell=document.querySelector(`[data-inventory-difference="${CSS.escape(String(rowId))}"]`);
+    const valueCell=document.querySelector(`[data-inventory-value="${CSS.escape(String(rowId))}"]`);
+    if(diffCell){
+        diffCell.className=difference>0?"pp-inventory-positive":difference<0?"pp-inventory-negative":"pp-inventory-zero";
+        diffCell.textContent=difference===null?"-":ppInventorySignedNumberPP(difference,row.unit);
+    }
+    if(valueCell){
+        valueCell.className=valueDifference>0?"pp-inventory-positive":valueDifference<0?"pp-inventory-negative":"pp-inventory-zero";
+        valueCell.textContent=valueDifference===null?"-":ppInventorySignedMoneyPP(valueDifference);
+    }
+    ppRenderInventoryDetailStatsPP(inventory);
+}
+
+function ppRenderInventoryDetailStatsPP(inventory){
+    const box=document.getElementById("ppInventoryDetailStats");if(!box)return;
+    const summary=ppInventorySummaryPP(inventory);
+    box.innerHTML=`<div class="stat-card"><span>Articles</span><strong>${summary.articles}</strong></div><div class="stat-card"><span>Comptés</span><strong>${summary.counted}</strong></div><div class="stat-card"><span>Lignes en écart</span><strong>${summary.differenceRows}</strong></div><div class="stat-card"><span>Écart net</span><strong class="${summary.netValue>0?"pp-inventory-positive":summary.netValue<0?"pp-inventory-negative":""}">${ppInventorySignedMoneyPP(summary.netValue)}</strong></div>`;
+}
+
+function ppRenderInventoryDetailPP(){
+    const detail=document.getElementById("ppInventoryDetail");if(!detail)return;
+    const inventory=inventoriesPP.find(item=>String(item.id)===String(ppActiveInventoryIdPP));
+    if(!inventory){detail.hidden=true;detail.innerHTML="";return;}
+    detail.hidden=false;
+    const draft=inventory.status==="draft";
+    const categories=[...new Set(inventory.rows.map(row=>row.category).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"fr"));
+    const filtered=ppInventoryFilteredRowsPP(inventory);
+    const pages=Math.max(1,Math.ceil(filtered.length/PP_INVENTORY_PAGE_SIZE));
+    ppInventoryDetailPagePP=Math.min(Math.max(1,ppInventoryDetailPagePP),pages);
+    const start=(ppInventoryDetailPagePP-1)*PP_INVENTORY_PAGE_SIZE;
+    const rows=filtered.slice(start,start+PP_INVENTORY_PAGE_SIZE);
+    detail.innerHTML=`
+      <div class="pp-inventory-detail-head">
+        <div class="pp-inventory-detail-fields">
+          <div><label>Référence</label><input value="${escapeHTML(inventory.reference)}" ${draft?`onchange="ppInventoryUpdateHeaderPP('reference',this.value)"`:"disabled"}></div>
+          <div><label>Date</label><input type="date" value="${escapeHTML(inventory.date)}" ${draft?`onchange="ppInventoryUpdateHeaderPP('date',this.value)"`:"disabled"}></div>
+        </div>
+        <div class="pp-inventory-actions">
+          ${draft?'<button type="button" class="btn" onclick="ppSaveInventoryDraftPP()">Enregistrer</button><button type="button" class="btn" onclick="ppRefreshInventoryTheoreticalPP()">Actualiser théorique</button><button type="button" class="btn" onclick="ppFillUncountedInventoryPP()">Compléter non comptés</button><button type="button" class="btn primary" onclick="ppValidateInventoryPP()">Valider</button>':'<button type="button" class="btn danger" onclick="ppDevalidateInventoryPP(ppActiveInventoryIdPP)">Dévalider</button>'}
+          <button type="button" class="btn print" onclick="ppPrintInventoryPP(ppActiveInventoryIdPP)">Imprimer</button>
+          <button type="button" class="btn" onclick="ppExportInventoryExcelPP(ppActiveInventoryIdPP)">Excel</button>
+          <button type="button" class="btn" onclick="ppCloseInventoryDetailPP()">Fermer</button>
+        </div>
+      </div>
+      <div class="stats" id="ppInventoryDetailStats" style="margin-top:14px"></div>
+      <div class="pp-inventory-toolbar" style="margin-top:14px">
+        <div><label>Recherche</label><input id="ppInventoryDetailSearch" value="${escapeHTML(ppInventoryDetailSearchPP)}" placeholder="Article…" oninput="ppSetInventoryDetailFilterPP('search',this.value)"></div>
+        <div><label>Catégorie</label><select onchange="ppSetInventoryDetailFilterPP('category',this.value)"><option value="">Toutes</option>${categories.map(category=>`<option value="${escapeHTML(category)}" ${ppInventoryDetailCategoryPP===category?"selected":""}>${escapeHTML(category)}</option>`).join("")}</select></div>
+        <div><label>Situation</label><select onchange="ppSetInventoryDetailFilterPP('difference',this.value)"><option value="" ${!ppInventoryDetailDifferencePP?"selected":""}>Toutes</option><option value="uncounted" ${ppInventoryDetailDifferencePP==="uncounted"?"selected":""}>Non comptés</option><option value="counted" ${ppInventoryDetailDifferencePP==="counted"?"selected":""}>Comptés</option><option value="difference" ${ppInventoryDetailDifferencePP==="difference"?"selected":""}>Avec écart</option></select></div>
+        <div><label>Statut</label><div style="padding:10px 0">${ppInventoryStatusBadgePP(inventory.status)}</div></div>
+      </div>
+      <div class="table-wrapper" style="margin-top:14px"><table style="min-width:1100px"><thead><tr><th>Article</th><th>Catégorie</th><th>Unité</th><th>Stock théorique</th><th>Quantité comptée</th><th>Écart</th><th>Prix moyen</th><th>Valeur écart</th></tr></thead><tbody>${rows.map(row=>{
+          const difference=ppInventoryRowDifferencePP(row),valueDifference=ppInventoryRowValueDifferencePP(row);
+          const diffClass=difference>0?"pp-inventory-positive":difference<0?"pp-inventory-negative":"pp-inventory-zero";
+          const valueClass=valueDifference>0?"pp-inventory-positive":valueDifference<0?"pp-inventory-negative":"pp-inventory-zero";
+          return `<tr><td><strong>${escapeHTML(row.productName)}</strong></td><td>${escapeHTML(row.category)}</td><td>${escapeHTML(row.unit)}</td><td>${formatNumber(row.theoreticalQty)}</td><td>${draft?`<input class="pp-inventory-counted" type="number" step="0.000001" value="${row.countedQty===null?"":escapeHTML(String(row.countedQty))}" oninput="ppInventoryUpdateCountedPP(${JSON.stringify(row.id)},this.value)">`:formatNumber(row.countedQty)}</td><td data-inventory-difference="${escapeHTML(String(row.id))}" class="${diffClass}">${difference===null?"-":ppInventorySignedNumberPP(difference,row.unit)}</td><td>${formatMoney(row.price)}</td><td data-inventory-value="${escapeHTML(String(row.id))}" class="${valueClass}">${valueDifference===null?"-":ppInventorySignedMoneyPP(valueDifference)}</td></tr>`;
+      }).join("")||'<tr><td colspan="8" class="empty">Aucun article.</td></tr>'}</tbody></table></div>
+      <div class="pp-inventory-pagination">${filtered.length>PP_INVENTORY_PAGE_SIZE?ppInventoryPaginationHTMLPP(filtered.length,ppInventoryDetailPagePP,"ppSetInventoryDetailPagePP"):""}</div>`;
+    ppRenderInventoryDetailStatsPP(inventory);
+}
+
+function ppSaveInventoryDraftPP(){
+    const inventory=inventoriesPP.find(item=>String(item.id)===String(ppActiveInventoryIdPP));if(!inventory||inventory.status!=="draft")return;
+    if(!String(inventory.reference||"").trim()){alert("Saisissez la référence.");return;}
+    if(!inventory.date){alert("Sélectionnez la date.");return;}
+    const duplicate=inventoriesPP.find(item=>String(item.id)!==String(inventory.id)&&normalizeText(item.reference)===normalizeText(inventory.reference));
+    if(duplicate){alert("Cette référence existe déjà.");return;}
+    inventory.updatedAt=new Date().toISOString();
+    saveData();ppRenderInventoryPagePP();ppOpenInventoryPP(inventory.id);
+}
+
+function ppRefreshInventoryTheoreticalPP(){
+    const inventory=inventoriesPP.find(item=>String(item.id)===String(ppActiveInventoryIdPP));if(!inventory||inventory.status!=="draft")return;
+    if(!confirm("Actualiser le stock théorique et les prix moyens ?"))return;
+    inventory.rows.forEach(row=>{
+        const product=products.find(item=>String(item.id)===String(row.productId));
+        if(product){row.theoreticalQty=ppInventoryNumberPP(product.stock);row.price=ppInventoryNumberPP(product.price);row.productName=product.name;row.category=product.category;row.unit=product.unit;}
+    });
+    inventory.updatedAt=new Date().toISOString();saveData();ppRenderInventoryPagePP();ppOpenInventoryPP(inventory.id);
+}
+
+function ppFillUncountedInventoryPP(){
+    const inventory=inventoriesPP.find(item=>String(item.id)===String(ppActiveInventoryIdPP));if(!inventory||inventory.status!=="draft")return;
+    inventory.rows.forEach(row=>{if(row.countedQty===null)row.countedQty=ppInventoryNumberPP(row.theoreticalQty);});
+    inventory.updatedAt=new Date().toISOString();saveData();ppRenderInventoryDetailPP();ppRenderInventoryHistoryPP();ppRenderInventoryStatsPP();
+}
+
+function ppInventoryStockChangesPP(inventory){
+    return inventory.rows.filter(row=>{
+        const product=products.find(item=>String(item.id)===String(row.productId));
+        return product&&Math.abs(ppInventoryNumberPP(product.stock)-ppInventoryNumberPP(row.theoreticalQty))>0.0000001;
+    });
+}
+
+function ppValidateInventoryPP(){
+    const inventory=inventoriesPP.find(item=>String(item.id)===String(ppActiveInventoryIdPP));if(!inventory||inventory.status!=="draft")return;
+    const uncounted=inventory.rows.filter(row=>row.countedQty===null);
+    if(uncounted.length){alert(`${uncounted.length} article(s) non compté(s).`);return;}
+    const changed=ppInventoryStockChangesPP(inventory);
+    if(changed.length){alert(`Le stock théorique a changé pour ${changed.length} article(s). Actualisez le stock théorique avant validation.`);return;}
+    if(!confirm(`Valider l'inventaire ${inventory.reference} ?`))return;
+    const adjustments=[];
+    inventory.rows.forEach(row=>{
+        const product=products.find(item=>String(item.id)===String(row.productId));if(!product)return;
+        const difference=ppInventoryRowDifferencePP(row);if(difference===null)return;
+        product.stock=ppInventoryRoundPP(row.countedQty);
+        if(Math.abs(difference)<=0.0000001)return;
+        const movement={
+            id:createId(),date:inventory.date,productId:product.id,productName:product.name,
+            type:difference>0?"entry":"exit",quantity:Math.abs(difference),unit:product.unit,
+            reason:`Ajustement inventaire ${inventory.reference}`,note:"",inventoryId:inventory.id,
+            inventoryAdjustment:true,createdAt:new Date().toISOString()
+        };
+        movements.unshift(movement);
+        adjustments.push({movementId:movement.id,productId:product.id,type:movement.type,quantity:movement.quantity});
+    });
+    inventory.status="validated";
+    inventory.adjustments=adjustments;
+    inventory.validatedAt=new Date().toISOString();
+    inventory.validatedBy=ppInventoryCurrentUserPP();
+    inventory.updatedAt=new Date().toISOString();
+    if(typeof ppWriteAudit==="function")ppWriteAudit("stock",inventory.id,"validate",null,ppAuditSnapshot(inventory),"Validation inventaire");
+    saveData();renderAll();ppActiveInventoryIdPP=inventory.id;ppRenderInventoryPagePP();ppOpenInventoryPP(inventory.id);
+}
+
+function ppDevalidateInventoryPP(id){
+    const inventory=inventoriesPP.find(item=>String(item.id)===String(id));if(!inventory||inventory.status!=="validated")return;
+    const later=inventoriesPP.find(item=>item.status==="validated"&&String(item.id)!==String(inventory.id)&&String(item.validatedAt||item.updatedAt||"")>String(inventory.validatedAt||inventory.updatedAt||""));
+    if(later){alert(`Dévalidez d'abord l'inventaire plus récent ${later.reference}.`);return;}
+    if(!confirm(`Dévalider l'inventaire ${inventory.reference} ?`))return;
+    const before=typeof ppAuditSnapshot==="function"?ppAuditSnapshot(inventory):null;
+    const adjustmentIds=new Set((inventory.adjustments||[]).map(item=>String(item.movementId)));
+    (inventory.adjustments||[]).forEach(adjustment=>{
+        const product=products.find(item=>String(item.id)===String(adjustment.productId));if(!product)return;
+        product.stock=ppInventoryRoundPP(ppInventoryNumberPP(product.stock)+(adjustment.type==="entry"?-ppInventoryNumberPP(adjustment.quantity):ppInventoryNumberPP(adjustment.quantity)));
+    });
+    movements=movements.filter(movement=>String(movement.inventoryId)!==String(inventory.id)&&!adjustmentIds.has(String(movement.id)));
+    inventory.status="draft";
+    inventory.adjustments=[];
+    inventory.devalidatedAt=new Date().toISOString();
+    inventory.validatedAt=null;
+    inventory.validatedBy=null;
+    inventory.updatedAt=new Date().toISOString();
+    if(typeof ppWriteAudit==="function")ppWriteAudit("stock",inventory.id,"update",before,ppAuditSnapshot(inventory),"Dévalidation inventaire");
+    ppActiveInventoryIdPP=inventory.id;
+    saveData();renderAll();ppRenderInventoryPagePP();ppOpenInventoryPP(inventory.id);
+}
+
+function ppDeleteInventoryPP(id){
+    const inventory=inventoriesPP.find(item=>String(item.id)===String(id));if(!inventory)return;
+    if(inventory.status==="validated"){alert("Dévalidez l'inventaire avant suppression.");return;}
+    if(!confirm(`Supprimer l'inventaire ${inventory.reference} ?`))return;
+    inventoriesPP=inventoriesPP.filter(item=>String(item.id)!==String(id));
+    if(String(ppActiveInventoryIdPP)===String(id))ppActiveInventoryIdPP=null;
+    saveData();ppRenderInventoryPagePP();
+}
+
+function ppPrintInventoryPP(id){
+    const inventory=inventoriesPP.find(item=>String(item.id)===String(id));if(!inventory)return;
+    const summary=ppInventorySummaryPP(inventory);
+    const body=inventory.rows.map(row=>{
+        const difference=ppInventoryRowDifferencePP(row),value=ppInventoryRowValueDifferencePP(row);
+        return `<tr><td>${escapeHTML(row.productName)}</td><td>${escapeHTML(row.category)}</td><td>${escapeHTML(row.unit)}</td><td>${formatNumber(row.theoreticalQty)}</td><td>${row.countedQty===null?"-":formatNumber(row.countedQty)}</td><td>${difference===null?"-":ppInventorySignedNumberPP(difference,row.unit)}</td><td>${formatMoney(row.price)}</td><td>${value===null?"-":ppInventorySignedMoneyPP(value)}</td></tr>`;
+    }).join("");
+    printDocument(`Inventaire ${inventory.reference}`,`<div class="doc-head"><h1>Pause & Plate</h1><p>Inventaire</p></div>${detailRowsHTML([["Référence",inventory.reference],["Date",formatDate(inventory.date)],["Statut",inventory.status==="validated"?"Validé":"Brouillon"],["Articles",summary.articles],["Comptés",summary.counted],["Lignes en écart",summary.differenceRows],["Écart net",ppInventorySignedMoneyPP(summary.netValue)]])}<table><thead><tr><th>Article</th><th>Catégorie</th><th>Unité</th><th>Théorique</th><th>Compté</th><th>Écart</th><th>Prix moyen</th><th>Valeur écart</th></tr></thead><tbody>${body}</tbody></table>`);
+}
+
+function ppExportInventoryExcelPP(id){
+    const inventory=inventoriesPP.find(item=>String(item.id)===String(id));if(!inventory)return;
+    if(typeof XLSX==="undefined"){alert("La bibliothèque Excel n'est pas chargée.");return;}
+    const summary=ppInventorySummaryPP(inventory);
+    const detail=inventory.rows.map(row=>({
+        Article:row.productName,Catégorie:row.category,Unité:row.unit,
+        Stock_théorique:row.theoreticalQty,Quantité_comptée:row.countedQty,
+        Écart:ppInventoryRowDifferencePP(row),Prix_moyen:row.price,Valeur_écart:ppInventoryRowValueDifferencePP(row)
+    }));
+    const recap=[{Référence:inventory.reference,Date:inventory.date,Statut:inventory.status==="validated"?"Validé":"Brouillon",Articles:summary.articles,Comptés:summary.counted,Lignes_en_écart:summary.differenceRows,Écart_net:summary.netValue,Valeur_absolue_des_écarts:summary.absoluteValue}];
+    const book=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book,XLSX.utils.json_to_sheet(recap),"Résumé");
+    XLSX.utils.book_append_sheet(book,XLSX.utils.json_to_sheet(detail),"Détail");
+    XLSX.writeFile(book,`inventaire-${String(inventory.reference||inventory.date).replace(/[^a-z0-9_-]+/gi,"-")}.xlsx`);
+}
+
+function ppRenderInventoryPagePP(){
+    ppEnsureInventoryUI();
+    ppRenderInventoryStatsPP();
+    const search=document.getElementById("ppInventoryListSearch");if(search&&search.value!==ppInventoryListSearchPP)search.value=ppInventoryListSearchPP;
+    const from=document.getElementById("ppInventoryListFrom");if(from)from.value=ppInventoryListFromPP;
+    const to=document.getElementById("ppInventoryListTo");if(to)to.value=ppInventoryListToPP;
+    const status=document.getElementById("ppInventoryListStatus");if(status)status.value=ppInventoryListStatusPP;
+    ppRenderInventoryHistoryPP();
+    ppRenderInventoryDetailPP();
+}
+
+// Local and Cloud persistence.
+PP_CLOUD_DATASETS.inventories=()=>inventoriesPP;
+if(Array.isArray(PP_EMPLOYEE_CLOUD_DATASETS?.stock)&&!PP_EMPLOYEE_CLOUD_DATASETS.stock.includes("inventories"))PP_EMPLOYEE_CLOUD_DATASETS.stock.push("inventories");
+
+const ppInventoryBaseSetDatasetPP=ppSetDataset;
+ppSetDataset=function(key,items){
+    if(key==="inventories"){
+        inventoriesPP=ppCloudEnsureRecordIdsPP(key,items).map(ppNormalizeInventoryPP);
+        return;
+    }
+    return ppInventoryBaseSetDatasetPP.apply(this,arguments);
+};
+
+const ppInventoryBaseSaveLocalOnlyPP=ppSaveLocalOnly;
+ppSaveLocalOnly=function(){
+    const result=ppInventoryBaseSaveLocalOnlyPP.apply(this,arguments);
+    localStorage.setItem(PP_INVENTORY_STORAGE_KEY,JSON.stringify(inventoriesPP));
+    return result;
+};
+
+const ppInventoryBaseSaveDataPP=saveData;
+saveData=function(){
+    localStorage.setItem(PP_INVENTORY_STORAGE_KEY,JSON.stringify(inventoriesPP));
+    return ppInventoryBaseSaveDataPP.apply(this,arguments);
+};
+
+const ppInventoryBaseRenderAllPP=renderAll;
+renderAll=function(){
+    const result=ppInventoryBaseRenderAllPP.apply(this,arguments);
+    ppRenderInventoryPagePP();
+    return result;
+};
+
+const ppInventoryBaseEmployeeAllowedPagesPP=ppEmployeeAllowedPages;
+ppEmployeeAllowedPages=function(){
+    const allowed=ppInventoryBaseEmployeeAllowedPagesPP.apply(this,arguments);
+    if(ppCurrentUserProfile?.permissions?.stock===true&&!allowed.includes("inventory"))allowed.push("inventory");
+    return allowed;
+};
+
+const ppInventoryBaseOpenMovementModalPP=openMovementModal;
+openMovementModal=function(type,id=null){
+    if(id){
+        const movement=movements.find(item=>String(item.id)===String(id));
+        if(movement?.inventoryId){alert("Ce mouvement provient d'un inventaire. Dévalidez l'inventaire pour le corriger.");return;}
+    }
+    return ppInventoryBaseOpenMovementModalPP.apply(this,arguments);
+};
+
+const ppInventoryBaseDeleteMovementPP=deleteMovement;
+deleteMovement=function(id){
+    const movement=movements.find(item=>String(item.id)===String(id));
+    if(movement?.inventoryId){alert("Ce mouvement provient d'un inventaire. Dévalidez l'inventaire pour le corriger.");return;}
+    return ppInventoryBaseDeleteMovementPP.apply(this,arguments);
+};
+
+const ppInventoryBaseRenderMovementsPP=renderMovements;
+renderMovements=function(){
+    const result=ppInventoryBaseRenderMovementsPP.apply(this,arguments);
+    document.querySelectorAll('#movementsTable button[onclick*="openMovementModal"],#movementsTable button[onclick*="deleteMovement"]').forEach(button=>{
+        const text=button.getAttribute("onclick")||"";
+        const match=text.match(/(?:openMovementModal\([^,]+,|deleteMovement\()\s*['\"]?([^'\")]+)['\"]?/);
+        if(!match)return;
+        const movement=movements.find(item=>String(item.id)===String(match[1]));
+        if(movement?.inventoryId)button.remove();
+    });
+    return result;
+};
+
+const ppInventoryBaseDeleteProductPP=deleteProduct;
+deleteProduct=function(id){
+    const used=inventoriesPP.some(inventory=>inventory.status==="validated"&&inventory.rows.some(row=>String(row.productId)===String(id)));
+    if(used){alert("Cet article existe dans un inventaire validé.");return;}
+    return ppInventoryBaseDeleteProductPP.apply(this,arguments);
+};
+
+if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",()=>{ppEnsureInventoryUI();ppRenderInventoryPagePP();});
+else {ppEnsureInventoryUI();ppRenderInventoryPagePP();}
