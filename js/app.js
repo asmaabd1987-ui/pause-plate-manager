@@ -7628,7 +7628,9 @@ const PP_EXTRA_KEYS = {
     recipes: "pause_plate_recipes",
     dailySalesScans: "pause_plate_daily_sales_scans",
     accountingEntries: "pause_plate_accounting_entries",
-    accountingSettings: "pause_plate_accounting_settings"
+    accountingSettings: "pause_plate_accounting_settings",
+    bankStatementTransactions: "pause_plate_bank_statement_transactions",
+    bankReconciliations: "pause_plate_bank_reconciliations"
 };
 
 let supplierPaymentsPP = loadStorage(PP_EXTRA_KEYS.supplierPayments, []);
@@ -7641,6 +7643,8 @@ let recipesPP = loadStorage(PP_EXTRA_KEYS.recipes, []);
 let dailySalesScansPP = loadStorage(PP_EXTRA_KEYS.dailySalesScans, []);
 let accountingEntriesPP = loadStorage(PP_EXTRA_KEYS.accountingEntries, []);
 let accountingSettingsPP = loadStorage(PP_EXTRA_KEYS.accountingSettings, []);
+let bankStatementTransactionsPP = loadStorage(PP_EXTRA_KEYS.bankStatementTransactions, []);
+let bankReconciliationsPP = loadStorage(PP_EXTRA_KEYS.bankReconciliations, []);
 
 supplierPaymentsPP = Array.isArray(supplierPaymentsPP) ? supplierPaymentsPP : [];
 clientsPP = Array.isArray(clientsPP) ? clientsPP : [];
@@ -7655,6 +7659,8 @@ recipesPP = recipesPP.map(r=>({...r,ingredients:Array.isArray(r.ingredients)?r.i
 dailySalesScansPP = Array.isArray(dailySalesScansPP) ? dailySalesScansPP : [];
 accountingEntriesPP = Array.isArray(accountingEntriesPP) ? accountingEntriesPP : [];
 accountingSettingsPP = Array.isArray(accountingSettingsPP) ? accountingSettingsPP : [];
+bankStatementTransactionsPP = Array.isArray(bankStatementTransactionsPP) ? bankStatementTransactionsPP.map(ppNormalizeBankTransactionPP) : [];
+bankReconciliationsPP = Array.isArray(bankReconciliationsPP) ? bankReconciliationsPP.map(ppNormalizeBankReconciliationPP) : [];
 
 
 clientsPP = clientsPP.map(c => ({
@@ -7704,6 +7710,8 @@ function saveData(){
     localStorage.setItem(PP_EXTRA_KEYS.dailySalesScans, JSON.stringify(dailySalesScansPP));
     localStorage.setItem(PP_EXTRA_KEYS.accountingEntries, JSON.stringify(accountingEntriesPP));
     localStorage.setItem(PP_EXTRA_KEYS.accountingSettings, JSON.stringify(accountingSettingsPP));
+    localStorage.setItem(PP_EXTRA_KEYS.bankStatementTransactions, JSON.stringify(bankStatementTransactionsPP));
+    localStorage.setItem(PP_EXTRA_KEYS.bankReconciliations, JSON.stringify(bankReconciliationsPP));
 }
 
 
@@ -12095,7 +12103,14 @@ function ensureAccountingModulePP(){
         #ppAccountingModule .pp-acc-journal-code{display:inline-flex;align-items:center;justify-content:center;min-width:35px;padding:4px 7px;border-radius:7px;background:#eaf3ee;color:#075c38;font-size:11px;font-weight:800}
         #ppAccountingModule .pp-acc-journal-name{display:block;color:#667085;font-size:10px;margin-top:3px}
         #ppAccountingEntryLines input,#ppAccountingEntryLines select{width:100%;min-width:110px}
-        @media(max-width:700px){#ppAccountingModule .pp-acc-cards{grid-template-columns:1fr 1fr}#ppAccountingModule .pp-acc-card strong{font-size:18px}}
+        #ppAccountingModule .pp-bank-methods{display:grid;grid-template-columns:repeat(3,minmax(150px,1fr));gap:10px;margin:12px 0}
+        #ppAccountingModule .pp-bank-method,#ppBankReconciliationModal .pp-bank-method{border:1px solid #dfe5e1;border-radius:14px;background:#fff;padding:14px;text-align:left;cursor:pointer;transition:.16s}
+        #ppAccountingModule .pp-bank-method:hover,#ppBankReconciliationModal .pp-bank-method:hover{border-color:#075c38;background:#f4faf7;transform:translateY(-1px)}
+        #ppAccountingModule .pp-bank-status{display:inline-flex;align-items:center;padding:4px 9px;border-radius:999px;font-size:11px;font-weight:800}
+        #ppAccountingModule .pp-bank-status.draft{background:#fff3cd;color:#7a4e00}.pp-bank-status.validated{background:#dcfce7;color:#067647}.pp-bank-status.unmatched{background:#fee2e2;color:#b42318}.pp-bank-status.matched{background:#dcfce7;color:#067647}.pp-bank-status.gap{background:#ffedd5;color:#9a3412}
+        #ppBankReconciliationModal .pp-bank-preview-input{width:100%;min-width:95px}
+        #ppBankReconciliationModal .pp-bank-preview-label{min-width:220px}
+        @media(max-width:700px){#ppAccountingModule .pp-acc-cards{grid-template-columns:1fr 1fr}#ppAccountingModule .pp-acc-card strong{font-size:18px}#ppAccountingModule .pp-bank-methods,#ppBankReconciliationModal .pp-bank-methods{grid-template-columns:1fr}}
         `;document.head.appendChild(style);
     }
     const now=new Date(),first=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`,today=now.toISOString().slice(0,10);
@@ -12108,11 +12123,12 @@ function ensureAccountingModulePP(){
         <button class="btn pp-acc-tab" data-tab="journal" onclick="showAccountingTabPP('journal')">📒 Journal</button>
         <button class="btn pp-acc-tab" data-tab="ledger" onclick="showAccountingTabPP('ledger')">📚 Grand livre</button>
         <button class="btn pp-acc-tab" data-tab="balance" onclick="showAccountingTabPP('balance')">⚖️ Balance</button>
+        <button class="btn pp-acc-tab" data-tab="bank" onclick="showAccountingTabPP('bank')">🏦 Rapprochement bancaire</button>
       </div>
       <div class="pp-acc-filters"><div><label>Du</label><input id="ppAccFrom" type="date" value="${first}" onchange="renderAccountingPP()"></div><div><label>Au</label><input id="ppAccTo" type="date" value="${today}" onchange="renderAccountingPP()"></div><div><label>Recherche</label><input id="ppAccSearch" placeholder="Pièce, compte, libellé…" oninput="renderAccountingPP()"></div><div style="display:flex;align-items:end"><button class="btn" style="width:100%" onclick="resetAccountingPeriodPP()">Mois en cours</button></div></div>
       <div id="ppAccountingContent"></div>
       <div style="font-size:12px;color:#667085;background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px">ℹ️ Situation interne de pré-comptabilité. Les déclarations et états comptables officiels doivent être contrôlés et validés par votre comptable.</div>`;
-    page.appendChild(wrap);ensureAccountingModalsPP();
+    page.appendChild(wrap);ensureAccountingModalsPP();ensureBankReconciliationModalPP();
 }
 
 function showAccountingTabPP(tab){ppActiveAccountingTab=tab;renderAccountingPP();}
@@ -12183,7 +12199,10 @@ function renderAccountingPP(){
     ensureAccountingModulePP();const content=document.getElementById('ppAccountingContent');if(!content)return;
     document.querySelectorAll('#ppAccountingModule .pp-acc-tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===ppActiveAccountingTab));
     const stats=ppAccountingStatsPP();
-    if(ppActiveAccountingTab==='result')content.innerHTML=renderAccountingResultPP(stats);
+    const commonFilters=document.querySelector('#ppAccountingModule .pp-acc-filters');
+    if(commonFilters)commonFilters.style.display=ppActiveAccountingTab==='bank'?'none':'grid';
+    if(ppActiveAccountingTab==='bank')content.innerHTML=renderBankReconciliationPP();
+    else if(ppActiveAccountingTab==='result')content.innerHTML=renderAccountingResultPP(stats);
     else if(ppActiveAccountingTab==='treasury')content.innerHTML=renderAccountingTreasuryPP(stats);
     else if(ppActiveAccountingTab==='journal')content.innerHTML=renderAccountingJournalPP(stats);
     else if(ppActiveAccountingTab==='ledger')content.innerHTML=renderAccountingLedgerPP(stats);
@@ -12224,7 +12243,280 @@ function saveAccountingEntryPP(){
 function deleteAccountingEntryPP(id){if(!confirm('Supprimer cette écriture manuelle ?'))return;accountingEntriesPP=accountingEntriesPP.filter(e=>String(e.id)!==String(id));saveData();renderAccountingPP();}
 function openAccountingSettingsPP(){ensureAccountingModalsPP();const s=ppAccountingSettingsPP();setValue('ppAccFiscalStart',s.fiscalYearStart);setValue('ppAccOpeningDate',s.openingDate);setValue('ppAccOpeningCash',s.openingCash);setValue('ppAccOpeningBank',s.openingBank);openModal('ppAccountingSettingsModal');}
 function saveAccountingSettingsPP(){accountingSettingsPP=[{id:'accounting-settings',fiscalYearStart:getValue('ppAccFiscalStart'),openingDate:getValue('ppAccOpeningDate'),openingCash:Number(getValue('ppAccOpeningCash')||0),openingBank:Number(getValue('ppAccOpeningBank')||0),updatedAt:new Date().toISOString()}];saveData();closeModal('ppAccountingSettingsModal');renderAccountingPP();}
-function printAccountingPP(){const content=document.getElementById('ppAccountingContent');if(!content)return;const labels={summary:'Synthèse comptable',result:'Compte de résultat',treasury:'Trésorerie',journal:ppAccountingJournalInfoPP(ppAccountingJournalFilterPP).label,ledger:'Grand livre',balance:'Balance'};const range=ppAccountingRangePP();printDocument(labels[ppActiveAccountingTab]||'Comptabilité',`<div class="doc-head"><h1>Pause & Plate</h1><p>${escapeHTML(labels[ppActiveAccountingTab]||'Comptabilité')}</p></div><p><strong>Période :</strong> ${formatDate(range.from)} → ${formatDate(range.to)}</p>${content.innerHTML}`);}
+function printAccountingPP(){const content=document.getElementById('ppAccountingContent');if(!content)return;const labels={summary:'Synthèse comptable',result:'Compte de résultat',treasury:'Trésorerie',journal:ppAccountingJournalInfoPP(ppAccountingJournalFilterPP).label,ledger:'Grand livre',balance:'Balance',bank:'État de rapprochement bancaire'};const range=ppAccountingRangePP();printDocument(labels[ppActiveAccountingTab]||'Comptabilité',`<div class="doc-head"><h1>Pause & Plate</h1><p>${escapeHTML(labels[ppActiveAccountingTab]||'Comptabilité')}</p></div><p><strong>Période :</strong> ${formatDate(range.from)} → ${formatDate(range.to)}</p>${content.innerHTML}`);}
+
+
+/* =========================================================
+   RAPPROCHEMENT BANCAIRE
+   Import Excel / CSV + PDF + saisie manuelle
+========================================================= */
+
+let ppActiveBankReconciliationIdPP = null;
+let ppBankReconciliationEditIdPP = null;
+let ppBankImportPreviewPP = [];
+let ppBankImportDefaultSourcePP = 'manual';
+let ppBankCandidateDisplayMapPP = new Map();
+
+function ppNormalizeBankDatePP(value){
+    if(value instanceof Date&&!Number.isNaN(value.getTime()))return value.toISOString().slice(0,10);
+    if(typeof value==='number'&&Number.isFinite(value)){
+        if(typeof XLSX!=='undefined'&&XLSX.SSF?.parse_date_code){
+            const parsed=XLSX.SSF.parse_date_code(value);
+            if(parsed)return `${String(parsed.y).padStart(4,'0')}-${String(parsed.m).padStart(2,'0')}-${String(parsed.d).padStart(2,'0')}`;
+        }
+        const date=new Date(Math.round((value-25569)*86400*1000));
+        if(!Number.isNaN(date.getTime()))return date.toISOString().slice(0,10);
+    }
+    const raw=String(value??'').trim();if(!raw)return '';
+    let match=raw.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    if(match)return `${match[1]}-${match[2].padStart(2,'0')}-${match[3].padStart(2,'0')}`;
+    match=raw.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/);
+    if(match){let year=match[3];if(year.length===2)year=Number(year)>=70?`19${year}`:`20${year}`;return `${year}-${match[2].padStart(2,'0')}-${match[1].padStart(2,'0')}`;}
+    const date=new Date(raw);return Number.isNaN(date.getTime())?'':date.toISOString().slice(0,10);
+}
+
+function ppParseBankAmountPP(value){
+    if(typeof value==='number')return Number.isFinite(value)?value:0;
+    let raw=String(value??'').trim();if(!raw)return 0;
+    const negative=/^\(.*\)$/.test(raw)||raw.startsWith('-');
+    raw=raw.replace(/[()\-+]/g,'').replace(/MAD|DHS?|DH/gi,'').replace(/[\s\u00a0]/g,'');
+    const comma=raw.lastIndexOf(','),dot=raw.lastIndexOf('.');
+    if(comma>=0&&dot>=0){
+        const decimal=Math.max(comma,dot),whole=raw.slice(0,decimal).replace(/[.,]/g,''),fraction=raw.slice(decimal+1).replace(/\D/g,'');raw=`${whole}.${fraction}`;
+    }else if(comma>=0){raw=raw.replace(/\./g,'').replace(',','.');}
+    else if((raw.match(/\./g)||[]).length>1){const parts=raw.split('.');raw=`${parts.slice(0,-1).join('')}.${parts.at(-1)}`;}
+    raw=raw.replace(/[^\d.]/g,'');const amount=Number(raw||0);return negative?-amount:amount;
+}
+
+function ppNormalizeBankTransactionPP(raw={}){
+    const debit=Math.max(ppParseBankAmountPP(raw.debit),0),credit=Math.max(ppParseBankAmountPP(raw.credit),0);
+    return {
+        id:raw.id??createId(),reconciliationId:raw.reconciliationId??raw.batchId??null,
+        date:ppNormalizeBankDatePP(raw.date),valueDate:ppNormalizeBankDatePP(raw.valueDate||raw.date),
+        reference:String(raw.reference||''),label:String(raw.label||raw.description||''),
+        debit,credit,balance:raw.balance===''||raw.balance===null||raw.balance===undefined?null:ppParseBankAmountPP(raw.balance),
+        source:['excel','pdf','manual'].includes(String(raw.source))?String(raw.source):'manual',fileName:String(raw.fileName||''),
+        matchedAccountingKey:raw.matchedAccountingKey?String(raw.matchedAccountingKey):null,
+        createdAt:raw.createdAt||new Date().toISOString(),updatedAt:raw.updatedAt||raw.createdAt||new Date().toISOString()
+    };
+}
+
+function ppNormalizeBankReconciliationPP(raw={}){
+    return {
+        id:raw.id??createId(),bankName:String(raw.bankName||''),accountName:String(raw.accountName||''),accountNumber:String(raw.accountNumber||''),
+        from:ppNormalizeBankDatePP(raw.from),to:ppNormalizeBankDatePP(raw.to),openingBalance:ppParseBankAmountPP(raw.openingBalance),closingBalance:ppParseBankAmountPP(raw.closingBalance),
+        fileName:String(raw.fileName||''),sources:Array.isArray(raw.sources)?raw.sources.map(String):[String(raw.source||'manual')],
+        status:raw.status==='validated'?'validated':'draft',validatedAt:raw.validatedAt||null,
+        createdAt:raw.createdAt||new Date().toISOString(),updatedAt:raw.updatedAt||raw.createdAt||new Date().toISOString()
+    };
+}
+
+function ppBankTransactionsForPP(id){return bankStatementTransactionsPP.filter(tx=>String(tx.reconciliationId)===String(id)).sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.id).localeCompare(String(b.id)));}
+function ppBankTransactionAmountPP(tx){return Number(tx?.credit||0)-Number(tx?.debit||0);}
+function ppBankSourceLabelPP(source){return source==='excel'?'Excel / CSV':source==='pdf'?'PDF':'Saisie manuelle';}
+function ppBankStatusLabelPP(status){return status==='validated'?'Validé':'Brouillon';}
+function ppBankStatusBadgePP(status){return `<span class="pp-bank-status ${status==='validated'?'validated':'draft'}">${status==='validated'?'✓ Validé':'● Brouillon'}</span>`;}
+
+function ppBankStatementInternalGapPP(rec,transactions=ppBankTransactionsForPP(rec.id)){
+    return Number(rec.openingBalance||0)+transactions.reduce((sum,tx)=>sum+ppBankTransactionAmountPP(tx),0)-Number(rec.closingBalance||0);
+}
+function ppBankAccountingClosingPP(rec){return ppAccountingTreasuryBalancePP('5141',rec.to);}
+function ppBankClosingGapPP(rec){return Number(rec.closingBalance||0)-ppBankAccountingClosingPP(rec);}
+
+function ppBankAccountingMovementsPP(rec){
+    const from=String(rec?.from||''),to=String(rec?.to||'');const movements=[];
+    ppAccountingJournalPP().forEach(entry=>{
+        if(entry.source==='opening'||(from&&entry.date<from)||(to&&entry.date>to))return;
+        entry.lines.forEach((line,index)=>{
+            if(String(line.account)!=='5141')return;const amount=Number(line.debit||0)-Number(line.credit||0);if(Math.abs(amount)<0.005)return;
+            const key=`${String(entry.id)}::${index}`;
+            movements.push({key,entryId:entry.id,date:entry.date,piece:entry.piece||'',label:line.label||entry.label||'',amount,journal:entry.journal||'BQ'});
+        });
+    });
+    return movements.sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.piece).localeCompare(String(b.piece),'fr'));
+}
+
+function ppBankDateDifferencePP(a,b){const da=new Date(`${a}T12:00:00`),db=new Date(`${b}T12:00:00`);if(Number.isNaN(da.getTime())||Number.isNaN(db.getTime()))return 999;return Math.abs(Math.round((da-db)/86400000));}
+function ppBankWordsScorePP(a,b){const aw=new Set(normalizeText(a||'').split(/\s+/).filter(w=>w.length>2)),bw=new Set(normalizeText(b||'').split(/\s+/).filter(w=>w.length>2));if(!aw.size||!bw.size)return 0;let common=0;aw.forEach(w=>{if(bw.has(w))common++;});return Math.min(common*5,20);}
+function ppBankMatchScorePP(tx,movement){
+    const txAmount=ppBankTransactionAmountPP(tx),amountGap=Math.abs(txAmount-movement.amount);if(amountGap>=0.02)return -Infinity;
+    const days=ppBankDateDifferencePP(tx.date,movement.date);if(days>7)return -Infinity;
+    let score=70-days*6;
+    const ref=normalizeText(tx.reference||''),piece=normalizeText(movement.piece||'');
+    if(ref&&piece&&(ref===piece||ref.includes(piece)||piece.includes(ref)))score+=45;
+    score+=ppBankWordsScorePP(`${tx.label} ${tx.reference}`,`${movement.label} ${movement.piece}`);
+    return score;
+}
+
+function ppAutoMatchBankReconciliationPP(id,quiet=false){
+    const rec=bankReconciliationsPP.find(r=>String(r.id)===String(id));if(!rec)return;
+    const txs=ppBankTransactionsForPP(id),moves=ppBankAccountingMovementsPP(rec),available=new Set(moves.map(m=>m.key));
+    txs.forEach(tx=>{if(tx.matchedAccountingKey&&!available.has(String(tx.matchedAccountingKey)))tx.matchedAccountingKey=null;});
+    const usedGlobal=new Set(bankStatementTransactionsPP.filter(t=>String(t.reconciliationId)!==String(id)&&t.matchedAccountingKey).map(t=>String(t.matchedAccountingKey)));
+    const used=new Set([...usedGlobal,...txs.map(t=>t.matchedAccountingKey).filter(Boolean).map(String)]);let matched=0;
+    txs.filter(t=>!t.matchedAccountingKey).forEach(tx=>{
+        const candidates=moves.filter(m=>!used.has(String(m.key))).map(m=>({m,score:ppBankMatchScorePP(tx,m)})).filter(x=>Number.isFinite(x.score)&&x.score>=35).sort((a,b)=>b.score-a.score);
+        if(candidates.length){tx.matchedAccountingKey=candidates[0].m.key;tx.updatedAt=new Date().toISOString();used.add(String(candidates[0].m.key));matched++;}
+    });
+    saveData();if(!quiet)alert(`${matched} opération(s) rapprochée(s) automatiquement.`);renderAccountingPP();
+}
+
+function ppBankCandidateDisplayPP(move){const sign=move.amount>=0?'+':'';return `${formatDate(move.date)} · ${sign}${formatMoney(move.amount)} · ${move.piece||'Sans pièce'} · ${move.label||'Opération banque'}`;}
+function ppBankMatchStatePP(tx,movesByKey){
+    if(!tx.matchedAccountingKey)return {status:'unmatched',label:'Non rapprochée',gap:null,move:null};
+    const move=movesByKey.get(String(tx.matchedAccountingKey));if(!move)return {status:'unmatched',label:'Lien introuvable',gap:null,move:null};
+    const gap=ppBankTransactionAmountPP(tx)-move.amount;
+    return Math.abs(gap)<0.02?{status:'matched',label:'Rapprochée',gap,move}:{status:'gap',label:'Écart à vérifier',gap,move};
+}
+
+function ppSetBankMatchPP(txId,displayValue){
+    const tx=bankStatementTransactionsPP.find(t=>String(t.id)===String(txId));if(!tx)return;
+    const value=String(displayValue||'').trim();if(!value){tx.matchedAccountingKey=null;tx.updatedAt=new Date().toISOString();saveData();renderAccountingPP();return;}
+    const key=ppBankCandidateDisplayMapPP.get(value);if(!key)return;
+    const other=bankStatementTransactionsPP.find(t=>String(t.id)!==String(tx.id)&&String(t.reconciliationId)===String(tx.reconciliationId)&&String(t.matchedAccountingKey||'')===String(key));
+    if(other){alert('Cette écriture comptable est déjà associée à une autre opération bancaire.');renderAccountingPP();return;}
+    tx.matchedAccountingKey=key;tx.updatedAt=new Date().toISOString();saveData();renderAccountingPP();
+}
+function ppClearBankMatchPP(txId){ppSetBankMatchPP(txId,'');}
+
+function ppBankReconciliationStatsPP(rec){
+    const txs=ppBankTransactionsForPP(rec.id),moves=ppBankAccountingMovementsPP(rec),map=new Map(moves.map(m=>[m.key,m]));
+    const states=txs.map(tx=>ppBankMatchStatePP(tx,map)),matchedKeys=new Set(txs.map(tx=>tx.matchedAccountingKey).filter(key=>key&&map.has(String(key))).map(String));
+    const unmatchedBankRows=txs.filter((tx,index)=>states[index].status==='unmatched'),unmatchedAccounting=moves.filter(move=>!matchedKeys.has(String(move.key)));
+    const unmatchedBankAmount=unmatchedBankRows.reduce((sum,tx)=>sum+ppBankTransactionAmountPP(tx),0),unmatchedAccountingAmount=unmatchedAccounting.reduce((sum,move)=>sum+move.amount,0);
+    const accountingClosing=ppBankAccountingClosingPP(rec),rawGap=Number(rec.closingBalance||0)-accountingClosing,adjustedBank=Number(rec.closingBalance||0)+unmatchedAccountingAmount,adjustedAccounting=accountingClosing+unmatchedBankAmount,finalGap=adjustedBank-adjustedAccounting;
+    return {txs,moves,map,states,matched:states.filter(s=>s.status==='matched').length,gaps:states.filter(s=>s.status==='gap').length,unmatched:unmatchedBankRows.length,unmatchedBankRows,unmatchedAccounting,unmatchedBankAmount,unmatchedAccountingAmount,statementGap:ppBankStatementInternalGapPP(rec,txs),closingGap:rawGap,rawGap,adjustedBank,adjustedAccounting,finalGap,accountingClosing};
+}
+
+function renderBankReconciliationPP(){
+    if(ppActiveBankReconciliationIdPP){const rec=bankReconciliationsPP.find(r=>String(r.id)===String(ppActiveBankReconciliationIdPP));if(rec)return renderBankReconciliationDetailPP(rec);ppActiveBankReconciliationIdPP=null;}
+    const ordered=[...bankReconciliationsPP].sort((a,b)=>String(b.to||b.createdAt).localeCompare(String(a.to||a.createdAt)));
+    const drafts=ordered.filter(r=>r.status!=='validated').length,validated=ordered.length-drafts;
+    const unmatched=ordered.reduce((sum,r)=>{const stats=ppBankReconciliationStatsPP(r);return sum+stats.unmatched+stats.unmatchedAccounting.length;},0);
+    return `<div class="pp-acc-toolbar"><div><h3 style="margin:0 0 4px">🏦 États de rapprochement bancaire</h3><p style="margin:0;color:#667085">Importez le relevé par Excel/CSV ou PDF, ou saisissez les lignes manuellement.</p></div><button class="btn primary" onclick="openBankReconciliationPP()">➕ Nouveau rapprochement</button></div>
+      <div class="pp-acc-cards">
+        ${ppAccountingCardPP('Dossiers',String(ordered.length),'bank','📁','#0b6b45','Tous les rapprochements')}
+        ${ppAccountingCardPP('Brouillons',String(drafts),'bank','🟠','#f59e0b','À terminer')}
+        ${ppAccountingCardPP('Validés',String(validated),'bank','✅','#16a34a','Écart nul')}
+        ${ppAccountingCardPP('Opérations non rapprochées',String(unmatched),'bank','⚠️','#dc2626','À associer')}
+      </div>
+      <div class="pp-acc-panel"><div style="overflow:auto"><table><thead><tr><th>Période</th><th>Banque / compte</th><th>Sources</th><th>Solde relevé</th><th>Écart final rapproché</th><th>Statut</th><th>Actions</th></tr></thead><tbody>
+      ${ordered.map(rec=>{const stats=ppBankReconciliationStatsPP(rec),sources=[...new Set(rec.sources||[])].map(ppBankSourceLabelPP).join(' + ');return `<tr><td>${formatDate(rec.from)} → ${formatDate(rec.to)}</td><td><strong>${escapeHTML(rec.bankName||'Banque')}</strong><br><small>${escapeHTML(rec.accountName||rec.accountNumber||'Compte bancaire')}</small></td><td>${escapeHTML(sources)}</td><td>${formatMoney(rec.closingBalance)}</td><td class="${Math.abs(stats.finalGap)<.02?'pp-acc-positive':'pp-acc-negative'}"><strong>${formatMoney(stats.finalGap)}</strong></td><td>${ppBankStatusBadgePP(rec.status)}</td><td><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn small" onclick='viewBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Ouvrir</button><button class="btn small print" onclick='printBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Imprimer</button><button class="btn small danger" onclick='deleteBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Supprimer</button></div></td></tr>`;}).join('')||'<tr><td colspan="7" class="empty">Aucun rapprochement bancaire. Créez le premier dossier.</td></tr>'}
+      </tbody></table></div></div>`;
+}
+
+function viewBankReconciliationPP(id){ppActiveBankReconciliationIdPP=String(id);renderAccountingPP();}
+function closeBankReconciliationDetailPP(){ppActiveBankReconciliationIdPP=null;renderAccountingPP();}
+
+function renderBankReconciliationDetailPP(rec){
+    const stats=ppBankReconciliationStatsPP(rec),used=new Set(stats.txs.map(t=>t.matchedAccountingKey).filter(Boolean));ppBankCandidateDisplayMapPP=new Map();
+    const rows=stats.txs.map(tx=>{
+        const state=ppBankMatchStatePP(tx,stats.map),current=state.move?ppBankCandidateDisplayPP(state.move):'';
+        const candidates=stats.moves.filter(move=>!used.has(move.key)||move.key===tx.matchedAccountingKey).sort((a,b)=>Math.abs(ppBankTransactionAmountPP(tx)-a.amount)-Math.abs(ppBankTransactionAmountPP(tx)-b.amount)).slice(0,80);
+        candidates.forEach(move=>ppBankCandidateDisplayMapPP.set(ppBankCandidateDisplayPP(move),move.key));
+        const listId=`pp-bank-candidates-${String(tx.id).replace(/[^a-z0-9_-]/gi,'')}`;
+        return `<tr><td>${formatDate(tx.date)}</td><td>${escapeHTML(tx.reference||'-')}</td><td>${escapeHTML(tx.label||'-')}</td><td>${tx.debit?formatMoney(tx.debit):'-'}</td><td>${tx.credit?formatMoney(tx.credit):'-'}</td><td>${tx.balance===null?'-':formatMoney(tx.balance)}</td><td><span class="pp-bank-status ${state.status}">${state.label}</span>${state.status==='gap'?`<br><small class="pp-acc-negative">Écart ${formatMoney(state.gap)}</small>`:''}</td><td style="min-width:330px"><input list="${listId}" value="${escapeHTML(current)}" placeholder="Rechercher date, pièce, libellé…" onchange='ppSetBankMatchPP(${JSON.stringify(String(tx.id))},this.value)' style="width:100%"><datalist id="${listId}">${candidates.map(move=>`<option value="${escapeHTML(ppBankCandidateDisplayPP(move))}"></option>`).join('')}</datalist>${tx.matchedAccountingKey?`<button class="btn small" style="margin-top:5px" onclick='ppClearBankMatchPP(${JSON.stringify(String(tx.id))})'>Dissocier</button>`:''}</td></tr>`;
+    }).join('');
+    const canValidate=stats.gaps===0&&Math.abs(stats.statementGap)<.02&&Math.abs(stats.finalGap)<.02&&stats.txs.length>0;
+    return `<div class="pp-acc-toolbar"><div><button class="btn small" onclick="closeBankReconciliationDetailPP()">← Retour</button><h3 style="margin:10px 0 3px">${escapeHTML(rec.bankName||'Banque')} — ${escapeHTML(rec.accountName||rec.accountNumber||'Compte')}</h3><p style="margin:0;color:#667085">${formatDate(rec.from)} → ${formatDate(rec.to)} · ${ppBankStatusLabelPP(rec.status)}</p></div><div style="display:flex;gap:7px;flex-wrap:wrap"><button class="btn" onclick='openBankReconciliationPP(${JSON.stringify(String(rec.id))})' ${rec.status==='validated'?'disabled':''}>✏️ Modifier relevé</button><button class="btn" onclick='ppAutoMatchBankReconciliationPP(${JSON.stringify(String(rec.id))})' ${rec.status==='validated'?'disabled':''}>✨ Rapprochement automatique</button><button class="btn print" onclick='printBankReconciliationPP(${JSON.stringify(String(rec.id))})'>🖨️ Imprimer</button><button class="btn" onclick='exportBankReconciliationExcelPP(${JSON.stringify(String(rec.id))})'>📊 Excel</button>${rec.status==='validated'?`<button class="btn" onclick='reopenBankReconciliationPP(${JSON.stringify(String(rec.id))})'>Rouvrir</button>`:`<button class="btn primary" onclick='validateBankReconciliationPP(${JSON.stringify(String(rec.id))})' ${canValidate?'':'disabled'}>✓ Valider définitivement</button>`}</div></div>
+      <div class="pp-acc-cards">
+        ${ppAccountingCardPP('Solde relevé',formatMoney(rec.closingBalance),'bank','🏦','#075c38','Solde final banque')}
+        ${ppAccountingCardPP('Solde comptable',formatMoney(stats.accountingClosing),'bank','📒','#2563eb','Compte 5141')}
+        ${ppAccountingCardPP('Écart brut',formatMoney(stats.rawGap),'bank','↔️',Math.abs(stats.rawGap)<.02?'#16a34a':'#f59e0b','Avant opérations en circulation')}
+        ${ppAccountingCardPP('Écart final rapproché',formatMoney(stats.finalGap),'bank',Math.abs(stats.finalGap)<.02?'✅':'⚠️',Math.abs(stats.finalGap)<.02?'#16a34a':'#dc2626','Doit être égal à 0')}
+        ${ppAccountingCardPP('Rapprochées',`${stats.matched}/${stats.txs.length}`,'bank','🔗','#16a34a',`${stats.unmatched} banque · ${stats.unmatchedAccounting.length} compta`) }
+      </div>
+      ${Math.abs(stats.statementGap)>=.02?`<div style="margin-bottom:14px;padding:12px;border:1px solid #fdba74;background:#fff7ed;border-radius:12px;color:#9a3412"><strong>⚠️ Contrôle du relevé :</strong> solde initial + mouvements ≠ solde final. Écart interne : ${formatMoney(stats.statementGap)}. Vérifiez les lignes importées.</div>`:''}
+      <div class="pp-acc-panel"><div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><h3 style="margin:0">Opérations du relevé</h3><span>${stats.txs.length} ligne(s)</span></div><div style="overflow:auto"><table style="min-width:1320px"><thead><tr><th>Date</th><th>Référence</th><th>Libellé</th><th>Débit</th><th>Crédit</th><th>Solde</th><th>Statut</th><th>Écriture comptable associée</th></tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">Aucune opération.</td></tr>'}</tbody></table></div></div>
+      <div class="pp-acc-panel"><h3 style="margin-top:0">Écritures comptables en circulation</h3><p style="color:#667085">Écritures du compte banque 5141 enregistrées dans l’application mais absentes du relevé ou pas encore pointées.</p><div style="overflow:auto"><table><thead><tr><th>Date</th><th>Pièce</th><th>Libellé</th><th>Montant</th></tr></thead><tbody>${stats.unmatchedAccounting.map(move=>`<tr><td>${formatDate(move.date)}</td><td>${escapeHTML(move.piece||'-')}</td><td>${escapeHTML(move.label||'-')}</td><td class="${move.amount>=0?'pp-acc-positive':'pp-acc-negative'}"><strong>${formatMoney(move.amount)}</strong></td></tr>`).join('')||'<tr><td colspan="4" class="empty">Aucune écriture comptable en circulation.</td></tr>'}</tbody><tfoot><tr><th colspan="3">Total en circulation</th><th>${formatMoney(stats.unmatchedAccountingAmount)}</th></tr></tfoot></table></div></div>
+      <div class="pp-acc-panel"><h3 style="margin-top:0">Calcul du rapprochement</h3><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px"><div><small>Solde banque ajusté</small><strong style="display:block;font-size:20px">${formatMoney(stats.adjustedBank)}</strong><small>${formatMoney(rec.closingBalance)} + ${formatMoney(stats.unmatchedAccountingAmount)} en circulation</small></div><div><small>Solde comptable ajusté</small><strong style="display:block;font-size:20px">${formatMoney(stats.adjustedAccounting)}</strong><small>${formatMoney(stats.accountingClosing)} + ${formatMoney(stats.unmatchedBankAmount)} non comptabilisé banque</small></div><div><small>Écart final rapproché</small><strong class="${Math.abs(stats.finalGap)<.02?'pp-acc-positive':'pp-acc-negative'}" style="display:block;font-size:20px">${formatMoney(stats.finalGap)}</strong><small>Doit être égal à 0 DH</small></div></div></div>
+      <div style="font-size:12px;color:#667085;background:#f8fafc;border:1px solid #e4e7ec;border-radius:12px;padding:12px">Les opérations non pointées restent clairement listées comme opérations en circulation. La validation définitive exige un relevé cohérent, aucun écart sur les associations et un écart final rapproché égal à 0 DH.</div>`;
+}
+
+function validateBankReconciliationPP(id){
+    const rec=bankReconciliationsPP.find(r=>String(r.id)===String(id));if(!rec)return;const stats=ppBankReconciliationStatsPP(rec);
+    if(stats.gaps||Math.abs(stats.statementGap)>=.02||Math.abs(stats.finalGap)>=.02){alert('Impossible de valider : corrigez les associations avec écart, vérifiez le relevé et ramenez l’écart final rapproché à 0 DH.');return;}
+    if(!confirm('Valider définitivement cet état de rapprochement ?'))return;rec.status='validated';rec.validatedAt=new Date().toISOString();rec.updatedAt=new Date().toISOString();saveData();renderAccountingPP();
+}
+function reopenBankReconciliationPP(id){const rec=bankReconciliationsPP.find(r=>String(r.id)===String(id));if(!rec||!confirm('Rouvrir ce rapprochement pour modification ?'))return;rec.status='draft';rec.validatedAt=null;rec.updatedAt=new Date().toISOString();saveData();renderAccountingPP();}
+function deleteBankReconciliationPP(id){const rec=bankReconciliationsPP.find(r=>String(r.id)===String(id));if(!rec||!confirm('Supprimer ce rapprochement et toutes les lignes de son relevé ?'))return;bankReconciliationsPP=bankReconciliationsPP.filter(r=>String(r.id)!==String(id));bankStatementTransactionsPP=bankStatementTransactionsPP.filter(t=>String(t.reconciliationId)!==String(id));if(String(ppActiveBankReconciliationIdPP)===String(id))ppActiveBankReconciliationIdPP=null;saveData();renderAccountingPP();}
+
+function ensureBankReconciliationModalPP(){
+    if(document.getElementById('ppBankReconciliationModal'))return;const modal=document.createElement('div');modal.id='ppBankReconciliationModal';modal.className='modal-overlay';
+    modal.innerHTML=`<div class="modal" style="max-width:1180px"><div class="modal-header"><h2 id="ppBankModalTitle">🏦 Nouveau rapprochement bancaire</h2><button onclick="closeModal('ppBankReconciliationModal')">×</button></div><form id="ppBankReconciliationForm"><div class="form-grid"><div><label>Banque *</label><input id="ppBankName" required placeholder="Ex. Attijariwafa bank"></div><div><label>Nom du compte</label><input id="ppBankAccountName" placeholder="Compte courant"></div><div><label>N° compte / RIB</label><input id="ppBankAccountNumber"></div><div><label>Du *</label><input id="ppBankFrom" type="date" required></div><div><label>Au *</label><input id="ppBankTo" type="date" required></div><div><label>Solde initial relevé *</label><input id="ppBankOpeningBalance" type="number" step="0.01" required></div><div><label>Solde final relevé *</label><input id="ppBankClosingBalance" type="number" step="0.01" required></div></div>
+      <h3 style="margin:18px 0 6px">Choisir une méthode d’entrée</h3><div class="pp-bank-methods" style="display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:10px">
+        <button type="button" class="pp-bank-method" onclick="ppChooseBankImportPP('excel')"><strong>📊 Import Excel / CSV</strong><small style="display:block;color:#667085;margin-top:5px">.xlsx, .xls ou .csv</small></button>
+        <button type="button" class="pp-bank-method" onclick="ppChooseBankImportPP('pdf')"><strong>📄 Import PDF</strong><small style="display:block;color:#667085;margin-top:5px">Lecture texte + OCR si nécessaire</small></button>
+        <button type="button" class="pp-bank-method" onclick="ppAddBankPreviewRowPP()"><strong>✍️ Saisie manuelle</strong><small style="display:block;color:#667085;margin-top:5px">Ajouter les opérations une par une</small></button>
+      </div><input id="ppBankExcelFile" type="file" accept=".xlsx,.xls,.csv,text/csv" hidden onchange="handleBankReconciliationFilePP(event,'excel')"><input id="ppBankPdfFile" type="file" accept="application/pdf,.pdf" hidden onchange="handleBankReconciliationFilePP(event,'pdf')">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0"><button type="button" class="btn small" onclick="ppDownloadBankTemplatePP()">⬇️ Modèle Excel</button><button type="button" class="btn small" onclick="ppAddBankPreviewRowPP()">➕ Ajouter une ligne manuelle</button><button type="button" class="btn small" onclick="ppClearBankPreviewPP()">Effacer les lignes</button></div>
+      <div id="ppBankImportStatus" style="padding:10px;border-radius:10px;background:#f8fafc;color:#475467;margin:8px 0">Choisissez Excel/CSV, PDF ou saisie manuelle.</div>
+      <div style="overflow:auto;max-height:430px"><table style="width:100%;min-width:1050px"><thead><tr><th>Date *</th><th>Date valeur</th><th>Référence</th><th>Libellé *</th><th>Débit</th><th>Crédit</th><th>Solde</th><th></th></tr></thead><tbody id="ppBankPreviewBody"></tbody></table></div>
+      <div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppBankReconciliationModal')">Annuler</button><button type="submit" class="btn primary">Enregistrer le rapprochement</button></div></form></div>`;document.body.appendChild(modal);document.getElementById('ppBankReconciliationForm').addEventListener('submit',event=>{event.preventDefault();saveBankReconciliationPP();});
+}
+
+function openBankReconciliationPP(id=null){
+    ensureBankReconciliationModalPP();ppBankReconciliationEditIdPP=id?String(id):null;ppBankImportPreviewPP=[];ppBankImportDefaultSourcePP='manual';
+    const rec=id?bankReconciliationsPP.find(r=>String(r.id)===String(id)):null;if(rec?.status==='validated'){alert('Rouvrez d’abord le rapprochement avant de modifier le relevé.');return;}
+    const now=new Date(),first=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`,today=now.toISOString().slice(0,10);
+    setText('ppBankModalTitle',rec?'✏️ Modifier le relevé bancaire':'🏦 Nouveau rapprochement bancaire');setValue('ppBankName',rec?.bankName||'');setValue('ppBankAccountName',rec?.accountName||'');setValue('ppBankAccountNumber',rec?.accountNumber||'');setValue('ppBankFrom',rec?.from||first);setValue('ppBankTo',rec?.to||today);setValue('ppBankOpeningBalance',rec?.openingBalance??'');setValue('ppBankClosingBalance',rec?.closingBalance??'');
+    ppBankImportPreviewPP=(rec?ppBankTransactionsForPP(rec.id):[]).map(tx=>({...tx,_previewId:String(tx.id)}));ppRenderBankImportPreviewPP();setText('ppBankImportStatus',rec?`${ppBankImportPreviewPP.length} ligne(s) chargée(s).`:'Choisissez Excel/CSV, PDF ou saisie manuelle.');
+    const excel=document.getElementById('ppBankExcelFile'),pdf=document.getElementById('ppBankPdfFile');if(excel)excel.value='';if(pdf)pdf.value='';openModal('ppBankReconciliationModal');
+}
+function ppChooseBankImportPP(type){document.getElementById(type==='pdf'?'ppBankPdfFile':'ppBankExcelFile')?.click();}
+function ppClearBankPreviewPP(){if(ppBankImportPreviewPP.length&&!confirm('Effacer toutes les lignes du relevé en préparation ?'))return;ppBankImportPreviewPP=[];ppRenderBankImportPreviewPP();setText('ppBankImportStatus','Aucune ligne. Choisissez une méthode d’entrée.');}
+
+function ppAddBankPreviewRowPP(data={}){ppBankImportPreviewPP.push({...ppNormalizeBankTransactionPP({...data,id:data.id||`preview-${Date.now()}-${Math.random().toString(36).slice(2)}`,source:data.source||'manual'}),_previewId:String(data.id||`preview-${Date.now()}-${Math.random().toString(36).slice(2)}`)});ppRenderBankImportPreviewPP();setText('ppBankImportStatus',`${ppBankImportPreviewPP.length} ligne(s) en préparation.`);setTimeout(()=>document.querySelector('#ppBankPreviewBody tr:last-child input')?.focus(),20);}
+function ppUpdateBankPreviewPP(index,field,value){const row=ppBankImportPreviewPP[index];if(!row)return;if(field==='balance')row[field]=value===''?null:ppParseBankAmountPP(value);else if(field==='debit'||field==='credit')row[field]=Math.max(ppParseBankAmountPP(value),0);else if(['date','valueDate'].includes(field))row[field]=ppNormalizeBankDatePP(value);else row[field]=String(value||'');}
+function ppRemoveBankPreviewRowPP(index){ppBankImportPreviewPP.splice(index,1);ppRenderBankImportPreviewPP();setText('ppBankImportStatus',`${ppBankImportPreviewPP.length} ligne(s) en préparation.`);}
+function ppRenderBankImportPreviewPP(){const body=document.getElementById('ppBankPreviewBody');if(!body)return;body.innerHTML=ppBankImportPreviewPP.map((row,index)=>`<tr><td><input class="pp-bank-preview-input" type="date" value="${escapeHTML(row.date||'')}" onchange="ppUpdateBankPreviewPP(${index},'date',this.value)"></td><td><input class="pp-bank-preview-input" type="date" value="${escapeHTML(row.valueDate||row.date||'')}" onchange="ppUpdateBankPreviewPP(${index},'valueDate',this.value)"></td><td><input class="pp-bank-preview-input" value="${escapeHTML(row.reference||'')}" onchange="ppUpdateBankPreviewPP(${index},'reference',this.value)"></td><td><input class="pp-bank-preview-input pp-bank-preview-label" value="${escapeHTML(row.label||'')}" onchange="ppUpdateBankPreviewPP(${index},'label',this.value)"></td><td><input class="pp-bank-preview-input" type="number" min="0" step="0.01" value="${row.debit||''}" onchange="ppUpdateBankPreviewPP(${index},'debit',this.value)"></td><td><input class="pp-bank-preview-input" type="number" min="0" step="0.01" value="${row.credit||''}" onchange="ppUpdateBankPreviewPP(${index},'credit',this.value)"></td><td><input class="pp-bank-preview-input" type="number" step="0.01" value="${row.balance??''}" onchange="ppUpdateBankPreviewPP(${index},'balance',this.value)"></td><td><button type="button" class="btn small danger" onclick="ppRemoveBankPreviewRowPP(${index})">×</button></td></tr>`).join('')||'<tr><td colspan="8" class="empty">Aucune ligne importée ou saisie.</td></tr>';}
+
+function ppBankHeaderKeyPP(value){return normalizeText(String(value||'')).replace(/[^a-z0-9]+/g,' ' ).trim();}
+function ppBankFindColumnPP(headers,aliases){const normalized=headers.map(h=>[h,ppBankHeaderKeyPP(h)]);for(const alias of aliases){const exact=normalized.find(([,key])=>key===alias);if(exact)return exact[0];}for(const alias of aliases){const partial=normalized.find(([,key])=>key.includes(alias));if(partial)return partial[0];}return null;}
+function ppParseBankExcelRowsPP(file){
+    return file.arrayBuffer().then(buffer=>{if(typeof XLSX==='undefined')throw new Error("La bibliothèque Excel n'est pas chargée.");const workbook=XLSX.read(buffer,{type:'array',cellDates:true});const sheet=workbook.Sheets[workbook.SheetNames[0]];const raw=XLSX.utils.sheet_to_json(sheet,{defval:'',raw:true});if(!raw.length)return [];
+        const headers=Object.keys(raw[0]);const dateCol=ppBankFindColumnPP(headers,['date operation','date d operation','date','operation date']),valueDateCol=ppBankFindColumnPP(headers,['date valeur','value date']),refCol=ppBankFindColumnPP(headers,['reference','ref','numero piece','piece']),labelCol=ppBankFindColumnPP(headers,['libelle','designation','description','details','operation']),debitCol=ppBankFindColumnPP(headers,['debit','retrait','sortie']),creditCol=ppBankFindColumnPP(headers,['credit','versement','entree']),amountCol=ppBankFindColumnPP(headers,['montant','amount']),balanceCol=ppBankFindColumnPP(headers,['solde','balance']);
+        if(!dateCol)throw new Error('Colonne Date introuvable. Utilisez le modèle Excel fourni.');
+        return raw.map(row=>{let debit=debitCol?Math.max(ppParseBankAmountPP(row[debitCol]),0):0,credit=creditCol?Math.max(ppParseBankAmountPP(row[creditCol]),0):0;if(!debit&&!credit&&amountCol){const amount=ppParseBankAmountPP(row[amountCol]);if(amount<0)debit=-amount;else credit=amount;}return ppNormalizeBankTransactionPP({date:row[dateCol],valueDate:valueDateCol?row[valueDateCol]:row[dateCol],reference:refCol?row[refCol]:'',label:labelCol?row[labelCol]:'Opération bancaire',debit,credit,balance:balanceCol?row[balanceCol]:null,source:'excel',fileName:file.name});}).filter(row=>row.date&&(row.debit>0||row.credit>0||row.label));
+    });
+}
+
+function ppBankPDFLinesFromItemsPP(items){const grouped=[];(items||[]).forEach(item=>{const y=Math.round(Number(item.transform?.[5]||0)*2)/2,x=Number(item.transform?.[4]||0);let line=grouped.find(g=>Math.abs(g.y-y)<=1.5);if(!line){line={y,items:[]};grouped.push(line);}line.items.push({x,text:String(item.str||'')});});return grouped.sort((a,b)=>b.y-a.y).map(line=>line.items.sort((a,b)=>a.x-b.x).map(i=>i.text).join(' ').replace(/\s+/g,' ').trim()).filter(Boolean);}
+async function ppExtractBankPDFTextPP(file){if(typeof pdfjsLib==='undefined')throw new Error("PDF.js n'est pas chargé.");const pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;const pages=[];for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){setText('ppBankImportStatus',`Lecture PDF — page ${pageNo}/${pdf.numPages}…`);const page=await pdf.getPage(pageNo),content=await page.getTextContent(),directLines=ppBankPDFLinesFromItemsPP(content.items);if(directLines.join(' ').length>40){pages.push(directLines.join('\n'));continue;}if(typeof Tesseract==='undefined')continue;const viewport=page.getViewport({scale:2.6}),canvas=document.createElement('canvas');canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);const context=canvas.getContext('2d');context.fillStyle='#fff';context.fillRect(0,0,canvas.width,canvas.height);await page.render({canvasContext:context,viewport}).promise;pages.push(await runDualOCR(canvas,preprocessCanvas(canvas),'Relevé bancaire'));}return pages.join('\n');}
+function ppBankAmountTokensPP(line){const regex=/[-+]?\(?\d{1,3}(?:[ .\u00a0]\d{3})*(?:[,\.]\d{2})\)?|[-+]?\(?\d+[,\.]\d{2}\)?/g;return [...String(line).matchAll(regex)].map(match=>({raw:match[0],value:ppParseBankAmountPP(match[0]),index:match.index||0}));}
+function ppParseBankPDFRowsPP(text,fileName=''){
+    const lines=String(text||'').split(/\r?\n/).map(line=>line.replace(/[|]/g,' ').replace(/\s+/g,' ').trim()).filter(Boolean),rows=[];let priorBalance=null;
+    lines.forEach(line=>{const dateMatch=line.match(/\b(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}|\d{4}[\/.\-]\d{1,2}[\/.\-]\d{1,2})\b/);if(!dateMatch)return;const date=ppNormalizeBankDatePP(dateMatch[1]);if(!date)return;const after=line.slice((dateMatch.index||0)+dateMatch[0].length),tokens=ppBankAmountTokensPP(after);if(!tokens.length)return;
+        let debit=0,credit=0,balance=null,movement=0;const keyword=normalizeText(line);
+        if(tokens.length>=3){debit=Math.max(tokens.at(-3).value,0);credit=Math.max(tokens.at(-2).value,0);balance=tokens.at(-1).value;}
+        else if(tokens.length===2){movement=tokens[0].value;balance=tokens[1].value;if(priorBalance!==null&&Math.abs(Math.abs(balance-priorBalance)-Math.abs(movement))<.06)movement=balance-priorBalance;if(movement<0||/(debit|retrait|prelevement|paiement|cheque|commission|frais)/.test(keyword))debit=Math.abs(movement);else credit=Math.abs(movement);}
+        else {movement=tokens[0].value;if(movement<0||/(debit|retrait|prelevement|paiement|cheque|commission|frais)/.test(keyword))debit=Math.abs(movement);else credit=Math.abs(movement);}
+        if(balance!==null)priorBalance=balance;let label=line.replace(dateMatch[0],' ');tokens.forEach(token=>{label=label.replace(token.raw,' ');});label=label.replace(/\s+/g,' ').trim();const refMatch=line.match(/(?:REF(?:ERENCE)?|N[°O]|CHEQUE|VIR(?:EMENT)?)\s*[:#-]?\s*([A-Z0-9\/-]{3,})/i);
+        if(!(debit>0||credit>0))return;rows.push(ppNormalizeBankTransactionPP({date,valueDate:date,reference:refMatch?.[1]||'',label:label||'Opération bancaire',debit,credit,balance,source:'pdf',fileName}));
+    });return rows;
+}
+function ppDetectPDFStatementBalancePP(text,kind){const patterns=kind==='opening'?[/solde\s+(?:initial|precedent|de depart)[^\d-+()]*([-+()]?[\d\s.,]+(?:,|\.)\d{2})/i]:[/solde\s+(?:final|nouveau|de fin)[^\d-+()]*([-+()]?[\d\s.,]+(?:,|\.)\d{2})/i,/nouveau\s+solde[^\d-+()]*([-+()]?[\d\s.,]+(?:,|\.)\d{2})/i];for(const pattern of patterns){const match=String(text||'').match(pattern);if(match)return ppParseBankAmountPP(match[1]);}return null;}
+
+async function handleBankReconciliationFilePP(event,type){
+    const file=event.target.files?.[0];if(!file)return;try{setText('ppBankImportStatus',`Lecture de ${file.name}…`);let rows=[];if(type==='pdf'){const text=await ppExtractBankPDFTextPP(file);rows=ppParseBankPDFRowsPP(text,file.name);const opening=ppDetectPDFStatementBalancePP(text,'opening'),closing=ppDetectPDFStatementBalancePP(text,'closing');if(opening!==null)setValue('ppBankOpeningBalance',opening);if(closing!==null)setValue('ppBankClosingBalance',closing);}else rows=await ppParseBankExcelRowsPP(file);
+        if(!rows.length)throw new Error('Aucune opération exploitable détectée. Vérifiez le fichier ou ajoutez les lignes manuellement.');ppBankImportDefaultSourcePP=type;ppBankImportPreviewPP=rows.map(row=>({...row,_previewId:String(row.id)}));const dates=rows.map(r=>r.date).filter(Boolean).sort();if(dates.length){setValue('ppBankFrom',dates[0]);setValue('ppBankTo',dates.at(-1));}ppRenderBankImportPreviewPP();setText('ppBankImportStatus',`✅ ${rows.length} opération(s) détectée(s) dans ${file.name}. Vérifiez le tableau avant d’enregistrer.`);
+    }catch(error){console.error(error);setText('ppBankImportStatus',`❌ ${error.message||'Import impossible.'}`);alert(error.message||'Import impossible.');}finally{event.target.value='';}
+}
+
+function saveBankReconciliationPP(){
+    const bankName=getValue('ppBankName').trim(),from=getValue('ppBankFrom'),to=getValue('ppBankTo');if(!bankName||!from||!to){alert('Renseignez la banque et la période.');return;}if(from>to){alert('La date de début doit être antérieure à la date de fin.');return;}
+    const valid=ppBankImportPreviewPP.map(ppNormalizeBankTransactionPP).filter(row=>row.date&&row.label&&(row.debit>0||row.credit>0));if(!valid.length){alert('Ajoutez au moins une opération avec date, libellé et montant.');return;}if(valid.some(row=>row.debit>0&&row.credit>0)){alert('Une même ligne ne peut pas contenir simultanément un débit et un crédit.');return;}
+    const old=ppBankReconciliationEditIdPP?bankReconciliationsPP.find(r=>String(r.id)===String(ppBankReconciliationEditIdPP)):null,id=old?.id||createId(),now=new Date().toISOString();
+    const rec=ppNormalizeBankReconciliationPP({id,bankName,accountName:getValue('ppBankAccountName').trim(),accountNumber:getValue('ppBankAccountNumber').trim(),from,to,openingBalance:getValue('ppBankOpeningBalance'),closingBalance:getValue('ppBankClosingBalance'),sources:[...new Set(valid.map(r=>r.source||ppBankImportDefaultSourcePP))],fileName:[...new Set(valid.map(r=>r.fileName).filter(Boolean))].join(', '),status:old?.status||'draft',createdAt:old?.createdAt||now,updatedAt:now});
+    if(old){const index=bankReconciliationsPP.findIndex(r=>String(r.id)===String(id));bankReconciliationsPP[index]=rec;}else bankReconciliationsPP.unshift(rec);
+    const existing=new Map(ppBankTransactionsForPP(id).map(tx=>[String(tx.id),tx]));bankStatementTransactionsPP=bankStatementTransactionsPP.filter(tx=>String(tx.reconciliationId)!==String(id));valid.forEach(row=>{const previous=existing.get(String(row.id));bankStatementTransactionsPP.push(ppNormalizeBankTransactionPP({...row,id:previous?.id||(/^[0-9]+$/.test(String(row.id))?row.id:createId()),reconciliationId:id,matchedAccountingKey:previous?.matchedAccountingKey||row.matchedAccountingKey||null,createdAt:previous?.createdAt||row.createdAt||now,updatedAt:now}));});
+    saveData();closeModal('ppBankReconciliationModal');ppActiveBankReconciliationIdPP=String(id);ppAutoMatchBankReconciliationPP(id,true);renderAccountingPP();
+}
+
+function ppDownloadBankTemplatePP(){if(typeof XLSX==='undefined'){alert("La bibliothèque Excel n'est pas chargée.");return;}const rows=[{'Date opération':'01/08/2026','Date valeur':'01/08/2026','Référence':'VIR-001','Libellé':'Exemple virement client','Débit':0,'Crédit':1250.00,'Solde':15250.00},{'Date opération':'02/08/2026','Date valeur':'02/08/2026','Référence':'CHQ-002','Libellé':'Exemple règlement fournisseur','Débit':500.00,'Crédit':0,'Solde':14750.00}],sheet=XLSX.utils.json_to_sheet(rows),book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,sheet,'Relevé bancaire');XLSX.writeFile(book,'modele-releve-bancaire-pause-plate.xlsx');}
+
+function exportBankReconciliationExcelPP(id){const rec=bankReconciliationsPP.find(r=>String(r.id)===String(id));if(!rec||typeof XLSX==='undefined')return;const stats=ppBankReconciliationStatsPP(rec),rows=stats.txs.map(tx=>{const state=ppBankMatchStatePP(tx,stats.map);return {Date:tx.date,'Date valeur':tx.valueDate,Reference:tx.reference,Libelle:tx.label,Debit:tx.debit,Credit:tx.credit,Solde:tx.balance??'',Statut:state.label,'Piece comptable':state.move?.piece||'','Date comptable':state.move?.date||'','Montant comptable':state.move?.amount??''};}),sheet=XLSX.utils.json_to_sheet(rows),book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,sheet,'Rapprochement');XLSX.writeFile(book,`rapprochement-${rec.from}-${rec.to}.xlsx`);}
+function printBankReconciliationPP(id){const rec=bankReconciliationsPP.find(r=>String(r.id)===String(id));if(!rec)return;const stats=ppBankReconciliationStatsPP(rec),rows=stats.txs.map(tx=>{const state=ppBankMatchStatePP(tx,stats.map);return `<tr><td>${formatDate(tx.date)}</td><td>${escapeHTML(tx.reference||'-')}</td><td>${escapeHTML(tx.label)}</td><td>${tx.debit?formatMoney(tx.debit):'-'}</td><td>${tx.credit?formatMoney(tx.credit):'-'}</td><td>${state.label}</td><td>${escapeHTML(state.move?.piece||'-')}</td></tr>`;}).join('');printDocument('État de rapprochement bancaire',`<div class="doc-head"><h1>Pause & Plate</h1><p>État de rapprochement bancaire</p></div>${detailRowsHTML([['Banque',rec.bankName],['Compte',rec.accountName||rec.accountNumber||'-'],['Période',`${formatDate(rec.from)} → ${formatDate(rec.to)}`],['Solde initial relevé',formatMoney(rec.openingBalance)],['Solde final relevé',formatMoney(rec.closingBalance)],['Solde comptable',formatMoney(stats.accountingClosing)],['Écart brut',formatMoney(stats.rawGap)],['Écritures comptables en circulation',String(stats.unmatchedAccounting.length)],['Opérations banque non comptabilisées',String(stats.unmatched)],['Écart final rapproché',formatMoney(stats.finalGap)],['Statut',ppBankStatusLabelPP(rec.status)]])}<h2>Opérations rapprochées</h2><table><thead><tr><th>Date</th><th>Référence</th><th>Libellé</th><th>Débit</th><th>Crédit</th><th>Statut</th><th>Pièce comptable</th></tr></thead><tbody>${rows}</tbody></table>`);}
 
 
 /* =========================================================
@@ -12274,7 +12566,9 @@ const PP_CLOUD_DATASETS = {
     recipes: () => recipesPP,
     dailySalesScans: () => dailySalesScansPP,
     accountingEntries: () => accountingEntriesPP,
-    accountingSettings: () => accountingSettingsPP
+    accountingSettings: () => accountingSettingsPP,
+    bankStatementTransactions: () => bankStatementTransactionsPP,
+    bankReconciliations: () => bankReconciliationsPP
 };
 
 // Employees only receive the datasets required by the two modules that can be
@@ -12592,6 +12886,8 @@ function ppSetDataset(key,items){
         case "dailySalesScans": dailySalesScansPP=safe; break;
         case "accountingEntries": accountingEntriesPP=safe; break;
         case "accountingSettings": accountingSettingsPP=safe; break;
+        case "bankStatementTransactions": bankStatementTransactionsPP=safe.map(ppNormalizeBankTransactionPP); break;
+        case "bankReconciliations": bankReconciliationsPP=safe.map(ppNormalizeBankReconciliationPP); break;
     }
 }
 
@@ -12610,10 +12906,12 @@ function ppSaveLocalOnly(){
     localStorage.setItem(PP_EXTRA_KEYS.dailySalesScans,JSON.stringify(dailySalesScansPP));
     localStorage.setItem(PP_EXTRA_KEYS.accountingEntries,JSON.stringify(accountingEntriesPP));
     localStorage.setItem(PP_EXTRA_KEYS.accountingSettings,JSON.stringify(accountingSettingsPP));
+    localStorage.setItem(PP_EXTRA_KEYS.bankStatementTransactions,JSON.stringify(bankStatementTransactionsPP));
+    localStorage.setItem(PP_EXTRA_KEYS.bankReconciliations,JSON.stringify(bankReconciliationsPP));
 }
 
 function ppLocalHasData(){
-    return products.length||movements.length||suppliers.length||invoices.length||supplierPaymentsPP.length||clientsPP.length||clientInvoicesPP.length||clientPaymentsPP.length||salesPP.length||expensesPP.length||recipesPP.length||dailySalesScansPP.length||accountingEntriesPP.length||accountingSettingsPP.length;
+    return products.length||movements.length||suppliers.length||invoices.length||supplierPaymentsPP.length||clientsPP.length||clientInvoicesPP.length||clientPaymentsPP.length||salesPP.length||expensesPP.length||recipesPP.length||dailySalesScansPP.length||accountingEntriesPP.length||accountingSettingsPP.length||bankStatementTransactionsPP.length||bankReconciliationsPP.length;
 }
 
 async function ppCloudHasData(){
