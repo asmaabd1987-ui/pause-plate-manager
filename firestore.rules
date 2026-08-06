@@ -36,7 +36,6 @@ service cloud.firestore {
 
     function hasStockPermission() {
       return hasActiveProfile()
-        && profile().role == 'employee'
         && profile().keys().hasAll(['permissions'])
         && profile().permissions.keys().hasAll(['stock'])
         && profile().permissions.stock == true;
@@ -44,7 +43,6 @@ service cloud.firestore {
 
     function hasExpensesPermission() {
       return hasActiveProfile()
-        && profile().role == 'employee'
         && profile().keys().hasAll(['permissions'])
         && profile().permissions.keys().hasAll(['expenses'])
         && profile().permissions.expenses == true;
@@ -52,7 +50,6 @@ service cloud.firestore {
 
     function hasShiftClosingPermission() {
       return hasActiveProfile()
-        && profile().role == 'employee'
         && profile().keys().hasAll(['permissions'])
         && profile().permissions.keys().hasAll(['shiftClosings'])
         && profile().permissions.shiftClosings == true;
