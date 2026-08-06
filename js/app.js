@@ -19741,3 +19741,614 @@ if(document.readyState === "loading"){
 }else{
     ppStockLossRenderPagePP();
 }
+
+/* =========================================================
+   RÉAPPROVISIONNEMENT AUTOMATIQUE — v18
+========================================================= */
+
+const PP_REORDER_SETTINGS_KEY = "pause_plate_replenishment_settings";
+const PP_REORDER_PAGE_SIZE = 15;
+
+let ppReorderSettingsPP = {
+    analysisDays: 30,
+    coverageDays: 14,
+    expectedDate: "",
+    ...(loadStorage(PP_REORDER_SETTINGS_KEY, {}) || {})
+};
+let ppReorderSearchPP = "";
+let ppReorderCategoryPP = "";
+let ppReorderStatusPP = "toOrder";
+let ppReorderPagePP = 1;
+let ppReorderOverridesPP = new Map();
+let ppReorderLastSignaturePP = "";
+
+function ppReorderNumberPP(value){
+    const number = Number(value || 0);
+    return Number.isFinite(number) ? number : 0;
+}
+
+function ppReorderRoundPP(value, digits = 3){
+    const power = 10 ** digits;
+    return Math.round((ppReorderNumberPP(value) + Number.EPSILON) * power) / power;
+}
+
+function ppReorderTodayPP(){
+    return new Date().toISOString().slice(0, 10);
+}
+
+function ppReorderAddDaysPP(date, days){
+    const value = new Date(`${String(date || ppReorderTodayPP()).slice(0,10)}T12:00:00`);
+    value.setDate(value.getDate() + Number(days || 0));
+    return value.toISOString().slice(0,10);
+}
+
+function ppReorderUnitQuantityPP(value, unit){
+    const quantity = Math.max(ppReorderNumberPP(value), 0);
+    const normalized = normalizeText(unit || "");
+    const integerUnits = ["piece", "unite", "bouteille", "canette", "sachet", "carton", "boite", "paquet", "barquette"];
+    return integerUnits.some(item => normalized.includes(item))
+        ? Math.ceil(quantity - 0.0000001)
+        : ppReorderRoundPP(quantity, 3);
+}
+
+function ppReorderMovementDatePP(movement){
+    return String(movement?.date || movement?.createdAt || "").slice(0,10);
+}
+
+function ppReorderIsOperationalExitPP(movement){
+    if(String(movement?.type || "") !== "exit") return false;
+    if(movement?.inventoryId) return false;
+    const reason = normalizeText(`${movement?.reason || ""} ${movement?.note || ""}`);
+    if(reason.includes("ajustement inventaire") || reason.includes("correction inventaire")) return false;
+    return true;
+}
+
+function ppReorderConsumptionPP(product, days){
+    const end = ppReorderTodayPP();
+    const start = ppReorderAddDaysPP(end, -(Math.max(Number(days) || 1, 1) - 1));
+    return ppReorderRoundPP((Array.isArray(movements) ? movements : []).reduce((total, movement) => {
+        if(!ppReorderIsOperationalExitPP(movement)) return total;
+        const date = ppReorderMovementDatePP(movement);
+        if(!date || date < start || date > end) return total;
+        const sameProduct = String(movement.productId || "") === String(product.id)
+            || (!movement.productId && normalizeText(movement.productName || "") === normalizeText(product.name || ""));
+        return sameProduct ? total + Math.max(ppReorderNumberPP(movement.quantity), 0) : total;
+    }, 0));
+}
+
+function ppReorderPendingQtyPP(product){
+    return ppReorderRoundPP((Array.isArray(purchaseOrdersPP) ? purchaseOrdersPP : []).reduce((total, order) => {
+        if(order?.status === "cancelled") return total;
+        return total + (order?.lines || []).reduce((lineTotal, line) => {
+            if(String(line.productId || "") !== String(product.id)) return lineTotal;
+            const received = typeof ppPOReceivedQtyPP === "function"
+                ? ppPOReceivedQtyPP(order.id, line.id)
+                : 0;
+            return lineTotal + Math.max(ppReorderNumberPP(line.orderedQty) - received, 0);
+        }, 0);
+    }, 0));
+}
+
+function ppReorderLatestSupplierPP(product){
+    const receipts = (Array.isArray(purchaseReceiptsPP) ? purchaseReceiptsPP : [])
+        .filter(receipt => receipt?.status === "validated" && (receipt.lines || []).some(line => String(line.productId || "") === String(product.id)))
+        .sort((a,b) => String(b.date || b.validatedAt || b.createdAt || "").localeCompare(String(a.date || a.validatedAt || a.createdAt || "")));
+    if(receipts[0]?.supplierId && suppliers.some(item => String(item.id) === String(receipts[0].supplierId))) return receipts[0].supplierId;
+
+    const linkedInvoices = (Array.isArray(invoices) ? invoices : [])
+        .filter(invoice => (invoice.lines || []).some(line => String(line.productId || "") === String(product.id)))
+        .sort((a,b) => String(b.date || b.createdAt || "").localeCompare(String(a.date || a.createdAt || "")));
+    if(linkedInvoices[0]?.supplierId && suppliers.some(item => String(item.id) === String(linkedInvoices[0].supplierId))) return linkedInvoices[0].supplierId;
+
+    const orders = (Array.isArray(purchaseOrdersPP) ? purchaseOrdersPP : [])
+        .filter(order => order?.status !== "cancelled" && (order.lines || []).some(line => String(line.productId || "") === String(product.id)))
+        .sort((a,b) => String(b.date || b.createdAt || "").localeCompare(String(a.date || a.createdAt || "")));
+    if(orders[0]?.supplierId && suppliers.some(item => String(item.id) === String(orders[0].supplierId))) return orders[0].supplierId;
+    return null;
+}
+
+function ppReorderEstimatedPricePP(product){
+    const receipts = (Array.isArray(purchaseReceiptsPP) ? purchaseReceiptsPP : [])
+        .filter(receipt => receipt?.status === "validated")
+        .sort((a,b) => String(b.date || b.validatedAt || b.createdAt || "").localeCompare(String(a.date || a.validatedAt || a.createdAt || "")));
+    for(const receipt of receipts){
+        const line = (receipt.lines || []).find(item => String(item.productId || "") === String(product.id) && ppReorderNumberPP(item.purchasePrice) > 0);
+        if(line) return ppReorderNumberPP(line.purchasePrice);
+    }
+    const linkedInvoices = (Array.isArray(invoices) ? invoices : [])
+        .filter(invoice => (invoice.lines || []).some(line => String(line.productId || "") === String(product.id) && ppReorderNumberPP(line.price) > 0))
+        .sort((a,b) => String(b.date || b.createdAt || "").localeCompare(String(a.date || a.createdAt || "")));
+    if(linkedInvoices[0]){
+        const line = linkedInvoices[0].lines.find(item => String(item.productId || "") === String(product.id) && ppReorderNumberPP(item.price) > 0);
+        if(line) return ppReorderNumberPP(line.price);
+    }
+    return Math.max(ppReorderNumberPP(product.price), 0);
+}
+
+function ppReorderDataSignaturePP(){
+    const productPart = (Array.isArray(products) ? products : []).map(product => `${product.id}:${ppReorderNumberPP(product.stock)}:${ppReorderNumberPP(product.minStock)}:${ppReorderNumberPP(product.price)}`).join("|");
+    const movementPart = `${movements?.length || 0}:${movements?.[0]?.id || ""}:${movements?.[0]?.date || ""}`;
+    const orderPart = (Array.isArray(purchaseOrdersPP) ? purchaseOrdersPP : []).map(order => `${order.id}:${order.status}:${(order.lines || []).map(line => `${line.id}:${line.orderedQty}`).join(",")}`).join("|");
+    const receiptPart = `${purchaseReceiptsPP?.length || 0}:${purchaseReceiptsPP?.[0]?.id || ""}:${purchaseReceiptsPP?.[0]?.status || ""}`;
+    return `${productPart}#${movementPart}#${orderPart}#${receiptPart}`;
+}
+
+function ppReorderMaybeResetOverridesPP(){
+    const signature = ppReorderDataSignaturePP();
+    if(signature !== ppReorderLastSignaturePP){
+        ppReorderLastSignaturePP = signature;
+        ppReorderOverridesPP.clear();
+        ppReorderPagePP = 1;
+    }
+}
+
+function ppReorderBaseRowsPP(){
+    ppReorderMaybeResetOverridesPP();
+    const analysisDays = Math.max(Number(ppReorderSettingsPP.analysisDays) || 30, 1);
+    const coverageDays = Math.max(Number(ppReorderSettingsPP.coverageDays) || 14, 1);
+    return (Array.isArray(products) ? products : []).map(product => {
+        const stock = ppReorderNumberPP(product.stock);
+        const minStock = Math.max(ppReorderNumberPP(product.minStock), 0);
+        const consumption = ppReorderConsumptionPP(product, analysisDays);
+        const averageDaily = consumption / analysisDays;
+        const target = Math.max(minStock, averageDaily * coverageDays);
+        const pending = ppReorderPendingQtyPP(product);
+        const grossNeed = Math.max(target - stock, 0);
+        const suggestedRaw = Math.max(target - stock - pending, 0);
+        const suggested = ppReorderUnitQuantityPP(suggestedRaw, product.unit);
+        const covered = grossNeed > 0.0000001 && suggested <= 0.0000001 && pending > 0.0000001;
+        let status = "coverage";
+        if(stock <= 0.0000001) status = "rupture";
+        else if(minStock > 0 && stock <= minStock + 0.0000001) status = "low";
+        const inferredSupplierId = ppReorderLatestSupplierPP(product);
+        const price = ppReorderEstimatedPricePP(product);
+        if(!ppReorderOverridesPP.has(String(product.id))){
+            ppReorderOverridesPP.set(String(product.id), {
+                selected: suggested > 0.0000001,
+                quantity: suggested,
+                supplierId: inferredSupplierId
+            });
+        }
+        const override = ppReorderOverridesPP.get(String(product.id));
+        return {
+            product,
+            stock,
+            minStock,
+            consumption,
+            averageDaily,
+            target,
+            pending,
+            projected: stock + pending,
+            grossNeed,
+            suggested,
+            covered,
+            status,
+            price,
+            selected: override?.selected === true && suggested > 0.0000001,
+            quantity: Math.max(ppReorderNumberPP(override?.quantity), 0),
+            supplierId: override?.supplierId ?? inferredSupplierId
+        };
+    }).filter(row => row.grossNeed > 0.0000001 || row.pending > 0.0000001);
+}
+
+function ppReorderFilteredRowsPP(){
+    const query = normalizeText(ppReorderSearchPP);
+    return ppReorderBaseRowsPP().filter(row => {
+        if(ppReorderCategoryPP && String(row.product.category || "") !== ppReorderCategoryPP) return false;
+        if(ppReorderStatusPP === "toOrder" && !(row.suggested > 0.0000001)) return false;
+        if(ppReorderStatusPP === "rupture" && row.status !== "rupture") return false;
+        if(ppReorderStatusPP === "low" && row.status !== "low") return false;
+        if(ppReorderStatusPP === "coverage" && !(row.status === "coverage" && row.suggested > 0.0000001)) return false;
+        if(ppReorderStatusPP === "covered" && !row.covered) return false;
+        const supplier = suppliers.find(item => String(item.id) === String(row.supplierId));
+        if(query && !normalizeText(`${row.product.name || ""} ${row.product.category || ""} ${supplier?.name || ""}`).includes(query)) return false;
+        return true;
+    }).sort((a,b) => {
+        const rank = {rupture:0,low:1,coverage:2};
+        return (rank[a.status] ?? 9) - (rank[b.status] ?? 9)
+            || Number(b.suggested > 0) - Number(a.suggested > 0)
+            || normalizeText(a.product.name).localeCompare(normalizeText(b.product.name));
+    });
+}
+
+function ppReorderStatusLabelPP(row){
+    if(row.covered) return "Déjà commandé";
+    if(row.status === "rupture") return "Rupture";
+    if(row.status === "low") return "Stock faible";
+    return "Couverture";
+}
+
+function ppReorderStatusBadgePP(row){
+    const cls = row.covered ? "info" : row.status === "rupture" ? "danger" : row.status === "low" ? "warning" : "info";
+    return `<span class="status ${cls}">${escapeHTML(ppReorderStatusLabelPP(row))}</span>`;
+}
+
+function ppReorderSaveSettingsPP(){
+    localStorage.setItem(PP_REORDER_SETTINGS_KEY, JSON.stringify(ppReorderSettingsPP));
+}
+
+function ppReorderEnsureStylesPP(){
+    if(document.getElementById("ppReorderStyles")) return;
+    const style = document.createElement("style");
+    style.id = "ppReorderStyles";
+    style.textContent = `
+      #replenishmentPage .pp-reorder-toolbar{display:grid;grid-template-columns:minmax(210px,1.3fr) repeat(4,minmax(135px,.65fr));gap:10px;align-items:end}
+      #replenishmentPage .pp-reorder-actions{display:flex;gap:8px;flex-wrap:wrap}
+      #replenishmentPage .pp-reorder-card{cursor:pointer;transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease}
+      #replenishmentPage .pp-reorder-card:hover{transform:translateY(-1px);border-color:#b8c9bf;box-shadow:0 8px 20px rgba(9,75,45,.06)}
+      #replenishmentPage .pp-reorder-card.is-active{border-color:#094b2d;box-shadow:0 0 0 2px rgba(9,75,45,.08)}
+      #replenishmentPage .pp-reorder-pagination{display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:14px}
+      #replenishmentPage .pp-reorder-pagination button{min-width:36px;height:36px;border:1px solid #dce4df;border-radius:8px;background:#fff;cursor:pointer}
+      #replenishmentPage .pp-reorder-pagination button.active{background:#094b2d;color:#fff;border-color:#094b2d}
+      #replenishmentPage .pp-reorder-supplier{min-width:180px}
+      #replenishmentPage .pp-reorder-qty{min-width:105px}
+      #replenishmentPage tr.pp-reorder-covered{opacity:.72}
+      @media(max-width:1050px){#replenishmentPage .pp-reorder-toolbar{grid-template-columns:1fr 1fr 1fr}}
+      @media(max-width:650px){#replenishmentPage .pp-reorder-toolbar{grid-template-columns:1fr 1fr}}
+      @media(max-width:460px){#replenishmentPage .pp-reorder-toolbar{grid-template-columns:1fr}}
+    `;
+    document.head.appendChild(style);
+}
+
+function ppReorderEnsureUI(){
+    ppReorderEnsureStylesPP();
+    let nav = document.querySelector('[data-page="replenishment"]');
+    if(!nav){
+        const lossesNav = document.querySelector('.sidebar [data-page="stockLosses"]');
+        const inventoryNav = document.querySelector('.sidebar [data-page="inventory"]');
+        const stockNav = document.querySelector('.sidebar [data-page="stock"]');
+        const anchor = lossesNav || inventoryNav || stockNav;
+        if(anchor){
+            nav = document.createElement("button");
+            nav.type = "button";
+            nav.className = "nav-item";
+            nav.dataset.page = "replenishment";
+            nav.innerHTML = "🔄 <span>Réapprovisionnement</span>";
+            anchor.insertAdjacentElement("afterend", nav);
+            nav.addEventListener("click", () => ppReorderOpenPagePP(nav));
+        }
+    }
+    if(nav) nav.style.display = (typeof ppIsAdmin === "function" && !ppIsAdmin()) ? "none" : "";
+
+    if(!document.getElementById("replenishmentPage")){
+        const content = document.querySelector("section.content");
+        if(content){
+            const page = document.createElement("div");
+            page.id = "replenishmentPage";
+            page.className = "page";
+            page.innerHTML = `
+              <div class="page-actions">
+                <div><h2>🔄 Réapprovisionnement</h2></div>
+                <div class="pp-reorder-actions">
+                  <button type="button" class="btn" onclick="ppReorderPrintPP()">🖨️ Imprimer</button>
+                  <button type="button" class="btn" onclick="ppReorderExportExcelPP()">📊 Excel</button>
+                  <button type="button" class="btn secondary" onclick="ppReorderRecalculatePP()">↻ Recalculer</button>
+                  <button type="button" class="btn primary" onclick="ppReorderCreateOrdersPP()">Créer bons de commande</button>
+                </div>
+              </div>
+              <div class="stats" id="ppReorderStats"></div>
+              <div class="section">
+                <div class="pp-reorder-toolbar">
+                  <div><label>Recherche</label><input id="ppReorderSearch" placeholder="Article, catégorie, fournisseur…" oninput="ppReorderSetFilterPP('search',this.value)"></div>
+                  <div><label>Catégorie</label><select id="ppReorderCategory" onchange="ppReorderSetFilterPP('category',this.value)"><option value="">Toutes</option></select></div>
+                  <div><label>Période</label><select id="ppReorderAnalysisDays" onchange="ppReorderSetSettingPP('analysisDays',this.value)"><option value="7">7 jours</option><option value="15">15 jours</option><option value="30">30 jours</option><option value="60">60 jours</option><option value="90">90 jours</option></select></div>
+                  <div><label>Couverture</label><input id="ppReorderCoverageDays" type="number" min="1" max="365" step="1" onchange="ppReorderSetSettingPP('coverageDays',this.value)"></div>
+                  <div><label>Livraison prévue</label><input id="ppReorderExpectedDate" type="date" onchange="ppReorderSetSettingPP('expectedDate',this.value,false)"></div>
+                </div>
+                <datalist id="ppReorderSupplierList"></datalist>
+                <div class="table-wrapper" style="margin-top:14px">
+                  <table style="min-width:1450px">
+                    <thead><tr><th><input id="ppReorderSelectAll" type="checkbox" onchange="ppReorderToggleAllPP(this.checked)"></th><th>Article</th><th>Fournisseur</th><th>Stock</th><th>Minimum</th><th>Consommation</th><th>Moyenne/jour</th><th>Cible</th><th>En commande</th><th>Quantité proposée</th><th>PU estimé</th><th>Total</th><th>Situation</th></tr></thead>
+                    <tbody id="ppReorderTable"></tbody>
+                  </table>
+                </div>
+                <div id="ppReorderPagination" class="pp-reorder-pagination"></div>
+              </div>`;
+            content.appendChild(page);
+        }
+    }
+}
+
+function ppReorderOpenPagePP(button){
+    if(typeof ppIsAdmin === "function" && !ppIsAdmin()){
+        alert("Accès non autorisé.");
+        return;
+    }
+    document.querySelectorAll(".nav-item").forEach(item => item.classList.remove("active"));
+    if(button) button.classList.add("active");
+    document.querySelectorAll(".page").forEach(page => page.classList.remove("active-page"));
+    document.getElementById("replenishmentPage")?.classList.add("active-page");
+    setText("pageTitle", "Réapprovisionnement");
+    setText("pageSubtitle", "");
+    ppReorderRenderPagePP();
+}
+
+function ppReorderSetFilterPP(key, value){
+    if(key === "search") ppReorderSearchPP = String(value || "");
+    if(key === "category") ppReorderCategoryPP = String(value || "");
+    if(key === "status") ppReorderStatusPP = String(value || "");
+    ppReorderPagePP = 1;
+    ppReorderRenderPagePP();
+}
+
+function ppReorderSetSettingPP(key, value, recalculate = true){
+    if(key === "analysisDays") ppReorderSettingsPP.analysisDays = Math.max(Number(value) || 30, 1);
+    if(key === "coverageDays") ppReorderSettingsPP.coverageDays = Math.max(Number(value) || 14, 1);
+    if(key === "expectedDate") ppReorderSettingsPP.expectedDate = String(value || "").slice(0,10);
+    ppReorderSaveSettingsPP();
+    if(recalculate){
+        ppReorderOverridesPP.clear();
+        ppReorderPagePP = 1;
+    }
+    ppReorderRenderPagePP();
+}
+
+function ppReorderRecalculatePP(){
+    ppReorderOverridesPP.clear();
+    ppReorderLastSignaturePP = "";
+    ppReorderPagePP = 1;
+    ppReorderRenderPagePP();
+}
+
+function ppReorderSetPagePP(page){
+    ppReorderPagePP = Math.max(Number(page) || 1, 1);
+    ppReorderRenderPagePP();
+}
+
+function ppReorderSetSelectedPP(productId, checked){
+    const key = String(productId);
+    const override = ppReorderOverridesPP.get(key) || {};
+    override.selected = checked === true;
+    ppReorderOverridesPP.set(key, override);
+    ppReorderRenderStatsPP();
+    ppReorderUpdateSelectAllPP();
+}
+
+function ppReorderSetQuantityPP(productId, value){
+    const key = String(productId);
+    const row = ppReorderBaseRowsPP().find(item => String(item.product.id) === key);
+    const override = ppReorderOverridesPP.get(key) || {};
+    override.quantity = ppReorderUnitQuantityPP(value, row?.product?.unit || "");
+    override.selected = override.quantity > 0;
+    ppReorderOverridesPP.set(key, override);
+    ppReorderRenderStatsPP();
+    const total = document.getElementById(`ppReorderTotal-${CSS.escape(key)}`);
+    if(total && row) total.textContent = formatMoney(override.quantity * row.price);
+    ppReorderUpdateSelectAllPP();
+}
+
+function ppReorderSetSupplierPP(productId, value){
+    const supplier = suppliers.find(item => normalizeText(item.name || "") === normalizeText(value || ""));
+    const key = String(productId);
+    const override = ppReorderOverridesPP.get(key) || {};
+    override.supplierId = supplier?.id ?? null;
+    ppReorderOverridesPP.set(key, override);
+}
+
+function ppReorderToggleAllPP(checked){
+    ppReorderFilteredRowsPP().forEach(row => {
+        if(!(row.suggested > 0.0000001)) return;
+        const key = String(row.product.id);
+        const override = ppReorderOverridesPP.get(key) || {};
+        override.selected = checked === true;
+        ppReorderOverridesPP.set(key, override);
+    });
+    ppReorderRenderPagePP();
+}
+
+function ppReorderUpdateSelectAllPP(){
+    const box = document.getElementById("ppReorderSelectAll");
+    if(!box) return;
+    const actionable = ppReorderFilteredRowsPP().filter(row => row.suggested > 0.0000001);
+    box.checked = actionable.length > 0 && actionable.every(row => ppReorderOverridesPP.get(String(row.product.id))?.selected === true);
+    box.indeterminate = actionable.some(row => ppReorderOverridesPP.get(String(row.product.id))?.selected === true) && !box.checked;
+}
+
+function ppReorderRenderControlsPP(){
+    const search = document.getElementById("ppReorderSearch");
+    if(search && search.value !== ppReorderSearchPP) search.value = ppReorderSearchPP;
+    const category = document.getElementById("ppReorderCategory");
+    if(category){
+        const current = ppReorderCategoryPP;
+        const categories = [...new Set(products.map(product => String(product.category || "Autre")))].sort((a,b) => a.localeCompare(b,"fr"));
+        category.innerHTML = '<option value="">Toutes</option>' + categories.map(item => `<option value="${escapeHTML(item)}">${escapeHTML(item)}</option>`).join("");
+        category.value = current;
+    }
+    setValue("ppReorderAnalysisDays", String(ppReorderSettingsPP.analysisDays || 30));
+    setValue("ppReorderCoverageDays", String(ppReorderSettingsPP.coverageDays || 14));
+    setValue("ppReorderExpectedDate", ppReorderSettingsPP.expectedDate || "");
+    const supplierList = document.getElementById("ppReorderSupplierList");
+    if(supplierList) supplierList.innerHTML = suppliers.slice().sort((a,b) => String(a.name).localeCompare(String(b.name),"fr")).map(supplier => `<option value="${escapeHTML(supplier.name)}"></option>`).join("");
+}
+
+function ppReorderCardFilterPP(status){
+    ppReorderStatusPP = status;
+    ppReorderPagePP = 1;
+    ppReorderRenderPagePP();
+}
+
+function ppReorderRenderStatsPP(){
+    const box = document.getElementById("ppReorderStats");
+    if(!box) return;
+    const rows = ppReorderBaseRowsPP();
+    const values = [
+        ["toOrder", "À commander", rows.filter(row => row.suggested > 0.0000001).length],
+        ["rupture", "Ruptures", rows.filter(row => row.status === "rupture").length],
+        ["low", "Stock faible", rows.filter(row => row.status === "low").length],
+        ["coverage", "Couverture", rows.filter(row => row.status === "coverage" && row.suggested > 0.0000001).length],
+        ["covered", "Déjà commandé", rows.filter(row => row.covered).length]
+    ];
+    box.innerHTML = values.map(([status,label,value]) => `<button type="button" class="stat-card pp-reorder-card ${ppReorderStatusPP === status ? "is-active" : ""}" onclick="ppReorderCardFilterPP('${status}')"><span>${label}</span><strong>${value}</strong></button>`).join("");
+}
+
+function ppReorderRenderTablePP(){
+    const table = document.getElementById("ppReorderTable");
+    const pagination = document.getElementById("ppReorderPagination");
+    if(!table || !pagination) return;
+    const filtered = ppReorderFilteredRowsPP();
+    const pages = Math.max(Math.ceil(filtered.length / PP_REORDER_PAGE_SIZE), 1);
+    ppReorderPagePP = Math.min(ppReorderPagePP, pages);
+    const start = (ppReorderPagePP - 1) * PP_REORDER_PAGE_SIZE;
+    const rows = filtered.slice(start, start + PP_REORDER_PAGE_SIZE);
+    table.innerHTML = rows.map(row => {
+        const key = String(row.product.id);
+        const override = ppReorderOverridesPP.get(key) || {};
+        const supplier = suppliers.find(item => String(item.id) === String(override.supplierId ?? row.supplierId));
+        const quantity = Math.max(ppReorderNumberPP(override.quantity), 0);
+        const selected = override.selected === true && row.suggested > 0.0000001;
+        const disabled = !(row.suggested > 0.0000001);
+        const analysisLabel = `${Number(ppReorderSettingsPP.analysisDays || 30)} j`;
+        return `<tr class="${row.covered ? "pp-reorder-covered" : ""}">
+          <td><input type="checkbox" ${selected ? "checked" : ""} ${disabled ? "disabled" : ""} onchange="ppReorderSetSelectedPP('${escapeHTML(key)}',this.checked)"></td>
+          <td><strong>${escapeHTML(row.product.name)}</strong><br><small>${escapeHTML(row.product.category || "Autre")} · ${escapeHTML(row.product.unit || "")}</small></td>
+          <td><input class="pp-reorder-supplier" list="ppReorderSupplierList" value="${escapeHTML(supplier?.name || "")}" oninput="ppReorderSetSupplierPP('${escapeHTML(key)}',this.value)" ${disabled ? "disabled" : ""}></td>
+          <td>${formatNumber(row.stock)} ${escapeHTML(row.product.unit || "")}</td>
+          <td>${formatNumber(row.minStock)}</td>
+          <td>${formatNumber(row.consumption)} <small>(${analysisLabel})</small></td>
+          <td>${formatNumber(row.averageDaily)}</td>
+          <td>${formatNumber(row.target)}</td>
+          <td>${formatNumber(row.pending)}</td>
+          <td><input class="pp-reorder-qty" type="number" min="0" step="0.001" value="${quantity || ""}" oninput="ppReorderSetQuantityPP('${escapeHTML(key)}',this.value)" ${disabled ? "disabled" : ""}> ${escapeHTML(row.product.unit || "")}</td>
+          <td>${formatMoney(row.price)}</td>
+          <td id="ppReorderTotal-${escapeHTML(key)}"><strong>${formatMoney(quantity * row.price)}</strong></td>
+          <td>${ppReorderStatusBadgePP(row)}</td>
+        </tr>`;
+    }).join("") || '<tr><td colspan="13" class="empty">Aucun article.</td></tr>';
+    pagination.innerHTML = pages <= 1 ? "" : Array.from({length:pages}, (_, index) => `<button type="button" class="${index + 1 === ppReorderPagePP ? "active" : ""}" onclick="ppReorderSetPagePP(${index + 1})">${index + 1}</button>`).join("");
+    ppReorderUpdateSelectAllPP();
+}
+
+function ppReorderSelectedRowsPP(){
+    return ppReorderBaseRowsPP().filter(row => {
+        const override = ppReorderOverridesPP.get(String(row.product.id));
+        return override?.selected === true && ppReorderNumberPP(override.quantity) > 0;
+    }).map(row => {
+        const override = ppReorderOverridesPP.get(String(row.product.id));
+        return {...row, quantity:ppReorderUnitQuantityPP(override.quantity,row.product.unit), supplierId:override.supplierId};
+    });
+}
+
+function ppReorderRenderPagePP(){
+    ppReorderEnsureUI();
+    if(typeof ppIsAdmin === "function" && !ppIsAdmin()) return;
+    ppReorderRenderControlsPP();
+    ppReorderRenderStatsPP();
+    ppReorderRenderTablePP();
+}
+
+function ppReorderCreateOrdersPP(){
+    if(typeof ppIsAdmin === "function" && !ppIsAdmin()){
+        alert("Accès non autorisé.");
+        return;
+    }
+    const selected = ppReorderSelectedRowsPP();
+    if(!selected.length){
+        alert("Sélectionnez au moins un article.");
+        return;
+    }
+    const missing = selected.filter(row => !suppliers.some(item => String(item.id) === String(row.supplierId)));
+    if(missing.length){
+        alert(`Sélectionnez le fournisseur pour :\n${missing.map(row => `- ${row.product.name}`).join("\n")}`);
+        return;
+    }
+    const groups = new Map();
+    selected.forEach(row => {
+        const key = String(row.supplierId);
+        if(!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(row);
+    });
+    const created = [];
+    const date = ppReorderTodayPP();
+    groups.forEach((rows, supplierKey) => {
+        const supplier = suppliers.find(item => String(item.id) === supplierKey);
+        if(!supplier) return;
+        const order = ppNormalizePurchaseOrderPP({
+            id:createId(),
+            number:ppPONextNumberPP("BC", date, purchaseOrdersPP),
+            date,
+            expectedDate:String(ppReorderSettingsPP.expectedDate || "").slice(0,10),
+            supplierId:supplier.id,
+            supplierName:supplier.name,
+            status:"draft",
+            lines:rows.map(row => ppNormalizePOLinePP({
+                id:createId(),
+                productId:row.product.id,
+                productName:row.product.name,
+                category:row.product.category || "Autre",
+                unit:row.product.unit || "pièce",
+                orderedQty:row.quantity,
+                orderedPrice:row.price
+            })),
+            createdAt:new Date().toISOString(),
+            updatedAt:new Date().toISOString()
+        });
+        purchaseOrdersPP.unshift(order);
+        created.push(order);
+        if(typeof ppWriteAudit === "function") ppWriteAudit("purchases", order.id, "create", null, ppAuditSnapshot(order), "Bon de commande — Réapprovisionnement");
+    });
+    if(!created.length) return;
+    saveData();
+    ppReorderOverridesPP.clear();
+    ppReorderLastSignaturePP = "";
+    ppPOListStatusPP = "draft";
+    ppPOListPagePP = 1;
+    const nav = document.querySelector('[data-page="purchaseOrders"]');
+    ppPOOpenPagePP(nav);
+    alert(`${created.length} bon(s) de commande créé(s) en brouillon.`);
+}
+
+function ppReorderPrintPP(){
+    const rows = ppReorderFilteredRowsPP();
+    const body = rows.map(row => {
+        const override = ppReorderOverridesPP.get(String(row.product.id)) || {};
+        const supplier = suppliers.find(item => String(item.id) === String(override.supplierId ?? row.supplierId));
+        const quantity = ppReorderNumberPP(override.quantity);
+        return `<tr><td>${escapeHTML(row.product.name)}</td><td>${escapeHTML(supplier?.name || "-")}</td><td>${formatNumber(row.stock)} ${escapeHTML(row.product.unit || "")}</td><td>${formatNumber(row.minStock)}</td><td>${formatNumber(row.consumption)}</td><td>${formatNumber(row.pending)}</td><td>${formatNumber(quantity)}</td><td>${formatMoney(row.price)}</td><td>${formatMoney(quantity * row.price)}</td><td>${escapeHTML(ppReorderStatusLabelPP(row))}</td></tr>`;
+    }).join("");
+    printDocument("Réapprovisionnement", `<div class="doc-head"><h1>Pause & Plate</h1><p>Réapprovisionnement</p></div>${detailRowsHTML([["Date",formatDate(ppReorderTodayPP())],["Période",`${ppReorderSettingsPP.analysisDays} jours`],["Couverture",`${ppReorderSettingsPP.coverageDays} jours`],["Articles",rows.length]])}<table><thead><tr><th>Article</th><th>Fournisseur</th><th>Stock</th><th>Minimum</th><th>Consommation</th><th>En commande</th><th>Quantité</th><th>PU</th><th>Total</th><th>Situation</th></tr></thead><tbody>${body || '<tr><td colspan="10">Aucun article.</td></tr>'}</tbody></table>`);
+}
+
+function ppReorderExportExcelPP(){
+    if(typeof XLSX === "undefined"){
+        alert("La bibliothèque Excel n’est pas chargée.");
+        return;
+    }
+    const rows = ppReorderFilteredRowsPP().map(row => {
+        const override = ppReorderOverridesPP.get(String(row.product.id)) || {};
+        const supplier = suppliers.find(item => String(item.id) === String(override.supplierId ?? row.supplierId));
+        const quantity = ppReorderNumberPP(override.quantity);
+        return {
+            Article:row.product.name,
+            Catégorie:row.product.category,
+            Unité:row.product.unit,
+            Fournisseur:supplier?.name || "",
+            Stock_actuel:row.stock,
+            Stock_minimum:row.minStock,
+            Consommation:row.consumption,
+            Moyenne_jour:ppReorderRoundPP(row.averageDaily,3),
+            Stock_cible:ppReorderRoundPP(row.target,3),
+            En_commande:row.pending,
+            Quantité_proposée:quantity,
+            PU_estimé:row.price,
+            Total_estimé:ppReorderRoundPP(quantity * row.price,2),
+            Situation:ppReorderStatusLabelPP(row)
+        };
+    });
+    const sheet = XLSX.utils.json_to_sheet(rows);
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, "Réapprovisionnement");
+    XLSX.writeFile(book, `reapprovisionnement-${ppReorderTodayPP()}.xlsx`);
+}
+
+const ppReorderBaseRenderAllPP = renderAll;
+renderAll = function(){
+    const result = ppReorderBaseRenderAllPP.apply(this, arguments);
+    ppReorderRenderPagePP();
+    return result;
+};
+
+if(document.readyState === "loading"){
+    document.addEventListener("DOMContentLoaded", () => ppReorderRenderPagePP());
+}else{
+    ppReorderRenderPagePP();
+}
