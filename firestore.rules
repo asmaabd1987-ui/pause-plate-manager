@@ -64,7 +64,15 @@ service cloud.firestore {
 
     function canAccessDataset(dataset) {
       return isAdmin()
-        || (hasStockPermission() && (dataset == 'products' || dataset == 'movements'))
+        || (
+          hasStockPermission()
+          && (
+            dataset == 'products'
+            || dataset == 'movements'
+            || dataset == 'inventories'
+            || dataset == 'stockLosses'
+          )
+        )
         || (hasExpensesPermission() && dataset == 'expenses');
     }
 

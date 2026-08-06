@@ -18860,3 +18860,884 @@ saveData=function(){localStorage.setItem(PP_PURCHASE_ORDERS_KEY,JSON.stringify(p
 const ppPOBaseRenderAllPP=renderAll;
 renderAll=function(){const result=ppPOBaseRenderAllPP.apply(this,arguments);purchaseOrdersPP.forEach(ppPORefreshOrderStatusPP);ppPORenderPagePP();return result;};
 
+
+/* =========================================================
+   PERTES, CASSE ET CONSOMMATION INTERNE — v16
+========================================================= */
+
+const PP_STOCK_LOSSES_KEY = "pause_plate_stock_losses";
+const PP_STOCK_LOSS_PAGE_SIZE = 15;
+const PP_STOCK_LOSS_REASONS = [
+    "Produit périmé",
+    "Casse",
+    "Erreur de préparation",
+    "Plat retourné",
+    "Repas du personnel",
+    "Produit offert",
+    "Gaspillage",
+    "Écart inventaire",
+    "Autre"
+];
+
+let stockLossesPP = loadStorage(PP_STOCK_LOSSES_KEY, []);
+let ppStockLossEditingIdPP = null;
+let ppStockLossActiveIdPP = null;
+let ppStockLossSearchPP = "";
+let ppStockLossFromPP = "";
+let ppStockLossToPP = "";
+let ppStockLossReasonPP = "";
+let ppStockLossStatusPP = "";
+let ppStockLossSourceTypePP = "";
+let ppStockLossResponsiblePP = "";
+let ppStockLossPagePP = 1;
+
+function ppStockLossNumberPP(value){
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+}
+
+function ppStockLossDatePP(value){
+    return String(value || "").slice(0, 10);
+}
+
+function ppStockLossCurrentUserPP(){
+    try{
+        const identity = ppUserIdentity();
+        return String(identity?.name || identity?.email || "Utilisateur");
+    }catch(_){
+        return "Utilisateur";
+    }
+}
+
+function ppNormalizeStockLossComponentPP(raw){
+    const component = raw || {};
+    return {
+        productId: component.productId ?? null,
+        productName: String(component.productName || ""),
+        unit: String(component.unit || ""),
+        quantity: Math.max(ppStockLossNumberPP(component.quantity), 0),
+        unitPrice: Math.max(ppStockLossNumberPP(component.unitPrice), 0),
+        value: Math.max(ppStockLossNumberPP(component.value ?? (ppStockLossNumberPP(component.quantity) * ppStockLossNumberPP(component.unitPrice))), 0)
+    };
+}
+
+function ppNormalizeStockLossPP(raw){
+    const loss = raw || {};
+    const sourceType = loss.sourceType === "recipe" ? "recipe" : "product";
+    return {
+        id: loss.id ?? createId(),
+        reference: String(loss.reference || ""),
+        date: ppStockLossDatePP(loss.date),
+        sourceType,
+        productId: sourceType === "product" ? (loss.productId ?? loss.itemId ?? null) : null,
+        productName: sourceType === "product" ? String(loss.productName || loss.itemName || "") : "",
+        recipeId: sourceType === "recipe" ? (loss.recipeId ?? loss.itemId ?? null) : null,
+        recipeName: sourceType === "recipe" ? String(loss.recipeName || loss.itemName || "") : "",
+        quantity: Math.max(ppStockLossNumberPP(loss.quantity), 0),
+        unit: String(loss.unit || (sourceType === "recipe" ? "portion" : "")),
+        reason: String(loss.reason || "Autre"),
+        responsible: String(loss.responsible || ""),
+        inventoryId: loss.inventoryId ?? null,
+        inventoryReference: String(loss.inventoryReference || ""),
+        note: String(loss.note || ""),
+        status: loss.status === "validated" ? "validated" : "draft",
+        components: Array.isArray(loss.components) ? loss.components.map(ppNormalizeStockLossComponentPP) : [],
+        value: Math.max(ppStockLossNumberPP(loss.value), 0),
+        movementIds: Array.isArray(loss.movementIds) ? loss.movementIds.map(String) : [],
+        createdAt: loss.createdAt || new Date().toISOString(),
+        updatedAt: loss.updatedAt || loss.createdAt || new Date().toISOString(),
+        createdBy: String(loss.createdBy || ""),
+        validatedAt: loss.validatedAt || "",
+        validatedBy: String(loss.validatedBy || "")
+    };
+}
+
+stockLossesPP = Array.isArray(stockLossesPP) ? stockLossesPP.map(ppNormalizeStockLossPP) : [];
+
+function ppStockLossSourceNamePP(loss){
+    return loss?.sourceType === "recipe"
+        ? String(loss.recipeName || "")
+        : String(loss.productName || "");
+}
+
+function ppStockLossSourceLabelPP(loss){
+    return loss?.sourceType === "recipe" ? "Fiche technique" : "Article";
+}
+
+function ppStockLossStatusBadgePP(status){
+    return status === "validated"
+        ? '<span class="status success">Validée</span>'
+        : '<span class="status warning">Brouillon</span>';
+}
+
+function ppStockLossNextReferencePP(date){
+    const day = ppStockLossDatePP(date || new Date().toISOString());
+    const compact = day.replace(/-/g, "");
+    const count = stockLossesPP.filter(item => ppStockLossDatePP(item.date) === day).length + 1;
+    return `PER-${compact}-${String(count).padStart(3, "0")}`;
+}
+
+function ppStockLossBuildComponentsPP(sourceType, itemId, quantity){
+    const qty = Math.max(ppStockLossNumberPP(quantity), 0);
+    if(!(qty > 0)) return [];
+
+    if(sourceType === "product"){
+        const product = products.find(item => String(item.id) === String(itemId));
+        if(!product) return [];
+        const unitPrice = Math.max(ppStockLossNumberPP(product.price), 0);
+        return [ppNormalizeStockLossComponentPP({
+            productId: product.id,
+            productName: product.name,
+            unit: product.unit,
+            quantity: qty,
+            unitPrice,
+            value: qty * unitPrice
+        })];
+    }
+
+    const recipe = recipesPP.find(item => String(item.id) === String(itemId));
+    if(!recipe) return [];
+    const portions = Math.max(ppStockLossNumberPP(recipe.portions), 1);
+    const grouped = new Map();
+
+    (recipe.ingredients || []).forEach(ingredient => {
+        const product = products.find(item => String(item.id) === String(ingredient.productId));
+        if(!product) return;
+        const componentQty = (Math.max(ppStockLossNumberPP(ingredient.quantity), 0) / portions) * qty;
+        if(!(componentQty > 0)) return;
+        const key = String(product.id);
+        if(!grouped.has(key)){
+            grouped.set(key, {
+                productId: product.id,
+                productName: product.name,
+                unit: product.unit,
+                quantity: 0,
+                unitPrice: Math.max(ppStockLossNumberPP(product.price), 0),
+                value: 0
+            });
+        }
+        const component = grouped.get(key);
+        component.quantity += componentQty;
+        component.value = component.quantity * component.unitPrice;
+    });
+
+    return [...grouped.values()].map(ppNormalizeStockLossComponentPP);
+}
+
+function ppStockLossValuePP(loss){
+    if(loss?.status === "validated" && ppStockLossNumberPP(loss.value) >= 0){
+        return ppStockLossNumberPP(loss.value);
+    }
+    const sourceId = loss?.sourceType === "recipe" ? loss?.recipeId : loss?.productId;
+    return ppStockLossBuildComponentsPP(loss?.sourceType, sourceId, loss?.quantity)
+        .reduce((total, component) => total + ppStockLossNumberPP(component.value), 0);
+}
+
+function ppStockLossInventoryOptionsPP(selectedId = null){
+    const rows = (typeof inventoriesPP !== "undefined" && Array.isArray(inventoriesPP))
+        ? inventoriesPP.slice().sort((a,b) => String(b.date || "").localeCompare(String(a.date || "")))
+        : [];
+    return '<option value="">Aucun</option>' + rows.map(inventory =>
+        `<option value="${escapeHTML(String(inventory.id))}" ${String(selectedId || "") === String(inventory.id) ? "selected" : ""}>${escapeHTML(inventory.reference || "-")} — ${formatDate(inventory.date)} — ${inventory.status === "validated" ? "Validé" : "Brouillon"}</option>`
+    ).join("");
+}
+
+function ppStockLossEnsureStylesPP(){
+    if(document.getElementById("ppStockLossStyles")) return;
+    const style = document.createElement("style");
+    style.id = "ppStockLossStyles";
+    style.textContent = `
+      #stockLossesPage .pp-loss-toolbar{display:grid;grid-template-columns:minmax(220px,1.5fr) repeat(5,minmax(135px,.7fr));gap:10px;align-items:end}
+      #stockLossesPage .pp-loss-card{cursor:pointer;transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease}
+      #stockLossesPage .pp-loss-card:hover{transform:translateY(-1px);border-color:#b8c9bf;box-shadow:0 8px 20px rgba(9,75,45,.06)}
+      #stockLossesPage .pp-loss-card.is-active{border-color:#094b2d;box-shadow:0 0 0 2px rgba(9,75,45,.08)}
+      #stockLossesPage .pp-loss-detail-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}
+      #stockLossesPage .pp-loss-actions{display:flex;gap:8px;flex-wrap:wrap}
+      #stockLossesPage .pp-loss-analysis{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+      #stockLossesPage .pp-loss-pagination{display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:14px}
+      #stockLossesPage .pp-loss-pagination button{min-width:36px;height:36px;border:1px solid #dce4df;border-radius:8px;background:#fff;cursor:pointer}
+      #stockLossesPage .pp-loss-pagination button.active{background:#094b2d;color:#fff;border-color:#094b2d}
+      #stockLossesPage .pp-loss-value{color:#b42318;font-weight:700}
+      .pp-loss-source-row{display:grid;grid-template-columns:minmax(230px,1.5fr) minmax(120px,.55fr) minmax(100px,.45fr);gap:10px;align-items:end}
+      @media(max-width:1100px){#stockLossesPage .pp-loss-toolbar{grid-template-columns:1fr 1fr 1fr}.pp-loss-analysis{grid-template-columns:1fr 1fr}}
+      @media(max-width:700px){#stockLossesPage .pp-loss-toolbar{grid-template-columns:1fr 1fr}.pp-loss-source-row{grid-template-columns:1fr}.pp-loss-analysis{grid-template-columns:1fr}}
+      @media(max-width:480px){#stockLossesPage .pp-loss-toolbar{grid-template-columns:1fr}}
+    `;
+    document.head.appendChild(style);
+}
+
+function ppStockLossEnsureUI(){
+    ppStockLossEnsureStylesPP();
+
+    let nav = document.querySelector('[data-page="stockLosses"]');
+    if(!nav){
+        const inventoryNav = document.querySelector('.sidebar [data-page="inventory"]');
+        const stockNav = document.querySelector('.sidebar [data-page="stock"]');
+        const anchor = inventoryNav || stockNav;
+        if(anchor){
+            nav = document.createElement("button");
+            nav.type = "button";
+            nav.className = "nav-item";
+            nav.dataset.page = "stockLosses";
+            nav.innerHTML = "⚠️ <span>Pertes & casse</span>";
+            anchor.insertAdjacentElement("afterend", nav);
+            nav.addEventListener("click", () => ppStockLossOpenPagePP(nav));
+        }
+    }
+
+    if(!document.getElementById("stockLossesPage")){
+        const content = document.querySelector("section.content");
+        if(content){
+            const page = document.createElement("div");
+            page.id = "stockLossesPage";
+            page.className = "page";
+            page.innerHTML = `
+              <div class="page-actions">
+                <div><h2>⚠️ Pertes & casse</h2></div>
+                <div class="pp-loss-actions">
+                  <button type="button" class="btn" onclick="ppStockLossPrintReportPP()">🖨️ Imprimer</button>
+                  <button type="button" class="btn" onclick="ppStockLossExportExcelPP()">📊 Excel</button>
+                  <button type="button" class="btn primary" onclick="ppStockLossOpenModalPP()">+ Nouvelle opération</button>
+                </div>
+              </div>
+              <div class="stats" id="ppStockLossStats"></div>
+              <div class="section" id="ppStockLossDetail" hidden></div>
+              <div class="section">
+                <div class="pp-loss-toolbar">
+                  <div><label>Recherche</label><input id="ppStockLossSearch" placeholder="Référence, article, fiche, responsable…" oninput="ppStockLossSetFilterPP('search',this.value)"></div>
+                  <div><label>Du</label><input id="ppStockLossFrom" type="date" onchange="ppStockLossSetFilterPP('from',this.value)"></div>
+                  <div><label>Au</label><input id="ppStockLossTo" type="date" onchange="ppStockLossSetFilterPP('to',this.value)"></div>
+                  <div><label>Motif</label><select id="ppStockLossReason" onchange="ppStockLossSetFilterPP('reason',this.value)"><option value="">Tous</option>${PP_STOCK_LOSS_REASONS.map(reason => `<option>${escapeHTML(reason)}</option>`).join("")}</select></div>
+                  <div><label>Type</label><select id="ppStockLossSourceType" onchange="ppStockLossSetFilterPP('sourceType',this.value)"><option value="">Tous</option><option value="product">Articles</option><option value="recipe">Fiches techniques</option></select></div>
+                  <div><label>Responsable</label><input id="ppStockLossResponsible" oninput="ppStockLossSetFilterPP('responsible',this.value)"></div>
+                </div>
+                <div class="table-wrapper" style="margin-top:14px">
+                  <table style="min-width:1220px"><thead><tr><th>Date</th><th>Référence</th><th>Type</th><th>Article / fiche</th><th>Quantité</th><th>Motif</th><th>Responsable</th><th>Valeur</th><th>Statut</th><th>Actions</th></tr></thead><tbody id="ppStockLossTable"></tbody></table>
+                </div>
+                <div id="ppStockLossPagination" class="pp-loss-pagination"></div>
+              </div>
+              <div class="pp-loss-analysis">
+                <div class="section"><h3 style="margin-top:0">Par motif</h3><div class="table-wrapper"><table><thead><tr><th>Motif</th><th>Nombre</th><th>Valeur</th></tr></thead><tbody id="ppStockLossByReason"></tbody></table></div></div>
+                <div class="section"><h3 style="margin-top:0">Par article / fiche</h3><div class="table-wrapper"><table><thead><tr><th>Article / fiche</th><th>Nombre</th><th>Valeur</th></tr></thead><tbody id="ppStockLossByItem"></tbody></table></div></div>
+                <div class="section"><h3 style="margin-top:0">Par mois</h3><div class="table-wrapper"><table><thead><tr><th>Mois</th><th>Nombre</th><th>Valeur</th></tr></thead><tbody id="ppStockLossByMonth"></tbody></table></div></div>
+              </div>`;
+            content.appendChild(page);
+        }
+    }
+
+    if(!document.getElementById("ppStockLossModal")){
+        document.body.insertAdjacentHTML("beforeend", `
+          <div id="ppStockLossModal" class="modal-overlay"><div class="modal" style="max-width:900px">
+            <div class="modal-header"><h2 id="ppStockLossModalTitle">Nouvelle opération</h2><button type="button" onclick="closeModal('ppStockLossModal')">×</button></div>
+            <form id="ppStockLossForm" onsubmit="event.preventDefault();ppStockLossSavePP(false)">
+              <input id="ppStockLossId" type="hidden"><input id="ppStockLossItemId" type="hidden">
+              <div class="form-grid">
+                <div><label>Référence</label><input id="ppStockLossReference" required></div>
+                <div><label>Date</label><input id="ppStockLossDate" type="date" required onchange="ppStockLossRefreshReferencePP()"></div>
+                <div><label>Type</label><select id="ppStockLossFormSourceType" onchange="ppStockLossRefreshItemsPP()"><option value="product">Article</option><option value="recipe">Fiche technique</option></select></div>
+                <div><label>Motif</label><select id="ppStockLossFormReason">${PP_STOCK_LOSS_REASONS.map(reason => `<option>${escapeHTML(reason)}</option>`).join("")}</select></div>
+              </div>
+              <div class="pp-loss-source-row" style="margin-top:12px">
+                <div><label id="ppStockLossItemLabel">Article</label><input id="ppStockLossItemSearch" list="ppStockLossItemList" autocomplete="off" required oninput="ppStockLossResolveItemPP()"><datalist id="ppStockLossItemList"></datalist></div>
+                <div><label id="ppStockLossQuantityLabel">Quantité</label><input id="ppStockLossQuantity" type="number" min="0.0001" step="0.001" required oninput="ppStockLossUpdatePreviewPP()"></div>
+                <div><label>Unité</label><input id="ppStockLossUnit" disabled></div>
+              </div>
+              <div class="form-grid" style="margin-top:12px">
+                <div><label>Responsable</label><input id="ppStockLossFormResponsible" required></div>
+                <div><label>Inventaire lié</label><select id="ppStockLossInventory"></select></div>
+              </div>
+              <div><label>Note</label><textarea id="ppStockLossNote" rows="3"></textarea></div>
+              <div id="ppStockLossPreview" class="section" style="margin:14px 0 0;padding:12px"></div>
+              <div class="modal-actions"><button type="button" class="btn" onclick="closeModal('ppStockLossModal')">Annuler</button><button type="submit" class="btn secondary">Enregistrer brouillon</button><button type="button" class="btn primary" onclick="ppStockLossSavePP(true)">Enregistrer et valider</button></div>
+            </form>
+          </div>`);
+    }
+
+    try{ ppApplyPermissionsUI(); }catch(_){ }
+}
+
+function ppStockLossOpenPagePP(button){
+    document.querySelectorAll(".nav-item").forEach(item => item.classList.remove("active"));
+    if(button) button.classList.add("active");
+    document.querySelectorAll(".page").forEach(page => page.classList.remove("active-page"));
+    document.getElementById("stockLossesPage")?.classList.add("active-page");
+    setText("pageTitle", "Pertes & casse");
+    setText("pageSubtitle", "");
+    ppStockLossRenderPagePP();
+}
+
+function ppStockLossRefreshReferencePP(){
+    if(ppStockLossEditingIdPP) return;
+    setValue("ppStockLossReference", ppStockLossNextReferencePP(getValue("ppStockLossDate")));
+}
+
+function ppStockLossItemsPP(sourceType){
+    if(sourceType === "recipe"){
+        return recipesPP.slice().sort((a,b) => String(a.name || "").localeCompare(String(b.name || ""), "fr"));
+    }
+    return products.slice().sort((a,b) => String(a.name || "").localeCompare(String(b.name || ""), "fr"));
+}
+
+function ppStockLossRefreshItemsPP(selectedId = null){
+    const sourceType = getValue("ppStockLossFormSourceType") === "recipe" ? "recipe" : "product";
+    const rows = ppStockLossItemsPP(sourceType);
+    const list = document.getElementById("ppStockLossItemList");
+    if(list){
+        list.innerHTML = rows.map(item => `<option value="${escapeHTML(item.name || "")}">${sourceType === "recipe" ? escapeHTML(item.category || "") : `${escapeHTML(item.category || "")} · ${escapeHTML(item.unit || "")}`}</option>`).join("");
+    }
+    setText("ppStockLossItemLabel", sourceType === "recipe" ? "Fiche technique" : "Article");
+    setText("ppStockLossQuantityLabel", sourceType === "recipe" ? "Nombre de portions" : "Quantité");
+    setValue("ppStockLossUnit", sourceType === "recipe" ? "portion" : "");
+
+    if(selectedId !== null && selectedId !== undefined && selectedId !== ""){
+        const selected = rows.find(item => String(item.id) === String(selectedId));
+        setValue("ppStockLossItemId", selected?.id || "");
+        setValue("ppStockLossItemSearch", selected?.name || "");
+        setValue("ppStockLossUnit", sourceType === "recipe" ? "portion" : (selected?.unit || ""));
+    }else{
+        setValue("ppStockLossItemId", "");
+        setValue("ppStockLossItemSearch", "");
+    }
+    ppStockLossUpdatePreviewPP();
+}
+
+function ppStockLossResolveItemPP(){
+    const sourceType = getValue("ppStockLossFormSourceType") === "recipe" ? "recipe" : "product";
+    const typed = normalizeText(getValue("ppStockLossItemSearch"));
+    const rows = ppStockLossItemsPP(sourceType);
+    const exact = rows.find(item => normalizeText(item.name) === typed);
+    setValue("ppStockLossItemId", exact?.id || "");
+    setValue("ppStockLossUnit", sourceType === "recipe" ? "portion" : (exact?.unit || ""));
+    ppStockLossUpdatePreviewPP();
+}
+
+function ppStockLossUpdatePreviewPP(){
+    const box = document.getElementById("ppStockLossPreview");
+    if(!box) return;
+    const sourceType = getValue("ppStockLossFormSourceType") === "recipe" ? "recipe" : "product";
+    const itemId = getValue("ppStockLossItemId");
+    const quantity = ppStockLossNumberPP(getValue("ppStockLossQuantity"));
+    const components = ppStockLossBuildComponentsPP(sourceType, itemId, quantity);
+    const value = components.reduce((total, component) => total + component.value, 0);
+    if(!components.length){
+        box.innerHTML = `<div style="display:flex;justify-content:space-between;gap:10px"><span>Valeur</span><strong>${formatMoney(0)}</strong></div>`;
+        return;
+    }
+    box.innerHTML = `<div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:8px"><strong>Sortie stock</strong><strong class="pp-loss-value">${formatMoney(value)}</strong></div><div style="overflow:auto"><table style="min-width:560px"><thead><tr><th>Article</th><th>Quantité</th><th>Prix moyen</th><th>Valeur</th></tr></thead><tbody>${components.map(component => `<tr><td>${escapeHTML(component.productName)}</td><td>${formatNumber(component.quantity)} ${escapeHTML(component.unit)}</td><td>${formatMoney(component.unitPrice)}</td><td>${formatMoney(component.value)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function ppStockLossOpenModalPP(id = null){
+    ppStockLossEnsureUI();
+    if(!ppCan("stock", "edit")){ alert("Accès non autorisé."); return; }
+    const loss = id ? stockLossesPP.find(item => String(item.id) === String(id)) : null;
+    if(loss?.status === "validated"){ alert("Dévalidez l'opération avant de la modifier."); return; }
+
+    ppStockLossEditingIdPP = loss?.id || null;
+    setText("ppStockLossModalTitle", loss ? "Modifier l'opération" : "Nouvelle opération");
+    setValue("ppStockLossId", loss?.id || "");
+    setValue("ppStockLossDate", loss?.date || new Date().toISOString().slice(0,10));
+    setValue("ppStockLossReference", loss?.reference || ppStockLossNextReferencePP(new Date().toISOString().slice(0,10)));
+    setValue("ppStockLossFormSourceType", loss?.sourceType || "product");
+    setValue("ppStockLossFormReason", loss?.reason || PP_STOCK_LOSS_REASONS[0]);
+    setValue("ppStockLossQuantity", loss?.quantity || "");
+    setValue("ppStockLossFormResponsible", loss?.responsible || ppStockLossCurrentUserPP());
+    setValue("ppStockLossNote", loss?.note || "");
+    const inventorySelect = document.getElementById("ppStockLossInventory");
+    if(inventorySelect) inventorySelect.innerHTML = ppStockLossInventoryOptionsPP(loss?.inventoryId || null);
+    const sourceId = loss?.sourceType === "recipe" ? loss?.recipeId : loss?.productId;
+    ppStockLossRefreshItemsPP(sourceId || null);
+    ppStockLossUpdatePreviewPP();
+    openModal("ppStockLossModal");
+}
+
+function ppStockLossReadFormPP(){
+    const id = getValue("ppStockLossId") || null;
+    const sourceType = getValue("ppStockLossFormSourceType") === "recipe" ? "recipe" : "product";
+    const itemId = getValue("ppStockLossItemId");
+    const quantity = ppStockLossNumberPP(getValue("ppStockLossQuantity"));
+    const item = ppStockLossItemsPP(sourceType).find(row => String(row.id) === String(itemId));
+    const inventoryId = getValue("ppStockLossInventory") || null;
+    const inventory = (typeof inventoriesPP !== "undefined" && Array.isArray(inventoriesPP))
+        ? inventoriesPP.find(row => String(row.id) === String(inventoryId))
+        : null;
+    return {
+        id,
+        reference: getValue("ppStockLossReference").trim(),
+        date: ppStockLossDatePP(getValue("ppStockLossDate")),
+        sourceType,
+        item,
+        quantity,
+        reason: getValue("ppStockLossFormReason"),
+        responsible: getValue("ppStockLossFormResponsible").trim(),
+        inventoryId: inventory?.id || null,
+        inventoryReference: inventory?.reference || "",
+        note: getValue("ppStockLossNote").trim()
+    };
+}
+
+function ppStockLossSavePP(validateAfter = false){
+    if(!ppCan("stock", "edit")){ alert("Accès non autorisé."); return; }
+    const form = ppStockLossReadFormPP();
+    if(!form.reference){ alert("Saisissez la référence."); return; }
+    if(!form.date){ alert("Sélectionnez la date."); return; }
+    if(!form.item){ alert(`Sélectionnez ${form.sourceType === "recipe" ? "une fiche technique" : "un article"}.`); return; }
+    if(!(form.quantity > 0)){ alert("Saisissez une quantité supérieure à 0."); return; }
+    if(!form.responsible){ alert("Saisissez le responsable."); return; }
+    if(stockLossesPP.some(item => String(item.id) !== String(form.id || "") && normalizeText(item.reference) === normalizeText(form.reference))){ alert("Cette référence existe déjà."); return; }
+
+    const old = form.id ? stockLossesPP.find(item => String(item.id) === String(form.id)) : null;
+    if(old?.status === "validated"){ alert("Dévalidez l'opération avant de la modifier."); return; }
+    const now = new Date().toISOString();
+    const components = ppStockLossBuildComponentsPP(form.sourceType, form.item.id, form.quantity);
+    const object = ppNormalizeStockLossPP({
+        ...(old || {}),
+        id: old?.id || createId(),
+        reference: form.reference,
+        date: form.date,
+        sourceType: form.sourceType,
+        productId: form.sourceType === "product" ? form.item.id : null,
+        productName: form.sourceType === "product" ? form.item.name : "",
+        recipeId: form.sourceType === "recipe" ? form.item.id : null,
+        recipeName: form.sourceType === "recipe" ? form.item.name : "",
+        quantity: form.quantity,
+        unit: form.sourceType === "recipe" ? "portion" : (form.item.unit || ""),
+        reason: form.reason,
+        responsible: form.responsible,
+        inventoryId: form.inventoryId,
+        inventoryReference: form.inventoryReference,
+        note: form.note,
+        status: "draft",
+        components,
+        value: components.reduce((total, component) => total + component.value, 0),
+        movementIds: [],
+        createdAt: old?.createdAt || now,
+        createdBy: old?.createdBy || ppStockLossCurrentUserPP(),
+        updatedAt: now,
+        validatedAt: "",
+        validatedBy: ""
+    });
+
+    if(old){
+        const index = stockLossesPP.findIndex(item => String(item.id) === String(old.id));
+        if(index >= 0) stockLossesPP[index] = object;
+    }else{
+        stockLossesPP.unshift(object);
+    }
+    ppStockLossActiveIdPP = object.id;
+    saveData();
+    ppWriteAudit("stock", object.id, old ? "update" : "create", old || null, object, object.reference);
+    closeModal("ppStockLossModal");
+    ppStockLossEditingIdPP = null;
+    ppStockLossRenderPagePP();
+    if(validateAfter) ppStockLossValidatePP(object.id);
+}
+
+function ppStockLossValidatePP(id){
+    if(!ppCan("stock", "edit")){ alert("Accès non autorisé."); return; }
+    const loss = stockLossesPP.find(item => String(item.id) === String(id));
+    if(!loss || loss.status === "validated") return;
+    const sourceId = loss.sourceType === "recipe" ? loss.recipeId : loss.productId;
+    const components = ppStockLossBuildComponentsPP(loss.sourceType, sourceId, loss.quantity);
+    if(!components.length){ alert("Aucun article de stock n'est lié à cette opération."); return; }
+
+    const insufficient = components.filter(component => {
+        const product = products.find(item => String(item.id) === String(component.productId));
+        return !product || ppStockLossNumberPP(product.stock) + 0.0000001 < component.quantity;
+    });
+    if(insufficient.length){
+        alert("Stock insuffisant :\n\n" + insufficient.map(component => {
+            const product = products.find(item => String(item.id) === String(component.productId));
+            return `${component.productName} — disponible ${formatNumber(product?.stock || 0)} ${component.unit}, demandé ${formatNumber(component.quantity)} ${component.unit}`;
+        }).join("\n"));
+        return;
+    }
+    if(!confirm(`Valider ${loss.reference} ?`)) return;
+
+    const before = ppAuditSnapshot(loss);
+    const movementIds = [];
+    components.forEach(component => {
+        const product = products.find(item => String(item.id) === String(component.productId));
+        if(!product) return;
+        product.stock = ppStockLossNumberPP(product.stock) - component.quantity;
+        const movement = {
+            id: createId(),
+            date: loss.date,
+            productId: product.id,
+            productName: product.name,
+            type: "exit",
+            quantity: component.quantity,
+            unit: product.unit,
+            reason: `Perte - ${loss.reason}`,
+            note: loss.note || loss.reference,
+            source: "stock-loss",
+            lossId: loss.id,
+            lossReference: loss.reference,
+            createdAt: new Date().toISOString()
+        };
+        movements.unshift(movement);
+        movementIds.push(String(movement.id));
+    });
+
+    loss.components = components;
+    loss.value = components.reduce((total, component) => total + component.value, 0);
+    loss.movementIds = movementIds;
+    loss.status = "validated";
+    loss.validatedAt = new Date().toISOString();
+    loss.validatedBy = ppStockLossCurrentUserPP();
+    loss.updatedAt = loss.validatedAt;
+    saveData();
+    ppWriteAudit("stock", loss.id, "validate", before, loss, loss.reference);
+    ppStockLossRenderPagePP();
+}
+
+function ppStockLossLaterValidatedInventoryPP(loss){
+    if(typeof inventoriesPP === "undefined" || !Array.isArray(inventoriesPP)) return null;
+    const lossTime = new Date(loss.validatedAt || loss.updatedAt || `${loss.date}T00:00:00`).getTime();
+    return inventoriesPP.find(inventory => {
+        if(inventory.status !== "validated") return false;
+        const inventoryTime = new Date(inventory.validatedAt || inventory.updatedAt || `${inventory.date}T23:59:59`).getTime();
+        return Number.isFinite(inventoryTime) && Number.isFinite(lossTime) && inventoryTime > lossTime;
+    }) || null;
+}
+
+function ppStockLossDevalidatePP(id){
+    if(!ppCan("stock", "edit")){ alert("Accès non autorisé."); return; }
+    const loss = stockLossesPP.find(item => String(item.id) === String(id));
+    if(!loss || loss.status !== "validated") return;
+    const laterInventory = ppStockLossLaterValidatedInventoryPP(loss);
+    if(laterInventory){ alert(`Dévalidez d'abord l'inventaire ${laterInventory.reference}.`); return; }
+    const related = movements.filter(movement => String(movement.lossId || "") === String(loss.id));
+    if(!related.length){ alert("Les mouvements liés sont introuvables."); return; }
+    if(!confirm(`Dévalider ${loss.reference} ?`)) return;
+
+    const before = ppAuditSnapshot(loss);
+    related.forEach(movement => {
+        const product = products.find(item => String(item.id) === String(movement.productId));
+        if(product) product.stock = ppStockLossNumberPP(product.stock) + ppStockLossNumberPP(movement.quantity);
+    });
+    movements = movements.filter(movement => String(movement.lossId || "") !== String(loss.id));
+    loss.status = "draft";
+    loss.movementIds = [];
+    loss.validatedAt = "";
+    loss.validatedBy = "";
+    loss.updatedAt = new Date().toISOString();
+    saveData();
+    ppWriteAudit("stock", loss.id, "devalidate", before, loss, loss.reference);
+    ppStockLossRenderPagePP();
+}
+
+function ppStockLossDeletePP(id){
+    if(!ppCan("stock", "delete")){ alert("Accès non autorisé."); return; }
+    const loss = stockLossesPP.find(item => String(item.id) === String(id));
+    if(!loss) return;
+    if(loss.status === "validated"){ alert("Dévalidez l'opération avant de la supprimer."); return; }
+    if(!confirm(`Supprimer ${loss.reference} ?`)) return;
+    stockLossesPP = stockLossesPP.filter(item => String(item.id) !== String(id));
+    if(String(ppStockLossActiveIdPP || "") === String(id)) ppStockLossActiveIdPP = null;
+    saveData();
+    ppWriteAudit("stock", loss.id, "delete", loss, null, loss.reference);
+    ppStockLossRenderPagePP();
+}
+
+function ppStockLossFilteredBasePP(ignoreStatus = false){
+    const query = normalizeText(ppStockLossSearchPP);
+    const responsibleQuery = normalizeText(ppStockLossResponsiblePP);
+    return stockLossesPP.filter(loss => {
+        if(ppStockLossFromPP && loss.date < ppStockLossFromPP) return false;
+        if(ppStockLossToPP && loss.date > ppStockLossToPP) return false;
+        if(ppStockLossReasonPP && loss.reason !== ppStockLossReasonPP) return false;
+        if(ppStockLossSourceTypePP && loss.sourceType !== ppStockLossSourceTypePP) return false;
+        if(!ignoreStatus && ppStockLossStatusPP && loss.status !== ppStockLossStatusPP) return false;
+        if(responsibleQuery && !normalizeText(loss.responsible).includes(responsibleQuery)) return false;
+        const text = normalizeText(`${loss.reference} ${ppStockLossSourceNamePP(loss)} ${loss.reason} ${loss.responsible} ${loss.inventoryReference} ${loss.note}`);
+        if(query && !text.includes(query)) return false;
+        return true;
+    }).sort((a,b) => String(b.date).localeCompare(String(a.date)) || String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+function ppStockLossSetFilterPP(key, value){
+    if(key === "search") ppStockLossSearchPP = String(value || "");
+    if(key === "from") ppStockLossFromPP = String(value || "");
+    if(key === "to") ppStockLossToPP = String(value || "");
+    if(key === "reason") ppStockLossReasonPP = String(value || "");
+    if(key === "sourceType") ppStockLossSourceTypePP = String(value || "");
+    if(key === "responsible") ppStockLossResponsiblePP = String(value || "");
+    if(key === "status") ppStockLossStatusPP = String(value || "");
+    ppStockLossPagePP = 1;
+    ppStockLossRenderPagePP();
+}
+
+function ppStockLossCardFilterPP(status){
+    ppStockLossStatusPP = String(status || "");
+    ppStockLossPagePP = 1;
+    ppStockLossRenderPagePP();
+}
+
+function ppStockLossSetPagePP(page){
+    ppStockLossPagePP = Math.max(Number(page) || 1, 1);
+    ppStockLossRenderTablePP();
+}
+
+function ppStockLossFilteredRevenuePP(){
+    return (salesPP || []).filter(sale => {
+        const date = ppStockLossDatePP(sale.date || sale.createdAt);
+        if(ppStockLossFromPP && date < ppStockLossFromPP) return false;
+        if(ppStockLossToPP && date > ppStockLossToPP) return false;
+        return true;
+    }).reduce((total, sale) => total + ppStockLossNumberPP(sale.totalTTC), 0);
+}
+
+function ppStockLossRenderStatsPP(){
+    const box = document.getElementById("ppStockLossStats");
+    if(!box) return;
+    const base = ppStockLossFilteredBasePP(true);
+    const drafts = base.filter(item => item.status === "draft");
+    const validated = base.filter(item => item.status === "validated");
+    const value = validated.reduce((total, item) => total + ppStockLossValuePP(item), 0);
+    const revenue = ppStockLossFilteredRevenuePP();
+    const ratio = revenue > 0 ? value / revenue * 100 : 0;
+    const cards = [
+        ["", "Opérations", base.length, ""],
+        ["draft", "Brouillons", drafts.length, ""],
+        ["validated", "Validées", validated.length, ""],
+        ["validated", "Valeur", formatMoney(value), ""],
+        ["validated", "Pertes / CA", `${formatNumber(ratio)}%`, ""]
+    ];
+    box.innerHTML = cards.map(([status,label,value]) => `<button type="button" class="stat-card pp-loss-card ${ppStockLossStatusPP === status ? "is-active" : ""}" onclick="ppStockLossCardFilterPP('${status}')"><span>${label}</span><strong>${value}</strong></button>`).join("");
+}
+
+function ppStockLossOpenDetailPP(id){
+    ppStockLossActiveIdPP = id;
+    ppStockLossRenderDetailPP();
+    document.getElementById("ppStockLossDetail")?.scrollIntoView({behavior:"smooth", block:"start"});
+}
+
+function ppStockLossRenderDetailPP(){
+    const box = document.getElementById("ppStockLossDetail");
+    if(!box) return;
+    const loss = stockLossesPP.find(item => String(item.id) === String(ppStockLossActiveIdPP));
+    if(!loss){ box.hidden = true; box.innerHTML = ""; return; }
+    box.hidden = false;
+    const components = loss.status === "validated" && loss.components.length
+        ? loss.components
+        : ppStockLossBuildComponentsPP(loss.sourceType, loss.sourceType === "recipe" ? loss.recipeId : loss.productId, loss.quantity);
+    const rows = components.map(component => `<tr><td><strong>${escapeHTML(component.productName)}</strong></td><td>${formatNumber(component.quantity)} ${escapeHTML(component.unit)}</td><td>${formatMoney(component.unitPrice)}</td><td>${formatMoney(component.value)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">Aucun article.</td></tr>';
+    const actions = loss.status === "validated"
+        ? `<button type="button" class="btn warning" onclick="ppStockLossDevalidatePP('${escapeHTML(String(loss.id))}')">Dévalider</button>`
+        : `<button type="button" class="btn primary" onclick="ppStockLossValidatePP('${escapeHTML(String(loss.id))}')">Valider</button><button type="button" class="btn edit" onclick="ppStockLossOpenModalPP('${escapeHTML(String(loss.id))}')">Modifier</button><button type="button" class="btn danger" onclick="ppStockLossDeletePP('${escapeHTML(String(loss.id))}')">Supprimer</button>`;
+    box.innerHTML = `
+      <div class="pp-loss-detail-head">
+        <div><h3 style="margin:0 0 6px">${escapeHTML(loss.reference)}</h3><div>${ppStockLossStatusBadgePP(loss.status)}</div></div>
+        <div class="pp-loss-actions">${actions}<button type="button" class="btn" onclick="ppStockLossPrintOnePP('${escapeHTML(String(loss.id))}')">🖨️ Imprimer</button><button type="button" class="btn" onclick="ppShowAudit('stock','${escapeHTML(String(loss.id))}','Historique de ${escapeHTML(loss.reference)}')">🕘 Historique</button><button type="button" class="btn" onclick="ppStockLossActiveIdPP=null;ppStockLossRenderDetailPP()">Fermer</button></div>
+      </div>
+      ${detailRowsHTML([
+        ["Date", formatDate(loss.date)],
+        ["Type", ppStockLossSourceLabelPP(loss)],
+        ["Article / fiche", ppStockLossSourceNamePP(loss)],
+        ["Quantité", `${formatNumber(loss.quantity)} ${escapeHTML(loss.unit)}`],
+        ["Motif", loss.reason],
+        ["Responsable", loss.responsible],
+        ["Inventaire", loss.inventoryReference || "-"],
+        ["Valeur", formatMoney(ppStockLossValuePP(loss))],
+        ["Validation", loss.validatedAt ? `${new Date(loss.validatedAt).toLocaleString("fr-FR")} — ${loss.validatedBy || "-"}` : "-"]
+      ])}
+      <h3 style="margin:20px 0 8px">Sortie stock</h3>
+      <div class="table-wrapper"><table style="min-width:700px"><thead><tr><th>Article</th><th>Quantité</th><th>Prix moyen</th><th>Valeur</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th colspan="3" style="text-align:right">Total</th><th>${formatMoney(components.reduce((total,component)=>total+component.value,0))}</th></tr></tfoot></table></div>
+      ${loss.note ? `<div style="margin-top:14px;white-space:pre-wrap">${escapeHTML(loss.note)}</div>` : ""}`;
+}
+
+function ppStockLossRenderTablePP(){
+    const body = document.getElementById("ppStockLossTable");
+    const pagination = document.getElementById("ppStockLossPagination");
+    if(!body || !pagination) return;
+    const filtered = ppStockLossFilteredBasePP(false);
+    const pages = Math.max(Math.ceil(filtered.length / PP_STOCK_LOSS_PAGE_SIZE), 1);
+    ppStockLossPagePP = Math.min(ppStockLossPagePP, pages);
+    const start = (ppStockLossPagePP - 1) * PP_STOCK_LOSS_PAGE_SIZE;
+    const rows = filtered.slice(start, start + PP_STOCK_LOSS_PAGE_SIZE);
+    body.innerHTML = rows.map(loss => {
+        const actions = loss.status === "validated"
+            ? `<button class="btn small warning" onclick="ppStockLossDevalidatePP('${escapeHTML(String(loss.id))}')" title="Dévalider">↩️</button>`
+            : `<button class="btn small primary" onclick="ppStockLossValidatePP('${escapeHTML(String(loss.id))}')" title="Valider">✅</button><button class="btn small edit" onclick="ppStockLossOpenModalPP('${escapeHTML(String(loss.id))}')" title="Modifier">✏️</button><button class="btn small danger" onclick="ppStockLossDeletePP('${escapeHTML(String(loss.id))}')" title="Supprimer">🗑️</button>`;
+        return `<tr><td>${formatDate(loss.date)}</td><td><strong>${escapeHTML(loss.reference)}</strong></td><td>${escapeHTML(ppStockLossSourceLabelPP(loss))}</td><td>${escapeHTML(ppStockLossSourceNamePP(loss))}</td><td>${formatNumber(loss.quantity)} ${escapeHTML(loss.unit)}</td><td>${escapeHTML(loss.reason)}</td><td>${escapeHTML(loss.responsible)}</td><td class="pp-loss-value">${formatMoney(ppStockLossValuePP(loss))}</td><td>${ppStockLossStatusBadgePP(loss.status)}</td><td><div class="action-buttons"><button class="btn small view" onclick="ppStockLossOpenDetailPP('${escapeHTML(String(loss.id))}')" title="Voir">👁️</button><button class="btn small print" onclick="ppStockLossPrintOnePP('${escapeHTML(String(loss.id))}')" title="Imprimer">🖨️</button>${actions}</div></td></tr>`;
+    }).join("") || '<tr><td colspan="10" class="empty">Aucune opération.</td></tr>';
+    pagination.innerHTML = pages <= 1 ? "" : Array.from({length:pages}, (_,index) => `<button type="button" class="${index + 1 === ppStockLossPagePP ? "active" : ""}" onclick="ppStockLossSetPagePP(${index + 1})">${index + 1}</button>`).join("");
+}
+
+function ppStockLossAnalysisRowsPP(){
+    return ppStockLossFilteredBasePP(false).filter(item => item.status === "validated");
+}
+
+function ppStockLossGroupPP(rows, keyGetter){
+    const map = new Map();
+    rows.forEach(row => {
+        const key = String(keyGetter(row) || "-");
+        if(!map.has(key)) map.set(key, {label:key, count:0, value:0});
+        const item = map.get(key);
+        item.count += 1;
+        item.value += ppStockLossValuePP(row);
+    });
+    return [...map.values()].sort((a,b) => b.value - a.value || b.count - a.count || a.label.localeCompare(b.label, "fr"));
+}
+
+function ppStockLossRenderAnalysisPP(){
+    const rows = ppStockLossAnalysisRowsPP();
+    const reasonRows = ppStockLossGroupPP(rows, row => row.reason);
+    const itemRows = ppStockLossGroupPP(rows, row => ppStockLossSourceNamePP(row));
+    const monthRows = ppStockLossGroupPP(rows, row => String(row.date || "").slice(0,7));
+    const reasonBody = document.getElementById("ppStockLossByReason");
+    const itemBody = document.getElementById("ppStockLossByItem");
+    const monthBody = document.getElementById("ppStockLossByMonth");
+    if(reasonBody) reasonBody.innerHTML = reasonRows.map(row => `<tr><td>${escapeHTML(row.label)}</td><td>${row.count}</td><td>${formatMoney(row.value)}</td></tr>`).join("") || '<tr><td colspan="3" class="empty">Aucune donnée.</td></tr>';
+    if(itemBody) itemBody.innerHTML = itemRows.slice(0,15).map(row => `<tr><td>${escapeHTML(row.label)}</td><td>${row.count}</td><td>${formatMoney(row.value)}</td></tr>`).join("") || '<tr><td colspan="3" class="empty">Aucune donnée.</td></tr>';
+    if(monthBody) monthBody.innerHTML = monthRows.sort((a,b) => b.label.localeCompare(a.label)).map(row => `<tr><td>${escapeHTML(row.label)}</td><td>${row.count}</td><td>${formatMoney(row.value)}</td></tr>`).join("") || '<tr><td colspan="3" class="empty">Aucune donnée.</td></tr>';
+}
+
+function ppStockLossRenderPagePP(){
+    ppStockLossEnsureUI();
+    const search = document.getElementById("ppStockLossSearch"); if(search && search.value !== ppStockLossSearchPP) search.value = ppStockLossSearchPP;
+    const from = document.getElementById("ppStockLossFrom"); if(from) from.value = ppStockLossFromPP;
+    const to = document.getElementById("ppStockLossTo"); if(to) to.value = ppStockLossToPP;
+    const reason = document.getElementById("ppStockLossReason"); if(reason) reason.value = ppStockLossReasonPP;
+    const sourceType = document.getElementById("ppStockLossSourceType"); if(sourceType) sourceType.value = ppStockLossSourceTypePP;
+    const responsible = document.getElementById("ppStockLossResponsible"); if(responsible && responsible.value !== ppStockLossResponsiblePP) responsible.value = ppStockLossResponsiblePP;
+    ppStockLossRenderStatsPP();
+    ppStockLossRenderTablePP();
+    ppStockLossRenderDetailPP();
+    ppStockLossRenderAnalysisPP();
+}
+
+function ppStockLossPrintOnePP(id){
+    const loss = stockLossesPP.find(item => String(item.id) === String(id));
+    if(!loss) return;
+    const components = loss.status === "validated" && loss.components.length
+        ? loss.components
+        : ppStockLossBuildComponentsPP(loss.sourceType, loss.sourceType === "recipe" ? loss.recipeId : loss.productId, loss.quantity);
+    const rows = components.map(component => `<tr><td>${escapeHTML(component.productName)}</td><td>${formatNumber(component.quantity)} ${escapeHTML(component.unit)}</td><td>${formatMoney(component.unitPrice)}</td><td>${formatMoney(component.value)}</td></tr>`).join("");
+    printDocument(loss.reference, `<div class="doc-head"><h1>Pause & Plate</h1><p>Pertes & casse</p></div>${detailRowsHTML([["Référence",loss.reference],["Date",formatDate(loss.date)],["Type",ppStockLossSourceLabelPP(loss)],["Article / fiche",ppStockLossSourceNamePP(loss)],["Quantité",`${formatNumber(loss.quantity)} ${loss.unit}`],["Motif",loss.reason],["Responsable",loss.responsible],["Inventaire",loss.inventoryReference||"-"],["Statut",loss.status==="validated"?"Validée":"Brouillon"],["Valeur",formatMoney(ppStockLossValuePP(loss))]])}<table><thead><tr><th>Article</th><th>Quantité</th><th>Prix moyen</th><th>Valeur</th></tr></thead><tbody>${rows || '<tr><td colspan="4">Aucun article.</td></tr>'}</tbody><tfoot><tr><th colspan="3">Total</th><th>${formatMoney(components.reduce((total,component)=>total+component.value,0))}</th></tr></tfoot></table>${loss.note?`<p>${escapeHTML(loss.note)}</p>`:""}`);
+}
+
+function ppStockLossPrintReportPP(){
+    const rows = ppStockLossFilteredBasePP(false);
+    const total = rows.filter(item => item.status === "validated").reduce((sum,item) => sum + ppStockLossValuePP(item), 0);
+    const body = rows.map(loss => `<tr><td>${formatDate(loss.date)}</td><td>${escapeHTML(loss.reference)}</td><td>${escapeHTML(ppStockLossSourceLabelPP(loss))}</td><td>${escapeHTML(ppStockLossSourceNamePP(loss))}</td><td>${formatNumber(loss.quantity)} ${escapeHTML(loss.unit)}</td><td>${escapeHTML(loss.reason)}</td><td>${escapeHTML(loss.responsible)}</td><td>${formatMoney(ppStockLossValuePP(loss))}</td><td>${loss.status === "validated" ? "Validée" : "Brouillon"}</td></tr>`).join("");
+    printDocument("Pertes & casse", `<div class="doc-head"><h1>Pause & Plate</h1><p>Pertes & casse</p></div>${detailRowsHTML([["Du",ppStockLossFromPP?formatDate(ppStockLossFromPP):"-"],["Au",ppStockLossToPP?formatDate(ppStockLossToPP):"-"],["Nombre",rows.length],["Valeur validée",formatMoney(total)]])}<table><thead><tr><th>Date</th><th>Référence</th><th>Type</th><th>Article / fiche</th><th>Quantité</th><th>Motif</th><th>Responsable</th><th>Valeur</th><th>Statut</th></tr></thead><tbody>${body || '<tr><td colspan="9">Aucune opération.</td></tr>'}</tbody></table>`);
+}
+
+function ppStockLossExportExcelPP(){
+    if(typeof XLSX === "undefined"){ alert("La bibliothèque Excel n'est pas chargée."); return; }
+    const rows = ppStockLossFilteredBasePP(false);
+    const validated = rows.filter(item => item.status === "validated");
+    const detail = rows.map(loss => ({
+        Date: loss.date,
+        Reference: loss.reference,
+        Type: ppStockLossSourceLabelPP(loss),
+        Article_Fiche: ppStockLossSourceNamePP(loss),
+        Quantite: loss.quantity,
+        Unite: loss.unit,
+        Motif: loss.reason,
+        Responsable: loss.responsible,
+        Inventaire: loss.inventoryReference,
+        Valeur: ppStockLossValuePP(loss),
+        Statut: loss.status === "validated" ? "Validée" : "Brouillon",
+        Date_validation: loss.validatedAt ? ppStockLossDatePP(loss.validatedAt) : ""
+    }));
+    const components = rows.flatMap(loss => (loss.components || []).map(component => ({
+        Reference: loss.reference,
+        Date: loss.date,
+        Article: component.productName,
+        Quantite: component.quantity,
+        Unite: component.unit,
+        Prix_moyen: component.unitPrice,
+        Valeur: component.value,
+        Statut: loss.status === "validated" ? "Validée" : "Brouillon"
+    })));
+    const reasons = ppStockLossGroupPP(validated, row => row.reason).map(row => ({Motif:row.label,Nombre:row.count,Valeur:row.value}));
+    const items = ppStockLossGroupPP(validated, row => ppStockLossSourceNamePP(row)).map(row => ({Article_Fiche:row.label,Nombre:row.count,Valeur:row.value}));
+    const months = ppStockLossGroupPP(validated, row => String(row.date || "").slice(0,7)).map(row => ({Mois:row.label,Nombre:row.count,Valeur:row.value}));
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(detail), "Pertes");
+    XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(components), "Sorties_stock");
+    XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(reasons), "Par_motif");
+    XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(items), "Par_article");
+    XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(months), "Par_mois");
+    XLSX.writeFile(book, `pertes-casse-${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+// Protect stock movements created by validated losses.
+const ppStockLossBaseOpenMovementModalPP = openMovementModal;
+openMovementModal = function(type, id = null){
+    if(id){
+        const movement = movements.find(item => String(item.id) === String(id));
+        if(movement?.lossId){ alert("Dévalidez l'opération Pertes & casse pour corriger ce mouvement."); return; }
+    }
+    return ppStockLossBaseOpenMovementModalPP.apply(this, arguments);
+};
+
+const ppStockLossBaseDeleteMovementPP = deleteMovement;
+deleteMovement = function(id){
+    const movement = movements.find(item => String(item.id) === String(id));
+    if(movement?.lossId){ alert("Dévalidez l'opération Pertes & casse pour supprimer ce mouvement."); return; }
+    return ppStockLossBaseDeleteMovementPP.apply(this, arguments);
+};
+
+const ppStockLossBaseRenderMovementsPP = renderMovements;
+renderMovements = function(){
+    const result = ppStockLossBaseRenderMovementsPP.apply(this, arguments);
+    document.querySelectorAll('#movementsTable button[onclick*="openMovementModal"],#movementsTable button[onclick*="deleteMovement"]').forEach(button => {
+        const text = button.getAttribute("onclick") || "";
+        const match = text.match(/(?:openMovementModal\([^,]+,|deleteMovement\()\s*['\"]?([^'\")]+)['\"]?/);
+        if(!match) return;
+        const movement = movements.find(item => String(item.id) === String(match[1]));
+        if(movement?.lossId) button.remove();
+    });
+    return result;
+};
+
+// Local and Cloud persistence.
+PP_CLOUD_DATASETS.stockLosses = () => stockLossesPP;
+if(Array.isArray(PP_EMPLOYEE_CLOUD_DATASETS?.stock) && !PP_EMPLOYEE_CLOUD_DATASETS.stock.includes("stockLosses")){
+    PP_EMPLOYEE_CLOUD_DATASETS.stock.push("stockLosses");
+}
+
+const ppStockLossBaseSetDatasetPP = ppSetDataset;
+ppSetDataset = function(key, items){
+    if(key === "stockLosses"){
+        stockLossesPP = ppCloudEnsureRecordIdsPP(key, items).map(ppNormalizeStockLossPP);
+        return;
+    }
+    return ppStockLossBaseSetDatasetPP.apply(this, arguments);
+};
+
+const ppStockLossBaseSaveLocalOnlyPP = ppSaveLocalOnly;
+ppSaveLocalOnly = function(){
+    const result = ppStockLossBaseSaveLocalOnlyPP.apply(this, arguments);
+    localStorage.setItem(PP_STOCK_LOSSES_KEY, JSON.stringify(stockLossesPP));
+    return result;
+};
+
+const ppStockLossBaseSaveDataPP = saveData;
+saveData = function(){
+    localStorage.setItem(PP_STOCK_LOSSES_KEY, JSON.stringify(stockLossesPP));
+    return ppStockLossBaseSaveDataPP.apply(this, arguments);
+};
+
+const ppStockLossBaseRenderAllPP = renderAll;
+renderAll = function(){
+    const result = ppStockLossBaseRenderAllPP.apply(this, arguments);
+    ppStockLossRenderPagePP();
+    return result;
+};
+
+const ppStockLossBaseEmployeeAllowedPagesPP = ppEmployeeAllowedPages;
+ppEmployeeAllowedPages = function(){
+    const allowed = ppStockLossBaseEmployeeAllowedPagesPP.apply(this, arguments);
+    if(ppCurrentUserProfile?.permissions?.stock === true && !allowed.includes("stocklosses")) allowed.push("stocklosses");
+    return allowed;
+};
+
+if(document.readyState === "loading"){
+    document.addEventListener("DOMContentLoaded", () => ppStockLossRenderPagePP());
+}else{
+    ppStockLossRenderPagePP();
+}
