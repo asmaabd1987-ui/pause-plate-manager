@@ -20352,3 +20352,485 @@ if(document.readyState === "loading"){
 }else{
     ppReorderRenderPagePP();
 }
+<<<<<<< HEAD
+=======
+
+/* =========================================================
+   DATABASE V2 — PRODUCTS & MOVEMENTS
+   Transitional record-per-document storage.
+========================================================= */
+
+const PP_DB_SCHEMA_V2 = 2;
+const PP_DB_V2_RECORD_DATASETS = new Set(["products", "movements"]);
+let ppDbSchemaVersionPP = 1;
+let ppDbMigrationBusyPP = false;
+
+function ppDbV2CollectionPP(key){
+    return ppDb.collection("companies").doc(PP_COMPANY_ID).collection(String(key));
+}
+
+function ppDbV2StripInternalPP(value){
+    if(!value || typeof value !== "object") return value;
+    const clean={};
+    Object.entries(value).forEach(([key,item])=>{
+        if(!String(key).startsWith("_cloud")) clean[key]=item;
+    });
+    return clean;
+}
+
+function ppDbV2RecordKeyPP(key,item,index=0){
+    return ppCloudRecordKeyPP(key,item,index);
+}
+
+function ppDbV2DocIdFromRecordKeyPP(recordKey){
+    const raw=String(recordKey||"");
+    const readable=encodeURIComponent(raw.replace(/^id:/,""))
+        .replace(/%/g,"_")
+        .replace(/[^A-Za-z0-9._~-]/g,"_")
+        .slice(0,72) || "record";
+    return `r_${ppCloudHashPP(raw)}_${readable}`;
+}
+
+function ppDbV2DocRefFromRecordPP(key,item,index=0){
+    const recordKey=ppDbV2RecordKeyPP(key,item,index);
+    return ppDbV2CollectionPP(key).doc(ppDbV2DocIdFromRecordKeyPP(recordKey));
+}
+
+function ppDbV2RecordPayloadPP(key,item,index=0){
+    const clean=ppDbV2StripInternalPP(item);
+    const recordKey=ppDbV2RecordKeyPP(key,clean,index);
+    return {
+        ...clean,
+        _cloudRecordKey:recordKey,
+        _cloudOrder:index,
+        _cloudSchema:PP_DB_SCHEMA_V2,
+        _cloudUpdatedBy:ppCurrentUser?.uid||null,
+        _cloudUpdatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    };
+}
+
+async function ppDbV2ReadSchemaVersionPP(){
+    try{
+        const snap=await ppMetaDoc().get();
+        const value=Number(snap.exists ? snap.data()?.schemaVersion : 1);
+        return Number.isFinite(value) && value >= 1 ? value : 1;
+    }catch(err){
+        console.warn("Schema version unavailable; using legacy storage.",err);
+        return 1;
+    }
+}
+
+async function ppDbV2FetchRecordDatasetPP(key){
+    const snap=await ppDbV2CollectionPP(key).get();
+    return snap.docs
+        .map(doc=>({docId:doc.id,...(doc.data()||{})}))
+        .sort((a,b)=>Number(a._cloudOrder??999999)-Number(b._cloudOrder??999999)||String(a._cloudRecordKey||a.docId).localeCompare(String(b._cloudRecordKey||b.docId)))
+        .map(item=>{
+            const clean=ppDbV2StripInternalPP(item);
+            delete clean.docId;
+            return clean;
+        });
+}
+
+function ppDbV2DuplicateKeysPP(key,items){
+    const seen=new Set(),duplicates=[];
+    ppCloudEnsureRecordIdsPP(key,items).forEach((item,index)=>{
+        const recordKey=ppDbV2RecordKeyPP(key,item,index);
+        if(seen.has(recordKey)) duplicates.push(recordKey);
+        seen.add(recordKey);
+    });
+    return duplicates;
+}
+
+async function ppDbV2CommitOperationsPP(operations,chunkSize=350){
+    for(let start=0;start<operations.length;start+=chunkSize){
+        const batch=ppDb.batch();
+        operations.slice(start,start+chunkSize).forEach(operation=>{
+            if(operation.type==="delete") batch.delete(operation.ref);
+            else batch.set(operation.ref,operation.data,{merge:false});
+        });
+        await batch.commit();
+    }
+}
+
+async function ppDbV2ReplaceCollectionPP(key,items){
+    const safe=ppCloudEnsureRecordIdsPP(key,items);
+    const duplicateKeys=ppDbV2DuplicateKeysPP(key,safe);
+    if(duplicateKeys.length) throw new Error(`IDs dupliqués dans ${key}: ${duplicateKeys.slice(0,3).join(", ")}`);
+
+    const existing=await ppDbV2CollectionPP(key).get();
+    const deletes=existing.docs.map(doc=>({type:"delete",ref:doc.ref}));
+    if(deletes.length) await ppDbV2CommitOperationsPP(deletes);
+
+    const writes=safe.map((item,index)=>({
+        type:"set",
+        ref:ppDbV2DocRefFromRecordPP(key,item,index),
+        data:ppDbV2RecordPayloadPP(key,item,index)
+    }));
+    if(writes.length) await ppDbV2CommitOperationsPP(writes);
+}
+
+async function ppDbV2WriteDeltaPP(key,baseItems,localItems){
+    const delta=ppCloudDatasetDeltaPP(key,baseItems,localItems);
+    if(!delta.upserts.length && !delta.deletes.length) return {delta,remote:await ppDbV2FetchRecordDatasetPP(key)};
+
+    const localIndexByKey=new Map();
+    delta.local.forEach((item,index)=>localIndexByKey.set(ppDbV2RecordKeyPP(key,item,index),index));
+    const baseMap=new Map(ppCloudEnsureRecordIdsPP(key,baseItems).map((item,index)=>[ppDbV2RecordKeyPP(key,item,index),item]));
+    const operations=[];
+
+    delta.upserts.forEach(({recordKey,item})=>{
+        const index=localIndexByKey.get(recordKey) ?? 0;
+        operations.push({
+            type:"set",
+            ref:ppDbV2CollectionPP(key).doc(ppDbV2DocIdFromRecordKeyPP(recordKey)),
+            data:ppDbV2RecordPayloadPP(key,item,index)
+        });
+    });
+    delta.deletes.forEach(recordKey=>{
+        if(!baseMap.has(recordKey)) return;
+        operations.push({
+            type:"delete",
+            ref:ppDbV2CollectionPP(key).doc(ppDbV2DocIdFromRecordKeyPP(recordKey))
+        });
+    });
+    if(operations.length) await ppDbV2CommitOperationsPP(operations);
+    return {delta,remote:await ppDbV2FetchRecordDatasetPP(key)};
+}
+
+function ppDbV2DownloadBackupPP(options={silent:false}){
+    const payload={
+        app:"Pause & Plate Manager",
+        backupVersion:1,
+        schemaVersion:ppDbSchemaVersionPP,
+        createdAt:new Date().toISOString(),
+        createdBy:ppCurrentUser?.uid||"local",
+        datasets:ppStateSnapshot()
+    };
+    const json=JSON.stringify(payload,null,2);
+    const blob=new Blob([json],{type:"application/json;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement("a");
+    const stamp=new Date().toISOString().replace(/[:.]/g,"-");
+    link.href=url;
+    link.download=`pause-plate-backup-${stamp}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    if(!options.silent) alert("Backup JSON créé.");
+    return payload;
+}
+
+async function ppDbV2VerifyPP(showAlert=true){
+    const result={schema:await ppDbV2ReadSchemaVersionPP(),products:0,movements:0,orphanMovements:0,duplicateProducts:0,duplicateMovements:0};
+    const productItems=result.schema>=2 ? await ppDbV2FetchRecordDatasetPP("products") : (await ppDataDoc("products").get()).data()?.items||[];
+    const movementItems=result.schema>=2 ? await ppDbV2FetchRecordDatasetPP("movements") : (await ppDataDoc("movements").get()).data()?.items||[];
+    result.products=productItems.length;
+    result.movements=movementItems.length;
+    result.duplicateProducts=ppDbV2DuplicateKeysPP("products",productItems).length;
+    result.duplicateMovements=ppDbV2DuplicateKeysPP("movements",movementItems).length;
+    const productIds=new Set(productItems.map(item=>String(item?.id??"")));
+    result.orphanMovements=movementItems.filter(item=>item?.productId!==undefined&&item?.productId!==null&&!productIds.has(String(item.productId))).length;
+    ppDbV2RenderPanelPP(result);
+    if(showAlert){
+        alert(`Schéma v${result.schema}\nProduits: ${result.products}\nMouvements: ${result.movements}\nMouvements sans article: ${result.orphanMovements}\nIDs dupliqués: ${result.duplicateProducts+result.duplicateMovements}`);
+    }
+    return result;
+}
+
+async function ppDbV2MigrateProductsMovementsPP(){
+    if(!ppIsAdmin()) return;
+    if(ppDbMigrationBusyPP) return;
+    const current=await ppDbV2ReadSchemaVersionPP();
+    if(current>=PP_DB_SCHEMA_V2){alert("Base déjà en schéma v2.");return;}
+    if(!confirm("Migrer Products et Movements vers le schéma v2 ?\n\nFermez les autres sessions avant de continuer.")) return;
+
+    ppDbMigrationBusyPP=true;
+    ppDbV2SetBusyPP(true);
+    try{
+        ppDbV2DownloadBackupPP({silent:true});
+        await ppMetaDoc().set({
+            migrationState:"running",
+            migrationTarget:PP_DB_SCHEMA_V2,
+            migrationStartedAt:firebase.firestore.FieldValue.serverTimestamp(),
+            migrationStartedBy:ppCurrentUser.uid
+        },{merge:true});
+
+        // First pass.
+        let productSnap=await ppDataDoc("products").get();
+        let movementSnap=await ppDataDoc("movements").get();
+        await ppDbV2ReplaceCollectionPP("products",productSnap.exists?productSnap.data()?.items||[]:[]);
+        await ppDbV2ReplaceCollectionPP("movements",movementSnap.exists?movementSnap.data()?.items||[]:[]);
+
+        // Final cut-over pass from the legacy source to catch changes made during the first pass.
+        productSnap=await ppDataDoc("products").get();
+        movementSnap=await ppDataDoc("movements").get();
+        const finalProducts=productSnap.exists?productSnap.data()?.items||[]:[];
+        const finalMovements=movementSnap.exists?movementSnap.data()?.items||[]:[];
+        await ppDbV2ReplaceCollectionPP("products",finalProducts);
+        await ppDbV2ReplaceCollectionPP("movements",finalMovements);
+
+        const verifyProducts=await ppDbV2FetchRecordDatasetPP("products");
+        const verifyMovements=await ppDbV2FetchRecordDatasetPP("movements");
+        if(verifyProducts.length!==finalProducts.length || verifyMovements.length!==finalMovements.length){
+            throw new Error("Vérification migration échouée: nombre de documents différent.");
+        }
+
+        await ppMetaDoc().set({
+            schemaVersion:PP_DB_SCHEMA_V2,
+            migrationState:"complete",
+            migrationCompletedAt:firebase.firestore.FieldValue.serverTimestamp(),
+            migrationCompletedBy:ppCurrentUser.uid,
+            legacySnapshotKept:true,
+            productsCount:verifyProducts.length,
+            movementsCount:verifyMovements.length
+        },{merge:true});
+
+        ppDbSchemaVersionPP=PP_DB_SCHEMA_V2;
+        ppCloudReady=false;
+        ppStopCloudListeners();
+        await ppLoadAllCloud();
+        ppCloudReady=true;
+        renderAll();
+        ppStartCloudListeners();
+        await ppDbV2VerifyPP(false);
+        alert("Migration terminée.");
+    }catch(err){
+        console.error("Database migration failed",err);
+        try{await ppMetaDoc().set({migrationState:"failed",migrationError:String(err?.message||err),migrationFailedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});}catch(_){}
+        alert("Migration interrompue: "+(err?.message||err));
+    }finally{
+        ppDbMigrationBusyPP=false;
+        ppDbV2SetBusyPP(false);
+    }
+}
+
+function ppDbV2ApproxBytesPP(value){
+    try{return new Blob([JSON.stringify(value)]).size;}catch(_){return Number.MAX_SAFE_INTEGER;}
+}
+
+async function ppDbV2RollbackToLegacyPP(){
+    if(!ppIsAdmin()||ppDbMigrationBusyPP)return;
+    const current=await ppDbV2ReadSchemaVersionPP();
+    if(current<PP_DB_SCHEMA_V2){alert("La base utilise déjà le schéma v1.");return;}
+    if(!confirm("Revenir au schéma v1 ?"))return;
+    ppDbMigrationBusyPP=true;ppDbV2SetBusyPP(true);
+    try{
+        const productItems=await ppDbV2FetchRecordDatasetPP("products");
+        const movementItems=await ppDbV2FetchRecordDatasetPP("movements");
+        if(ppDbV2ApproxBytesPP({items:productItems})>850000||ppDbV2ApproxBytesPP({items:movementItems})>850000){
+            throw new Error("Retour v1 impossible: un document dépasserait la taille de sécurité.");
+        }
+        ppDbV2DownloadBackupPP({silent:true});
+        const batch=ppDb.batch();
+        batch.set(ppDataDoc("products"),{items:productItems,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:ppCurrentUser.uid},{merge:true});
+        batch.set(ppDataDoc("movements"),{items:movementItems,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:ppCurrentUser.uid},{merge:true});
+        batch.set(ppMetaDoc(),{schemaVersion:1,migrationState:"rolled-back",rolledBackAt:firebase.firestore.FieldValue.serverTimestamp(),rolledBackBy:ppCurrentUser.uid},{merge:true});
+        await batch.commit();
+        ppDbSchemaVersionPP=1;
+        ppCloudReady=false;ppStopCloudListeners();await ppLoadAllCloud();ppCloudReady=true;renderAll();ppStartCloudListeners();
+        alert("Retour schéma v1 terminé.");
+    }catch(err){
+        console.error(err);alert("Retour v1 impossible: "+(err?.message||err));
+    }finally{ppDbMigrationBusyPP=false;ppDbV2SetBusyPP(false);}
+}
+
+function ppDbV2SetBusyPP(busy){
+    document.querySelectorAll("[data-db-v2-action]").forEach(button=>button.disabled=!!busy);
+    const status=document.getElementById("ppDbV2Status");
+    if(status&&busy) status.textContent="Traitement...";
+}
+
+function ppDbV2RenderPanelPP(info=null){
+    const box=document.getElementById("ppDbV2Panel");
+    if(!box||!ppIsAdmin())return;
+    const schema=Number(info?.schema||ppDbSchemaVersionPP||1);
+    const productsCount=info?.products ?? (Array.isArray(products)?products.length:0);
+    const movementsCount=info?.movements ?? (Array.isArray(movements)?movements.length:0);
+    box.innerHTML=`
+      <div class="section" style="margin-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <h3 style="margin:0">Base de données</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn" type="button" data-db-v2-action onclick="ppDbV2DownloadBackupPP()">Backup JSON</button>
+            <button class="btn" type="button" data-db-v2-action onclick="ppDbV2VerifyPP()">Vérifier</button>
+            ${schema<PP_DB_SCHEMA_V2?`<button class="btn primary" type="button" data-db-v2-action onclick="ppDbV2MigrateProductsMovementsPP()">Migrer Products & Movements</button>`:`<button class="btn danger" type="button" data-db-v2-action onclick="ppDbV2RollbackToLegacyPP()">Retour v1</button>`}
+          </div>
+        </div>
+        <div class="stats-grid" style="margin-top:14px">
+          <div class="stat-card"><div class="label">Schéma</div><div class="value">v${schema}</div></div>
+          <div class="stat-card"><div class="label">Produits</div><div class="value">${productsCount}</div></div>
+          <div class="stat-card"><div class="label">Mouvements</div><div class="value">${movementsCount}</div></div>
+          <div class="stat-card"><div class="label">Intégrité</div><div class="value">${info?((info.orphanMovements||info.duplicateProducts||info.duplicateMovements)?"À vérifier":"OK"):"—"}</div></div>
+        </div>
+        <div id="ppDbV2Status" style="margin-top:8px;font-size:13px;color:#667085"></div>
+      </div>`;
+}
+
+function ppEnsureDatabaseV2UIPPP(){
+    if(!ppIsAdmin())return;
+    const page=document.getElementById("exportsPage");
+    if(!page)return;
+    const intro=page.querySelector(".page-actions p");if(intro)intro.remove();
+    const placeholder=page.querySelector(".empty-state");
+    if(placeholder){const section=placeholder.closest(".section");if(section)section.remove();}
+    let panel=document.getElementById("ppDbV2Panel");
+    if(!panel){panel=document.createElement("div");panel.id="ppDbV2Panel";page.appendChild(panel);}
+    ppDbV2RenderPanelPP();
+}
+
+const ppDbV2BaseRenderAllPP=renderAll;
+renderAll=function(){
+    const result=ppDbV2BaseRenderAllPP.apply(this,arguments);
+    ppEnsureDatabaseV2UIPPP();
+    return result;
+};
+
+const ppDbV2BaseLoadAllCloudPP=ppLoadAllCloud;
+ppLoadAllCloud=async function(){
+    ppDbSchemaVersionPP=await ppDbV2ReadSchemaVersionPP();
+    if(ppDbSchemaVersionPP<PP_DB_SCHEMA_V2) return ppDbV2BaseLoadAllCloudPP.apply(this,arguments);
+
+    ppApplyingCloudState=true;
+    try{
+        ppEnforceLocalDatasetScopePP();
+        const allowedKeys=ppCloudAllowedDatasetKeysPP();
+        ppCloudBaseState={};
+        for(const key of allowedKeys){
+            let items=[];
+            if(PP_DB_V2_RECORD_DATASETS.has(key)) items=await ppDbV2FetchRecordDatasetPP(key);
+            else{
+                const snap=await ppDataDoc(key).get();
+                items=snap.exists?snap.data()?.items||[]:[];
+            }
+            ppSetDataset(key,items);
+            ppCloudBaseState[key]=ppCloudClonePP(PP_CLOUD_DATASETS[key]());
+        }
+        ppSaveLocalOnly();
+        ppCloudDirty=false;
+    }finally{ppApplyingCloudState=false;}
+};
+
+const ppDbV2BaseSaveCloudNowPP=ppSaveCloudNow;
+ppSaveCloudNow=async function(){
+    if(ppDbSchemaVersionPP<PP_DB_SCHEMA_V2) return ppDbV2BaseSaveCloudNowPP.apply(this,arguments);
+    if(!ppCloudReady||!ppCurrentUser||ppApplyingCloudState)return;
+    if(ppCloudSaving){ppCloudSaveAgain=true;return;}
+    if(!ppCloudDirty)return;
+
+    ppCloudSaving=true;ppCloudSaveAgain=false;clearTimeout(ppCloudSaveTimer);ppCloudSaveTimer=null;
+    const saveVersion=ppCloudChangeVersion;
+    const localState=ppCloudClonePP(ppStateSnapshot());
+    const baseState=ppCloudClonePP(ppCloudBaseState||{});
+    const mergedState={};
+    const status=document.getElementById("ppCloudStatus");if(status)status.textContent="☁️ Synchronisation...";
+    try{
+        const keys=ppCloudAllowedDatasetKeysPP();
+        const recordKeys=keys.filter(key=>PP_DB_V2_RECORD_DATASETS.has(key));
+        const legacyKeys=keys.filter(key=>!PP_DB_V2_RECORD_DATASETS.has(key));
+
+        for(const key of recordKeys){
+            const writeResult=await ppDbV2WriteDeltaPP(key,baseState[key]||[],localState[key]||[]);
+            if(writeResult.remote){
+                mergedState[key]=ppCloudMergeDatasetPP(key,writeResult.remote,writeResult.delta);
+            }else mergedState[key]=ppCloudEnsureRecordIdsPP(key,baseState[key]||localState[key]||[]);
+        }
+
+        if(legacyKeys.length){
+            const refs=legacyKeys.map(key=>ppDataDoc(key));
+            await ppDb.runTransaction(async transaction=>{
+                const snapshots=await Promise.all(refs.map(ref=>transaction.get(ref)));
+                legacyKeys.forEach((key,index)=>{
+                    const remote=snapshots[index].exists?snapshots[index].data()?.items||[]:[];
+                    const delta=ppCloudDatasetDeltaPP(key,baseState[key]||[],localState[key]||[]);
+                    const changed=delta.upserts.length>0||delta.deletes.length>0;
+                    const merged=changed?ppCloudMergeDatasetPP(key,remote,delta):ppCloudEnsureRecordIdsPP(key,remote);
+                    mergedState[key]=merged;
+                    if(changed){
+                        transaction.set(refs[index],{items:merged,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:ppCurrentUser.uid},{merge:true});
+                    }
+                });
+            });
+        }
+
+        ppCloudBaseState=ppCloudClonePP(mergedState);
+        if(ppCloudChangeVersion===saveVersion){
+            ppApplyingCloudState=true;
+            try{
+                Object.entries(mergedState).forEach(([key,items])=>ppSetDataset(key,items));
+                ppSaveLocalOnly();
+                ppCloudBaseState=ppCloudClonePP(ppStateSnapshot());
+                ppCloudDirty=false;
+                renderAll();
+            }finally{ppApplyingCloudState=false;}
+        }else{ppCloudDirty=true;ppCloudSaveAgain=true;}
+        if(status)status.textContent="✅ Synchronisé";
+    }catch(err){
+        console.error("Cloud v2 save failed",err);ppCloudDirty=true;
+        if(status)status.textContent="⚠️ Hors ligne — sauvegarde locale";
+        if(String(err?.code||"").includes("permission-denied"))ppWriteSecurityEventPP("firestore-denied",err?.message||"Écriture Firebase refusée");
+    }finally{
+        ppCloudSaving=false;
+        if(ppCloudSaveAgain||ppCloudChangeVersion!==saveVersion){ppCloudSaveAgain=false;clearTimeout(ppCloudSaveTimer);ppCloudSaveTimer=setTimeout(ppSaveCloudNow,250);}
+    }
+};
+
+function ppDbV2AttachProfileListenerPP(){
+    if(!ppCurrentUser?.uid)return;
+    const profileUnsub=ppDb.collection("userProfiles").doc(ppCurrentUser.uid).onSnapshot(async snap=>{
+        if(!snap.exists)return;
+        const profile=snap.data()||{};
+        if(profile.active===false||profile.deleted===true){await ppAuth.signOut();return;}
+        const nextSignature=ppProfileScopeSignaturePP(profile);
+        if(nextSignature===ppCloudProfileSignature)return;
+        ppCloudProfileSignature=nextSignature;
+        ppCurrentRole=String(profile.role||"employee");
+        ppCurrentUserProfile={...profile,role:ppCurrentRole,permissions:profile.permissions||{stock:false,expenses:false,shiftClosings:false}};
+        ppCloudReady=false;ppStopCloudListeners();ppEnforceLocalDatasetScopePP();await ppLoadAllCloud();ppCloudReady=true;
+        const userText=document.getElementById("ppCloudUser");if(userText)userText.textContent=(ppCurrentUserProfile?.name||ppCurrentUserProfile?.username||"Utilisateur")+" — "+ppCurrentRole;
+        ppApplyPermissionsUI();renderAll();ppStartCloudListeners();
+    },err=>console.error("Firestore profile listener",err));
+    ppCloudListeners.push(profileUnsub);
+}
+
+ppStartCloudListeners=function(){
+    ppStopCloudListeners();
+    ppCloudAllowedDatasetKeysPP().forEach(key=>{
+        if(ppDbSchemaVersionPP>=PP_DB_SCHEMA_V2&&PP_DB_V2_RECORD_DATASETS.has(key)){
+            const unsub=ppDbV2CollectionPP(key).onSnapshot(snap=>{
+                if(!ppCloudReady||ppCloudSaving||ppCloudDirty)return;
+                const remote=snap.docs.map(doc=>({docId:doc.id,...(doc.data()||{})}))
+                    .sort((a,b)=>Number(a._cloudOrder??999999)-Number(b._cloudOrder??999999)||String(a._cloudRecordKey||a.docId).localeCompare(String(b._cloudRecordKey||b.docId)))
+                    .map(item=>{const clean=ppDbV2StripInternalPP(item);delete clean.docId;return clean;});
+                ppApplyingCloudState=true;
+                try{ppSetDataset(key,remote);ppSaveLocalOnly();ppCloudBaseState[key]=ppCloudClonePP(PP_CLOUD_DATASETS[key]());renderAll();}
+                finally{ppApplyingCloudState=false;}
+            },err=>console.error("Firestore collection listener",key,err));
+            ppCloudListeners.push(unsub);
+        }else{
+            const unsub=ppDataDoc(key).onSnapshot(snap=>{
+                if(!ppCloudReady||ppCloudSaving||ppCloudDirty||!snap.exists)return;
+                const remote=snap.data()?.items;if(!Array.isArray(remote))return;
+                ppApplyingCloudState=true;
+                try{ppSetDataset(key,remote);ppSaveLocalOnly();ppCloudBaseState[key]=ppCloudClonePP(PP_CLOUD_DATASETS[key]());renderAll();}
+                finally{ppApplyingCloudState=false;}
+            },err=>console.error("Firestore listener",key,err));
+            ppCloudListeners.push(unsub);
+        }
+    });
+
+    // Live schema cut-over for already connected sessions.
+    const metaUnsub=ppMetaDoc().onSnapshot(async snap=>{
+        if(!snap.exists||!ppCloudReady||ppDbMigrationBusyPP)return;
+        const next=Number(snap.data()?.schemaVersion||1);
+        if(!Number.isFinite(next)||next===ppDbSchemaVersionPP)return;
+        ppCloudReady=false;ppStopCloudListeners();ppDbSchemaVersionPP=next;await ppLoadAllCloud();ppCloudReady=true;renderAll();ppStartCloudListeners();
+    },err=>console.error("Firestore schema listener",err));
+    ppCloudListeners.push(metaUnsub);
+    ppDbV2AttachProfileListenerPP();
+};
+
+// Refresh the database panel after Firebase finishes bootstrapping.
+setTimeout(()=>{try{ppEnsureDatabaseV2UIPPP();}catch(_){}},1200);
+>>>>>>> 7200be3 (Upgrade database structure for products and movements)

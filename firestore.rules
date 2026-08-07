@@ -78,6 +78,12 @@ service cloud.firestore {
         && request.resource.data.updatedBy == request.auth.uid;
     }
 
+
+    function validRecordV2Write() {
+      return request.resource.data.keys().hasAll(['id', '_cloudUpdatedBy'])
+        && request.resource.data._cloudUpdatedBy == request.auth.uid;
+    }
+
     function isOwnProfile(uid) {
       return signedIn() && request.auth.uid == uid;
     }
@@ -150,7 +156,30 @@ service cloud.firestore {
     }
 
     match /companies/{companyId}/meta/{documentId} {
-      allow read, write: if companyId == 'pause-plate-manager' && isAdmin();
+      allow get: if companyId == 'pause-plate-manager'
+        && (isAdmin() || hasActiveProfile());
+      allow list: if false;
+      allow create, update, delete: if companyId == 'pause-plate-manager' && isAdmin();
+    }
+
+    match /companies/{companyId}/products/{recordId} {
+      allow read: if companyId == 'pause-plate-manager'
+        && (isAdmin() || hasStockPermission());
+      allow create, update: if companyId == 'pause-plate-manager'
+        && (isAdmin() || hasStockPermission())
+        && validRecordV2Write();
+      allow delete: if companyId == 'pause-plate-manager'
+        && (isAdmin() || hasStockPermission());
+    }
+
+    match /companies/{companyId}/movements/{recordId} {
+      allow read: if companyId == 'pause-plate-manager'
+        && (isAdmin() || hasStockPermission());
+      allow create, update: if companyId == 'pause-plate-manager'
+        && (isAdmin() || hasStockPermission())
+        && validRecordV2Write();
+      allow delete: if companyId == 'pause-plate-manager'
+        && (isAdmin() || hasStockPermission());
     }
 
     match /companies/{companyId}/shiftClosings/{shiftId} {
