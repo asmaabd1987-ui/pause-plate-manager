@@ -2429,7 +2429,7 @@
 <script src="js/fiches-techniques-data.js"></script>
 
 <script
-    src="js/app.js?v=20260807-database-v21"
+    src="js/app.js?v=20260807-database-v22"
 ></script>
 
 <script 
@@ -2456,7 +2456,107 @@
     src="js/pwa.js?v=20260803-pwa-v1"
 ></script>
 
-<script src="js/db-v2-ui.js?v=20260807-database-v21"></script>
+<script src="js/db-v2-ui.js?v=20260807-database-v22"></script>
+
+
+<!-- DATABASE V2 — HARD MOUNT V22
+     Embedded directly in index.html so the controls stay visible even if
+     Sauvegarde & Exports is re-rendered by another module. -->
+<script>
+(function(){
+  "use strict";
+
+  function ppDbV2HardFallback(box){
+    if(!box || box.dataset.ppDbV2HardReady === "1") return;
+    box.innerHTML = `
+      <div class="section" style="margin-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <h3 style="margin:0">Base de données</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn" type="button" data-db-v2-action onclick="ppDbV2DownloadBackupPP()">Backup JSON</button>
+            <button class="btn" type="button" data-db-v2-action onclick="ppDbV2VerifyPP()">Vérifier</button>
+            <button class="btn primary" type="button" data-db-v2-action onclick="ppDbV2MigrateProductsMovementsPP()">Migrer Products &amp; Movements</button>
+          </div>
+        </div>
+        <div class="stats-grid" style="margin-top:14px">
+          <div class="stat-card"><div class="label">Schéma</div><div class="value">v1</div></div>
+          <div class="stat-card"><div class="label">Produits</div><div class="value">—</div></div>
+          <div class="stat-card"><div class="label">Mouvements</div><div class="value">—</div></div>
+          <div class="stat-card"><div class="label">Intégrité</div><div class="value">—</div></div>
+        </div>
+        <div id="ppDbV2Status" style="margin-top:8px;font-size:13px;color:#667085"></div>
+      </div>`;
+    box.dataset.ppDbV2HardReady = "1";
+  }
+
+  function ppDbV2HardAnchor(page){
+    const headings = Array.from(page.querySelectorAll("h1,h2,h3,h4,h5"));
+    const heading = headings.find(function(node){
+      return String(node.textContent || "")
+        .replace(/\s+/g," ")
+        .trim()
+        .toLowerCase() === "contenu de la base actuelle";
+    });
+    return heading ? (heading.closest(".section") || heading.parentElement || heading) : null;
+  }
+
+  function ppDbV2HardMount(){
+    const page = document.getElementById("exportsPage");
+    if(!page) return false;
+
+    let box = document.getElementById("ppDbV2Panel");
+    if(!box){
+      box = document.createElement("div");
+      box.id = "ppDbV2Panel";
+    }
+
+    const anchor = ppDbV2HardAnchor(page);
+    if(anchor && anchor.parentElement){
+      if(box.parentElement !== anchor.parentElement || box.nextElementSibling !== anchor){
+        anchor.parentElement.insertBefore(box,anchor);
+      }
+    }else{
+      const actions = page.querySelector(".page-actions");
+      if(actions && actions.parentElement){
+        if(box.parentElement !== actions.parentElement || box.previousElementSibling !== actions){
+          actions.insertAdjacentElement("afterend",box);
+        }
+      }else if(box.parentElement !== page){
+        page.prepend(box);
+      }
+    }
+
+    ppDbV2HardFallback(box);
+
+    // Use the full dynamic renderer when available. If it refuses to render
+    // (for example while auth/profile is still loading), the fallback stays visible.
+    try{
+      if(typeof ppDbV2RenderPanelPP === "function"){
+        ppDbV2RenderPanelPP();
+        if(box.innerHTML.trim()) box.dataset.ppDbV2HardReady = "1";
+      }
+    }catch(err){
+      console.warn("Database v2 hard mount",err);
+    }
+    return true;
+  }
+
+  window.ppDbV2HardMountPP = ppDbV2HardMount;
+
+  function start(){
+    ppDbV2HardMount();
+    // A tiny persistent guard is intentional: several legacy modules rebuild
+    // the exports page with innerHTML. Re-mounting is idempotent and cheap.
+    setInterval(ppDbV2HardMount,500);
+  }
+
+  if(document.readyState === "loading"){
+    document.addEventListener("DOMContentLoaded",start,{once:true});
+  }else{
+    start();
+  }
+})();
+</script>
 
 </body>
 
