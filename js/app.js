@@ -20352,8 +20352,6 @@ if(document.readyState === "loading"){
 }else{
     ppReorderRenderPagePP();
 }
-<<<<<<< HEAD
-=======
 
 /* =========================================================
    DATABASE V2 — PRODUCTS & MOVEMENTS
@@ -20668,22 +20666,67 @@ function ppDbV2RenderPanelPP(info=null){
       </div>`;
 }
 
+let ppDbV2ExportsObserverPP=null;
+let ppDbV2ExportsObserverTimerPP=null;
+
+function ppDbV2FindDatabaseContentSectionPP(page){
+    if(!page)return null;
+    const headings=Array.from(page.querySelectorAll("h2,h3,h4"));
+    const heading=headings.find(node=>String(node.textContent||"").trim().toLowerCase()==="contenu de la base actuelle");
+    return heading ? (heading.closest(".section")||heading.parentElement) : null;
+}
+
+function ppDbV2PlacePanelPP(page,panel){
+    if(!page||!panel)return;
+    const anchor=ppDbV2FindDatabaseContentSectionPP(page);
+    if(anchor&&anchor.parentNode===page){
+        if(panel.parentNode!==page||panel.nextSibling!==anchor)page.insertBefore(panel,anchor);
+    }else if(panel.parentNode!==page){
+        page.appendChild(panel);
+    }
+}
+
 function ppEnsureDatabaseV2UIPPP(){
     if(!ppIsAdmin())return;
     const page=document.getElementById("exportsPage");
     if(!page)return;
-    const intro=page.querySelector(".page-actions p");if(intro)intro.remove();
     const placeholder=page.querySelector(".empty-state");
     if(placeholder){const section=placeholder.closest(".section");if(section)section.remove();}
     let panel=document.getElementById("ppDbV2Panel");
-    if(!panel){panel=document.createElement("div");panel.id="ppDbV2Panel";page.appendChild(panel);}
-    ppDbV2RenderPanelPP();
+    let created=false;
+    if(!panel){
+        panel=document.createElement("div");
+        panel.id="ppDbV2Panel";
+        created=true;
+    }
+    ppDbV2PlacePanelPP(page,panel);
+    if(created||panel.dataset.ppDbV2Ready!=="1"){
+        ppDbV2RenderPanelPP();
+        panel.dataset.ppDbV2Ready="1";
+    }
+}
+
+function ppDbV2ObserveExportsPagePP(){
+    const page=document.getElementById("exportsPage");
+    if(!page||ppDbV2ExportsObserverPP)return;
+    ppDbV2ExportsObserverPP=new MutationObserver(()=>{
+        clearTimeout(ppDbV2ExportsObserverTimerPP);
+        ppDbV2ExportsObserverTimerPP=setTimeout(()=>{
+            try{
+                const panel=document.getElementById("ppDbV2Panel");
+                if(!panel)ppEnsureDatabaseV2UIPPP();
+                else ppDbV2PlacePanelPP(page,panel);
+            }catch(_){}
+        },50);
+    });
+    ppDbV2ExportsObserverPP.observe(page,{childList:true,subtree:true});
 }
 
 const ppDbV2BaseRenderAllPP=renderAll;
 renderAll=function(){
     const result=ppDbV2BaseRenderAllPP.apply(this,arguments);
     ppEnsureDatabaseV2UIPPP();
+    ppDbV2ObserveExportsPagePP();
     return result;
 };
 
@@ -20831,6 +20874,11 @@ ppStartCloudListeners=function(){
     ppDbV2AttachProfileListenerPP();
 };
 
-// Refresh the database panel after Firebase finishes bootstrapping.
-setTimeout(()=>{try{ppEnsureDatabaseV2UIPPP();}catch(_){}},1200);
->>>>>>> 7200be3 (Upgrade database structure for products and movements)
+// Keep the database panel mounted even when Sauvegarde & Exports is re-rendered later.
+setTimeout(()=>{
+    try{
+        ppEnsureDatabaseV2UIPPP();
+        ppDbV2ObserveExportsPagePP();
+    }catch(_){}
+},300);
+setTimeout(()=>{try{ppEnsureDatabaseV2UIPPP();}catch(_){}},1500);
