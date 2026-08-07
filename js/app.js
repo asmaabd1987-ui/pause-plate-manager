@@ -20669,29 +20669,55 @@ function ppDbV2RenderPanelPP(info=null){
 let ppDbV2ExportsObserverPP=null;
 let ppDbV2ExportsObserverTimerPP=null;
 
-function ppDbV2FindDatabaseContentSectionPP(page){
-    if(!page)return null;
-    const headings=Array.from(page.querySelectorAll("h2,h3,h4"));
-    const heading=headings.find(node=>String(node.textContent||"").trim().toLowerCase()==="contenu de la base actuelle");
+function ppDbV2HeadingTextPP(node){
+    return String(node?.textContent||"")
+        .replace(/\s+/g," ")
+        .trim()
+        .toLowerCase();
+}
+
+function ppDbV2RenderedRankPP(node){
+    if(!node)return -1;
+    const page=node.closest?.(".page");
+    if(page?.classList?.contains("active-page"))return 30;
+    try{
+        const style=window.getComputedStyle(node);
+        if(style.display==="none"||style.visibility==="hidden")return 0;
+        if(node.getClientRects?.().length)return 20;
+    }catch(_){}
+    return 10;
+}
+
+function ppDbV2FindDatabaseContentSectionPP(){
+    const headings=Array.from(document.querySelectorAll("h2,h3,h4"))
+        .filter(node=>ppDbV2HeadingTextPP(node)==="contenu de la base actuelle")
+        .sort((a,b)=>ppDbV2RenderedRankPP(b)-ppDbV2RenderedRankPP(a));
+    const heading=headings[0]||null;
     return heading ? (heading.closest(".section")||heading.parentElement) : null;
 }
 
-function ppDbV2PlacePanelPP(page,panel){
-    if(!page||!panel)return;
-    const anchor=ppDbV2FindDatabaseContentSectionPP(page);
-    if(anchor&&anchor.parentNode===page){
-        if(panel.parentNode!==page||panel.nextSibling!==anchor)page.insertBefore(panel,anchor);
-    }else if(panel.parentNode!==page){
-        page.appendChild(panel);
+function ppDbV2PlacePanelPP(panel){
+    if(!panel)return false;
+
+    // Always anchor to the section the user is actually seeing. The exports renderer
+    // may rebuild its content inside a nested wrapper, so #exportsPage is not a safe
+    // insertion parent by itself.
+    const anchor=ppDbV2FindDatabaseContentSectionPP();
+    if(anchor&&anchor.parentNode){
+        if(panel.parentNode!==anchor.parentNode||panel.nextSibling!==anchor){
+            anchor.parentNode.insertBefore(panel,anchor);
+        }
+        return true;
     }
+
+    const page=document.getElementById("exportsPage");
+    if(!page)return false;
+    if(panel.parentNode!==page)page.appendChild(panel);
+    return true;
 }
 
 function ppEnsureDatabaseV2UIPPP(){
     if(!ppIsAdmin())return;
-    const page=document.getElementById("exportsPage");
-    if(!page)return;
-    const placeholder=page.querySelector(".empty-state");
-    if(placeholder){const section=placeholder.closest(".section");if(section)section.remove();}
     let panel=document.getElementById("ppDbV2Panel");
     let created=false;
     if(!panel){
@@ -20699,27 +20725,24 @@ function ppEnsureDatabaseV2UIPPP(){
         panel.id="ppDbV2Panel";
         created=true;
     }
-    ppDbV2PlacePanelPP(page,panel);
-    if(created||panel.dataset.ppDbV2Ready!=="1"){
+    if(!ppDbV2PlacePanelPP(panel))return;
+    if(created||panel.dataset.ppDbV2Ready!=="1"||!panel.querySelector('[data-db-v2-action]')){
         ppDbV2RenderPanelPP();
         panel.dataset.ppDbV2Ready="1";
     }
 }
 
 function ppDbV2ObserveExportsPagePP(){
-    const page=document.getElementById("exportsPage");
-    if(!page||ppDbV2ExportsObserverPP)return;
-    ppDbV2ExportsObserverPP=new MutationObserver(()=>{
+    if(ppDbV2ExportsObserverPP||!document.body)return;
+    ppDbV2ExportsObserverPP=new MutationObserver(mutations=>{
+        if(!mutations.some(m=>m.type==="childList"&&(m.addedNodes.length||m.removedNodes.length)))return;
         clearTimeout(ppDbV2ExportsObserverTimerPP);
         ppDbV2ExportsObserverTimerPP=setTimeout(()=>{
-            try{
-                const panel=document.getElementById("ppDbV2Panel");
-                if(!panel)ppEnsureDatabaseV2UIPPP();
-                else ppDbV2PlacePanelPP(page,panel);
-            }catch(_){}
-        },50);
+            try{ppEnsureDatabaseV2UIPPP();}catch(err){console.warn("Database v2 mount",err);}
+        },60);
     });
-    ppDbV2ExportsObserverPP.observe(page,{childList:true,subtree:true});
+    // Observe the whole rendered application, not only the legacy #exportsPage node.
+    ppDbV2ExportsObserverPP.observe(document.body,{childList:true,subtree:true});
 }
 
 const ppDbV2BaseRenderAllPP=renderAll;
@@ -20880,5 +20903,6 @@ setTimeout(()=>{
         ppEnsureDatabaseV2UIPPP();
         ppDbV2ObserveExportsPagePP();
     }catch(_){}
-},300);
-setTimeout(()=>{try{ppEnsureDatabaseV2UIPPP();}catch(_){}},1500);
+},250);
+setTimeout(()=>{try{ppEnsureDatabaseV2UIPPP();}catch(_){}},900);
+setInterval(()=>{try{ppEnsureDatabaseV2UIPPP();}catch(_){}},1500);

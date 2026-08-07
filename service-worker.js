@@ -2,7 +2,7 @@
    The cache contains only application files and public library assets.
    Firebase/Firestore data and Scanner Bridge requests are never cached. */
 
-const PP_PWA_VERSION = '20260807-database-v22';
+const PP_PWA_VERSION = '20260807-database-v23';
 const PP_SHELL_CACHE = `pause-plate-shell-${PP_PWA_VERSION}`;
 const PP_RUNTIME_CACHE = `pause-plate-runtime-${PP_PWA_VERSION}`;
 
@@ -13,7 +13,7 @@ const PP_APP_SHELL = [
   './manifest.webmanifest',
   './css/style.css',
   './css/pro-ui.css',
-  './js/app.js?v=20260807-database-v22',
+  './js/app.js?v=20260807-database-v23',
   './js/reports.js',
   './js/cash-exports.js',
   './js/shift-closing.js',
@@ -21,7 +21,6 @@ const PP_APP_SHELL = [
   './js/ui-modern.js',
   './js/fiches-techniques-data.js',
   './js/pwa.js',
-  './js/db-v2-ui.js?v=20260807-database-v22',
   './icons/pause-plate-icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
